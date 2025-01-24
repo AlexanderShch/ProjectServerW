@@ -14,12 +14,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 }
 
-//System::Void ProjectServerW::MyForm::‚˚ıÓ‰ToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e)
-//{
-//	Application::Exit();
-//	return System::Void();
-//}
-//
+System::Void ProjectServerW::MyForm::‚˚ıÓ‰ToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e)
+{
+	Application::Exit();
+	return System::Void();
+}
+
 //System::Void ProjectServerW::MyForm::button_Listen(System::Object^ sender, System::EventArgs^ e)
 //{
 //	server.port = 3487;
