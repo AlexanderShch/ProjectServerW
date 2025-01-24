@@ -22,9 +22,9 @@ System::Void ProjectServerW::MyForm::âûõîäToolStripMenuItem_Click(System::Object
 
 System::Void ProjectServerW::MyForm::button_Listen_Click(System::Object^ sender, System::EventArgs^ e)
 {
-//	server.port = 3487;
-//	server.startServer();
-//	return System::Void();
+	server.port = 3487;
+	server.startServer();
+	//return System::Void();
 }
 
 
