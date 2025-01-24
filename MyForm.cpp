@@ -20,11 +20,11 @@ System::Void ProjectServerW::MyForm::‚˚ıÓ‰ToolStripMenuItem_Click(System::Object
 	return System::Void();
 }
 
-//System::Void ProjectServerW::MyForm::button_Listen(System::Object^ sender, System::EventArgs^ e)
-//{
+System::Void ProjectServerW::MyForm::button_Listen_Click(System::Object^ sender, System::EventArgs^ e)
+{
 //	server.port = 3487;
 //	server.startServer();
 //	return System::Void();
-//}
+}
 
 

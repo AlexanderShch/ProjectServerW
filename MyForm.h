@@ -37,6 +37,8 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::MenuStrip^ menuStrip1;
 	protected:
 	private: System::Windows::Forms::ToolStripMenuItem^ ‚˚ıÓ‰ToolStripMenuItem;
+	private: System::Windows::Forms::Button^ button_Listen;
+
 
 	private:
 		/// <summary>
@@ -53,6 +55,7 @@ namespace ProjectServerW {
 		{
 			this->menuStrip1 = (gcnew System::Windows::Forms::MenuStrip());
 			this->‚˚ıÓ‰ToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
+			this->button_Listen = (gcnew System::Windows::Forms::Button());
 			this->menuStrip1->SuspendLayout();
 			this->SuspendLayout();
 			// 
@@ -74,15 +77,28 @@ namespace ProjectServerW {
 			this->‚˚ıÓ‰ToolStripMenuItem->Text = L"¬˚ıÓ‰";
 			this->‚˚ıÓ‰ToolStripMenuItem->Click += gcnew System::EventHandler(this, &MyForm::‚˚ıÓ‰ToolStripMenuItem_Click);
 			// 
+			// button_Listen
+			// 
+			this->button_Listen->Font = (gcnew System::Drawing::Font(L"Microsoft Sans Serif", 12, System::Drawing::FontStyle::Regular, System::Drawing::GraphicsUnit::Point,
+				static_cast<System::Byte>(204)));
+			this->button_Listen->Location = System::Drawing::Point(31, 89);
+			this->button_Listen->Name = L"button_Listen";
+			this->button_Listen->Size = System::Drawing::Size(204, 53);
+			this->button_Listen->TabIndex = 1;
+			this->button_Listen->Text = L"—ÎÛ¯‡Ú¸";
+			this->button_Listen->UseVisualStyleBackColor = true;
+			this->button_Listen->Click += gcnew System::EventHandler(this, &MyForm::button_Listen_Click);
+			// 
 			// MyForm
 			// 
 			this->AutoScaleDimensions = System::Drawing::SizeF(9, 20);
 			this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
 			this->ClientSize = System::Drawing::Size(786, 392);
+			this->Controls->Add(this->button_Listen);
 			this->Controls->Add(this->menuStrip1);
 			this->MainMenuStrip = this->menuStrip1;
 			this->Name = L"MyForm";
-			this->Text = L"MyForm";
+			this->Text = L"—Â‚Â ÔÓ ÔË∏ÏÛ ‰‡ÌÌ˚ı ÓÚ ÏËÍÓÍÓÌÚÓÎÎÂ‡";
 			this->menuStrip1->ResumeLayout(false);
 			this->menuStrip1->PerformLayout();
 			this->ResumeLayout(false);
@@ -91,5 +107,6 @@ namespace ProjectServerW {
 		}
 #pragma endregion
 	private: System::Void ‚˚ıÓ‰ToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e);
+	private: System::Void button_Listen_Click(System::Object^ sender, System::EventArgs^ e);
 	};
 }
