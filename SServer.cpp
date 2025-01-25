@@ -1,4 +1,5 @@
 #include "SServer.h" // 
+
 using namespace System::Windows::Forms;
 using namespace ProjectServerW;
 
@@ -30,29 +31,29 @@ void SServer::startServer() {
 	addr.sin_port = htons(port);
 	addr.sin_family = AF_INET;
 
-	// Установите текст в textBox_ListPort
-	unsigned short port = ntohs(addr.sin_port);
-	System::String^ portString = port.ToString();
-	form->SetTextValue(portString);
+	this_s = socket(AF_INET, SOCK_STREAM, 0);
+	if (this_s == SOCKET_ERROR) {
+		form->SetSocketState_TextValue("Error when creating a socket");
+	} else {
+		form->SetSocketState_TextValue("Socket is created");
+	}
 
-	//this_s = socket(AF_INET, SOCK_STREAM, 0);
-	//if (this_s == SOCKET_ERROR) {
-	//	std::cout << "Socket not created: " << WSAGetLastError() << std::endl;
-	//} else {
-	//	std::cout << "Socket created" << std::endl;
-	//}
+	if (bind(this_s, (struct sockaddr*)&addr, sizeof(addr)) != SOCKET_ERROR) {
+		form->SetSocketBind_TextValue("Socket successfully binded");
+	}else {
+		form->SetSocketBind_TextValue("Socket bind failed: " + WSAGetLastError());
+        closesocket(this_s);
+        return;
+    }
 
-	//if (bind(this_s, (struct sockaddr*)&addr, sizeof(addr)) != SOCKET_ERROR) {
-	//	std::cout << "Socket successfully binded" << std::endl;
-	//}else {
- //       std::cout << "Socket bind failed: " << WSAGetLastError() << std::endl;
- //       closesocket(this_s);
- //       return;
- //   }
+	if (listen(this_s, SOMAXCONN) != SOCKET_ERROR) 	{
+		// Установите текст в textBox_ListPort
+		unsigned short port = ntohs(addr.sin_port);
+		System::String^ portString = port.ToString();
+		//form->SetTextValue(portString);
 
-	//if (listen(this_s, SOMAXCONN) != SOCKET_ERROR) 	{
-	//	std::cout << "Start listenin at port " << ntohs(addr.sin_port) << std::endl;
-	//}
+		form->SetTextValue("Start listenin at port " + portString);
+	}
 	//handle();
 }
 

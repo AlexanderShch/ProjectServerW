@@ -38,8 +38,11 @@ namespace ProjectServerW {
 	protected:
 	private: System::Windows::Forms::ToolStripMenuItem^ âûõîäToolStripMenuItem;
 	private: System::Windows::Forms::Button^ button_Listen;
-	private: System::Windows::Forms::Label^ label1;
+
 	private: System::Windows::Forms::Label^ label_N_port;
+	private: System::Windows::Forms::Label^ SocketState;
+	private: System::Windows::Forms::Label^ SocketBind;
+
 
 
 
@@ -59,8 +62,9 @@ namespace ProjectServerW {
 			this->menuStrip1 = (gcnew System::Windows::Forms::MenuStrip());
 			this->âûõîäToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
 			this->button_Listen = (gcnew System::Windows::Forms::Button());
-			this->label1 = (gcnew System::Windows::Forms::Label());
 			this->label_N_port = (gcnew System::Windows::Forms::Label());
+			this->SocketState = (gcnew System::Windows::Forms::Label());
+			this->SocketBind = (gcnew System::Windows::Forms::Label());
 			this->menuStrip1->SuspendLayout();
 			this->SuspendLayout();
 			// 
@@ -94,35 +98,47 @@ namespace ProjectServerW {
 			this->button_Listen->UseVisualStyleBackColor = true;
 			this->button_Listen->Click += gcnew System::EventHandler(this, &MyForm::button_Listen_Click);
 			// 
-			// label1
-			// 
-			this->label1->AutoSize = true;
-			this->label1->Font = (gcnew System::Drawing::Font(L"Microsoft Sans Serif", 12, System::Drawing::FontStyle::Regular, System::Drawing::GraphicsUnit::Point,
-				static_cast<System::Byte>(204)));
-			this->label1->Location = System::Drawing::Point(280, 104);
-			this->label1->Name = L"label1";
-			this->label1->Size = System::Drawing::Size(76, 29);
-			this->label1->TabIndex = 2;
-			this->label1->Text = L"Ïîðò:";
-			// 
 			// label_N_port
 			// 
 			this->label_N_port->AutoSize = true;
 			this->label_N_port->Font = (gcnew System::Drawing::Font(L"Microsoft Sans Serif", 12, System::Drawing::FontStyle::Regular, System::Drawing::GraphicsUnit::Point,
 				static_cast<System::Byte>(204)));
-			this->label_N_port->Location = System::Drawing::Point(362, 104);
+			this->label_N_port->Location = System::Drawing::Point(272, 207);
 			this->label_N_port->Name = L"label_N_port";
 			this->label_N_port->Size = System::Drawing::Size(110, 29);
 			this->label_N_port->TabIndex = 3;
 			this->label_N_port->Text = L"¹ ïîðòà";
+			// 
+			// SocketState
+			// 
+			this->SocketState->AutoSize = true;
+			this->SocketState->Font = (gcnew System::Drawing::Font(L"Microsoft Sans Serif", 12, System::Drawing::FontStyle::Regular, System::Drawing::GraphicsUnit::Point,
+				static_cast<System::Byte>(204)));
+			this->SocketState->Location = System::Drawing::Point(272, 101);
+			this->SocketState->Name = L"SocketState";
+			this->SocketState->Size = System::Drawing::Size(223, 29);
+			this->SocketState->TabIndex = 4;
+			this->SocketState->Text = L"Ñîñòîÿíèå ñîêåòà";
+			// 
+			// SocketBind
+			// 
+			this->SocketBind->AutoSize = true;
+			this->SocketBind->Font = (gcnew System::Drawing::Font(L"Microsoft Sans Serif", 12, System::Drawing::FontStyle::Regular, System::Drawing::GraphicsUnit::Point,
+				static_cast<System::Byte>(204)));
+			this->SocketBind->Location = System::Drawing::Point(272, 153);
+			this->SocketBind->Name = L"SocketBind";
+			this->SocketBind->Size = System::Drawing::Size(207, 29);
+			this->SocketBind->TabIndex = 5;
+			this->SocketBind->Text = L"Ïðèâÿçêà ñîêåòà";
 			// 
 			// MyForm
 			// 
 			this->AutoScaleDimensions = System::Drawing::SizeF(9, 20);
 			this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
 			this->ClientSize = System::Drawing::Size(786, 392);
+			this->Controls->Add(this->SocketBind);
+			this->Controls->Add(this->SocketState);
 			this->Controls->Add(this->label_N_port);
-			this->Controls->Add(this->label1);
 			this->Controls->Add(this->button_Listen);
 			this->Controls->Add(this->menuStrip1);
 			this->MainMenuStrip = this->menuStrip1;
@@ -140,6 +156,14 @@ namespace ProjectServerW {
 	public:	   
 		void SetTextValue(String^ text) {
 			label_N_port->Text = text;
-		   }
-};
+		};
+	public:
+		void SetSocketState_TextValue(String^ text) {
+			SocketState->Text = text;
+		};
+	public:
+		void SetSocketBind_TextValue(String^ text) {
+			SocketBind->Text = text;
+		};
+	};
 }
