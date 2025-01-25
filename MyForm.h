@@ -137,5 +137,9 @@ namespace ProjectServerW {
 #pragma endregion
 	private: System::Void âûõîäToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void button_Listen_Click(System::Object^ sender, System::EventArgs^ e);
+	public:	   
+		void SetTextValue(String^ text) {
+			label_N_port->Text = text;
+		   }
 };
 }

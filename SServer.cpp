@@ -1,4 +1,6 @@
 #include "SServer.h" // 
+using namespace System::Windows::Forms;
+using namespace ProjectServerW;
 
 // Определение конструктора класса SServer
 SServer::SServer() : port(0), this_s(INVALID_SOCKET) {
@@ -13,7 +15,7 @@ SServer::~SServer() {
 }
 
 void SServer::startServer() {
-	ProjectServerW::MyForm^ form = gcnew ProjectServerW::MyForm();
+	MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
 
 	if (WSAStartup(MAKEWORD(2, 2), &wData) == 0) {
 		std::cout << "WSA Startup success" << std::endl;
@@ -31,7 +33,7 @@ void SServer::startServer() {
 	// Установите текст в textBox_ListPort
 	unsigned short port = ntohs(addr.sin_port);
 	System::String^ portString = port.ToString();
-	//form->SetTextBoxListPortText(portString);
+	form->SetTextValue(portString);
 
 	//this_s = socket(AF_INET, SOCK_STREAM, 0);
 	//if (this_s == SOCKET_ERROR) {
