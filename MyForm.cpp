@@ -1,5 +1,6 @@
 #include "MyForm.h"
 #include "SServer.h"
+#include <thread>
 
 using namespace ProjectServerW;		// название проекта
 SServer server;
@@ -23,8 +24,10 @@ System::Void ProjectServerW::MyForm::выходToolStripMenuItem_Click(System::Object
 System::Void ProjectServerW::MyForm::button_Listen_Click(System::Object^ sender, System::EventArgs^ e)
 {
 	server.port = 3487;
-	server.startServer();
-	//return System::Void();
+	
+	// Запустим сервер в отдельном потоке
+	std::thread serverThread(&SServer::startServer, &server);
+	serverThread.detach(); // Отсоединяем поток сервера, чтобы он работал независимо
 }
 
 

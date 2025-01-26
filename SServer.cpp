@@ -65,9 +65,13 @@ void SServer::startServer() {
 }
 
 void SServer::closeServer() {
-	//closesocket(this_s);
-	//WSACleanup();
-	//std::cout << "Server was stopped. You can close app" << std::endl;
+	MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
+	closesocket(this_s);
+	WSACleanup();
+	form->SetWSA_TextValue("Server was stopped");
+	form->SetSocketState_TextValue(" ");
+	form->SetSocketBind_TextValue(" ");
+	form->SetTextValue(" ");
 }
 
 void SServer::handle() {
