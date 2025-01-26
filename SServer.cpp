@@ -55,12 +55,15 @@ void SServer::startServer() {
 		// Установите текст в textBox_ListPort
 		unsigned short port = ntohs(addr.sin_port);
 		System::String^ portString = port.ToString();
-		//form->SetTextValue(portString);
-
 		form->SetTextValue("Start listenin at port " + portString);
 	}
 	
-	form->Refresh();
+	if (form->InvokeRequired) {
+		form->Invoke(gcnew Action(form, &MyForm::Refresh));
+	}
+	else {
+		form->Refresh();
+	}
 	handle();
 }
 

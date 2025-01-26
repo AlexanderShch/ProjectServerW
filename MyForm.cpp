@@ -25,7 +25,7 @@ System::Void ProjectServerW::MyForm::button_Listen_Click(System::Object^ sender,
 {
 	server.port = 3487;
 	
-	// Запустим сервер в отдельном потоке
+	// Запустим сервер в отдельном потоке, чтобы не блокировать поток основного окна
 	std::thread serverThread(&SServer::startServer, &server);
 	serverThread.detach(); // Отсоединяем поток сервера, чтобы он работал независимо
 }

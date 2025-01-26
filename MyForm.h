@@ -170,19 +170,42 @@ namespace ProjectServerW {
 	private: System::Void button_Listen_Click(System::Object^ sender, System::EventArgs^ e);
 	public:	   
 		void SetTextValue(String^ text) {
-			label_N_port->Text = text;
+			if (this != nullptr && this->InvokeRequired) {
+				this->Invoke(gcnew Action<String^>(this, &MyForm::SetTextValue), text);
+			}
+			else if (this != nullptr && label_N_port != nullptr) {
+				label_N_port->Text = text;
+			}
 		};
 	public:
 		void SetSocketState_TextValue(String^ text) {
-			SocketState->Text = text;
+			if (this != nullptr && this->InvokeRequired) {
+				this->Invoke(gcnew Action<String^>(this, &MyForm::SetSocketState_TextValue), text);
+			}
+			else if (this != nullptr && SocketState != nullptr) {
+				SocketState->Text = text;
+			}
 		};
 	public:
 		void SetSocketBind_TextValue(String^ text) {
-			SocketBind->Text = text;
+			//SocketBind->Text = text;
+			if (this != nullptr && this->InvokeRequired) {
+				this->Invoke(gcnew Action<String^>(this, &MyForm::SetSocketBind_TextValue), text);
+			}
+			else if (this != nullptr && SocketBind != nullptr) {
+				SocketBind->Text = text;
+			}
 		};
 	public:
 		void SetWSA_TextValue(String^ text) {
-			WSAstartup->Text = text;
-		};
+			//WSAstartup->Text = text;
+			if (this != nullptr && this->InvokeRequired) {
+				this->Invoke(gcnew Action<String^>(this, &MyForm::SetWSA_TextValue), text);
+			}
+			else if (this != nullptr && WSAstartup != nullptr) {
+				WSAstartup->Text = text;
+			}
+		}
+
 	}; 
 }
