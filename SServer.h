@@ -14,6 +14,8 @@
 //#include <sstream>		// Для std::stringstream
 
 #include "MyForm.h"
+#include "DataForm.h"
+
 using namespace std;
 
 class SServer
@@ -25,9 +27,10 @@ public:
 	void closeServer();
 	void handle();
     int port;
+    void ShowDataForm(); // Объявление функции
 private:
 	SOCKET this_s;
- 	WSAData wData;
+		WSAData wData;
     static DWORD WINAPI ClientHandler(LPVOID lpParam); // Объявление функции потока
     static DWORD WINAPI ClientTextHandler(LPVOID lpParam); // Объявление функции потока
 };

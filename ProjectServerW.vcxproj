@@ -119,15 +119,22 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="MyForm.cpp" />
+    <ClCompile Include="DataForm.cpp" />
     <ClCompile Include="SServer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="MyForm.h">
       <FileType>CppForm</FileType>
     </ClInclude>
+    <ClInclude Include="DataForm.h">
+      <FileType>CppForm</FileType>
+    </ClInclude>
     <ClInclude Include="SServer.h" />
   </ItemGroup>
   <ItemGroup>
+    <EmbeddedResource Include="DataForm.resx">
+      <DependentUpon>DataForm.h</DependentUpon>
+    </EmbeddedResource>
     <EmbeddedResource Include="MyForm.resx">
       <DependentUpon>MyForm.h</DependentUpon>
     </EmbeddedResource>

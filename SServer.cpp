@@ -1,4 +1,9 @@
 #include "SServer.h" // 
+#include "DataForm.h" //
+#include <sstream>
+#include <iomanip>
+#include <thread>
+#include <msclr/marshal_cppstd.h>
 
 using namespace System::Windows::Forms;
 using namespace ProjectServerW;
@@ -19,9 +24,9 @@ void SServer::startServer() {
 	MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
 
 	if (WSAStartup(MAKEWORD(2, 2), &wData) == 0) {
-		std::cout << "WSA Startup success" << std::endl;
+		form->SetWSA_TextValue("WSA Startup success");
 	} else {
-        std::cout << "WSA Startup failed: " << WSAGetLastError() << std::endl;
+		form->SetWSA_TextValue("WSA Startup failed: " + WSAGetLastError());
         return;
     }
 
@@ -54,7 +59,9 @@ void SServer::startServer() {
 
 		form->SetTextValue("Start listenin at port " + portString);
 	}
-	//handle();
+	
+	form->Refresh();
+	handle();
 }
 
 void SServer::closeServer() {
@@ -66,52 +73,52 @@ void SServer::closeServer() {
 void SServer::handle() {
 	while (true)
 	{
-	//	SOCKET acceptS;
-	//	SOCKADDR_IN addr_c;
-	//	int SclientPort = 9000; // Порт Sclient
-	//	int ClientPort = 0;
-	//	int addrlen = sizeof(addr_c);
-	//	if ((acceptS = accept(this_s, (struct sockaddr*)&addr_c, &addrlen)) != INVALID_SOCKET) {
-	//		ClientPort = ntohs(addr_c.sin_port);
-	//		std::cout << "Client connected from "
-	//		<<	to_string(addr_c.sin_addr.S_un.S_un_b.s_b1) << "." 
-	//		<<	to_string(addr_c.sin_addr.S_un.S_un_b.s_b2) << "."
-	//		<<	to_string(addr_c.sin_addr.S_un.S_un_b.s_b3) << "."
-	//		<<	to_string(addr_c.sin_addr.S_un.S_un_b.s_b4) << ":"
-	//		<<	ClientPort << std::endl;
+		SOCKET acceptS;
+		SOCKADDR_IN addr_c;
+		int SclientPort = 9000; // Порт Sclient
+		int ClientPort = 0;
+		int addrlen = sizeof(addr_c);
+		if ((acceptS = accept(this_s, (struct sockaddr*)&addr_c, &addrlen)) != INVALID_SOCKET) {
+			ClientPort = ntohs(addr_c.sin_port);
+			//std::cout << "Client connected from "
+			//<<	to_string(addr_c.sin_addr.S_un.S_un_b.s_b1) << "." 
+			//<<	to_string(addr_c.sin_addr.S_un.S_un_b.s_b2) << "."
+			//<<	to_string(addr_c.sin_addr.S_un.S_un_b.s_b3) << "."
+			//<<	to_string(addr_c.sin_addr.S_un.S_un_b.s_b4) << ":"
+			//<<	ClientPort << std::endl;
 
- //           // Создание нового потока для обработки клиента
-	//		DWORD threadId;
-	//		HANDLE hThread;
-	//		if (ClientPort >= SclientPort) {
-	//			hThread = CreateThread(
-	//				NULL,                   // Дескриптор безопасности
-	//				0,                      // Начальный размер стека
-	//				ClientTextHandler,      // Функция потока текстового клиента
-	//				(LPVOID)acceptS,        // Параметр функции потока
-	//				0,                      // Флаги создания
-	//				&threadId);             // Идентификатор потока
-	//		} else {
-	//			hThread = CreateThread(
-	//				NULL,                   // Дескриптор безопасности
-	//				0,                      // Начальный размер стека
-	//				ClientHandler,          // Функция потока
-	//				(LPVOID)acceptS,        // Параметр функции потока
-	//				0,                      // Флаги создания
-	//				&threadId);             // Идентификатор потока
+            // Создание нового потока для обработки клиента
+			DWORD threadId;
+			HANDLE hThread;
+			if (ClientPort >= SclientPort) {
+				hThread = CreateThread(
+					NULL,                   // Дескриптор безопасности
+					0,                      // Начальный размер стека
+					ClientTextHandler,      // Функция потока текстового клиента
+					(LPVOID)acceptS,        // Параметр функции потока
+					0,                      // Флаги создания
+					&threadId);             // Идентификатор потока
+			} else {
+				hThread = CreateThread(
+					NULL,                   // Дескриптор безопасности
+					0,                      // Начальный размер стека
+					ClientHandler,          // Функция потока
+					(LPVOID)acceptS,        // Параметр функции потока
+					0,                      // Флаги создания
+					&threadId);             // Идентификатор потока
 
-	//		}
- //           if (hThread == NULL) {
- //               std::cout << "Failed to create thread: " << GetLastError() << std::endl;
- //               closesocket(acceptS);
- //           } else {
- //               std::cout << "New thread is created" << std::endl 
-	//					  << "=====================" 
-	//					  << std::endl;
-	//			CloseHandle(hThread); // Закрытие дескриптора потока
- //           }
-	//	}
-	//	Sleep(200);
+			}
+            if (hThread == NULL) {
+                std::cout << "Failed to create thread: " << GetLastError() << std::endl;
+                closesocket(acceptS);
+            } else {
+                std::cout << "New thread is created" << std::endl 
+						  << "=====================" 
+						  << std::endl;
+				CloseHandle(hThread); // Закрытие дескриптора потока
+            }
+		}
+		Sleep(200);
 	}
 }
 
@@ -121,65 +128,66 @@ void printCurrentTime() {
     std::cout << "Current time: " << std::put_time(localTime, "%Y-%m-%d %H:%M:%S") << std::endl;
 }
 
-//// Эта функция принимает буфер и его длину, затем преобразует каждый байт буфера в шестнадцатеричный формат и добавляет его в строку.
-//std::string bufferToHex(const char* buffer, int length) {
-//	// Использование std::stringstream позволяет легко преобразовывать данные в строку и форматировать их.
-//    std::stringstream ss;
-//    ss << std::hex << std::setfill('0');
-//	// << std::hex: Этот манипулятор устанавливает формат вывода чисел в шестнадцатеричном формате. После этого все последующие числа, 
-//	// записанные в поток ss, будут выводиться в шестнадцатеричном формате.
-//	// << std::setfill('0'): Этот манипулятор устанавливает символ заполнения для вывода чисел. В данном случае, символом заполнения является '0'. 
-//	// Это означает, что если число занимает меньше символов, чем указано в std::setw, то пустые места будут заполнены нулями.
-//    for (int i = 0; i < length; ++i) {
-//        ss << std::setw(2) << static_cast<unsigned int>(static_cast<unsigned char>(buffer[i])) << " ";
-//    }
-//    return ss.str();
-//}
-//// std::setw(2): Устанавливает ширину поля вывода в 2 символа.
-//// static_cast<unsigned int>(static_cast<unsigned char>(buffer[i])): Преобразует байт в беззнаковое 
-//// целое число, чтобы корректно отобразить его в шестнадцатеричном формате.
-//// " ": Добавляет пробел между шестнадцатеричными значениями для удобства чтения.
-//
-DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
-//    SOCKET clientSocket = (SOCKET)lpParam;
-//    char buffer[512];
-//    int bytesReceived;
-//
-///*     int timeout = 60000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
-//	
-//	// Установка тайм-аута для операций чтения (recv)
-//	setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
-// */	
-//	// Обработка клиента
-//		while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
-//			printCurrentTime();
-//			
-//	        std::string hexStr = bufferToHex(buffer, bytesReceived);
-//        	std::cout << "Received from HEX client: " << hexStr << std::endl;
-//			send(clientSocket, buffer, bytesReceived, 0);
-////			send(clientSocket, "OK", sizeof("OK"), 0);
-//		}
-//
-//		/*
-//		Если функция recv возвращает 0, это означает, что соединение было закрыто клиентом. 
-//		Если функция recv возвращает SOCKET_ERROR, проверяется код ошибки с помощью функции WSAGetLastError. 
-//		Если код ошибки равен WSAETIMEDOUT, это означает, что операция чтения завершилась по тайм-ауту.
-//		*/
-//		if (bytesReceived == 0) {
-//			std::cout << "Connection closed by client" << std::endl;
-//		} else if (bytesReceived == SOCKET_ERROR) {
-//			int error = WSAGetLastError();
-//			if (error == WSAETIMEDOUT) {
-//				std::cout << "Recv timed out" << std::endl;
-//			} else {
-//				std::cout << "Recv failed: " << error << std::endl;
-//			}
-//    }
-//	closesocket(clientSocket);
-//	std::cout << "The thread is closed" << std::endl 
-//			  << "********************" << std::endl;
-    return 0;
+// Эта функция принимает буфер и его длину, затем преобразует каждый байт буфера в шестнадцатеричный формат и добавляет его в строку.
+String^ bufferToHex(const char* buffer, int length) {
+	// Использование std::stringstream позволяет легко преобразовывать данные в строку и форматировать их.
+    std::stringstream ss;
+    ss << std::hex << std::setfill('0');
+	// << std::hex: Этот манипулятор устанавливает формат вывода чисел в шестнадцатеричном формате. После этого все последующие числа, 
+	// записанные в поток ss, будут выводиться в шестнадцатеричном формате.
+	// << std::setfill('0'): Этот манипулятор устанавливает символ заполнения для вывода чисел. В данном случае, символом заполнения является '0'. 
+	// Это означает, что если число занимает меньше символов, чем указано в std::setw, то пустые места будут заполнены нулями.
+    for (int i = 0; i < length; ++i) {
+        ss << std::setw(2) << static_cast<unsigned int>(static_cast<unsigned char>(buffer[i])) << " ";
+    }
+    return gcnew String(ss.str().c_str());
 }
+// std::setw(2): Устанавливает ширину поля вывода в 2 символа.
+// static_cast<unsigned int>(static_cast<unsigned char>(buffer[i])): Преобразует байт в беззнаковое 
+// целое число, чтобы корректно отобразить его в шестнадцатеричном формате.
+// " ": Добавляет пробел между шестнадцатеричными значениями для удобства чтения.
+
+
+    DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
+        SOCKET clientSocket = (SOCKET)lpParam;
+        char buffer[512];
+        int bytesReceived;
+
+        // Открываем форму для демонстрации принятых данных в отдельном потоке
+        std::thread formThread(DataForm::ShowDataForm);
+        formThread.detach(); // Отсоединяем поток от клиентского потока, чтобы он работал независимо
+
+        while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
+            printCurrentTime();
+
+            String^ hexStr = bufferToHex(buffer, bytesReceived);
+            DataForm^ form2 = safe_cast<DataForm^>(Application::OpenForms["DataForm"]);
+            if (form2 != nullptr) {
+				form2->Invoke(gcnew Action<String^>(form2, &DataForm::SetData_TextValue), hexStr);
+				form2->Invoke(gcnew Action(form2, &DataForm::Refresh));
+			}
+        }
+
+        if (bytesReceived == 0) {
+            std::cout << "Connection closed by client" << std::endl;
+        } else if (bytesReceived == SOCKET_ERROR) {
+            int error = WSAGetLastError();
+            if (error == WSAETIMEDOUT) {
+                std::cout << "Recv timed out" << std::endl;
+            } else {
+                std::cout << "Recv failed: " << error << std::endl;
+            }
+        }
+        closesocket(clientSocket);
+        std::cout << "The thread is closed" << std::endl 
+                  << "********************" << std::endl;
+        return 0;
+    }
+/*     int timeout = 60000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
+	
+	// Установка тайм-аута для операций чтения (recv)
+	setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+ */	
 
 DWORD WINAPI SServer::ClientTextHandler(LPVOID lpParam) {
  //   SOCKET clientSocket = (SOCKET)lpParam;

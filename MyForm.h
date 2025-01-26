@@ -42,6 +42,8 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::Label^ label_N_port;
 	private: System::Windows::Forms::Label^ SocketState;
 	private: System::Windows::Forms::Label^ SocketBind;
+	private: System::Windows::Forms::Label^ WSAstartup;
+
 
 
 
@@ -65,6 +67,7 @@ namespace ProjectServerW {
 			this->label_N_port = (gcnew System::Windows::Forms::Label());
 			this->SocketState = (gcnew System::Windows::Forms::Label());
 			this->SocketBind = (gcnew System::Windows::Forms::Label());
+			this->WSAstartup = (gcnew System::Windows::Forms::Label());
 			this->menuStrip1->SuspendLayout();
 			this->SuspendLayout();
 			// 
@@ -82,7 +85,7 @@ namespace ProjectServerW {
 			// âûõîäToolStripMenuItem
 			// 
 			this->âûõîäToolStripMenuItem->Name = L"âûõîäToolStripMenuItem";
-			this->âûõîäToolStripMenuItem->Size = System::Drawing::Size(80, 29);
+			this->âûõîäToolStripMenuItem->Size = System::Drawing::Size(80, 32);
 			this->âûõîäToolStripMenuItem->Text = L"Âûõîä";
 			this->âûõîäToolStripMenuItem->Click += gcnew System::EventHandler(this, &MyForm::âûõîäToolStripMenuItem_Click);
 			// 
@@ -103,7 +106,7 @@ namespace ProjectServerW {
 			this->label_N_port->AutoSize = true;
 			this->label_N_port->Font = (gcnew System::Drawing::Font(L"Microsoft Sans Serif", 12, System::Drawing::FontStyle::Regular, System::Drawing::GraphicsUnit::Point,
 				static_cast<System::Byte>(204)));
-			this->label_N_port->Location = System::Drawing::Point(272, 207);
+			this->label_N_port->Location = System::Drawing::Point(274, 254);
 			this->label_N_port->Name = L"label_N_port";
 			this->label_N_port->Size = System::Drawing::Size(110, 29);
 			this->label_N_port->TabIndex = 3;
@@ -114,7 +117,7 @@ namespace ProjectServerW {
 			this->SocketState->AutoSize = true;
 			this->SocketState->Font = (gcnew System::Drawing::Font(L"Microsoft Sans Serif", 12, System::Drawing::FontStyle::Regular, System::Drawing::GraphicsUnit::Point,
 				static_cast<System::Byte>(204)));
-			this->SocketState->Location = System::Drawing::Point(272, 101);
+			this->SocketState->Location = System::Drawing::Point(274, 148);
 			this->SocketState->Name = L"SocketState";
 			this->SocketState->Size = System::Drawing::Size(223, 29);
 			this->SocketState->TabIndex = 4;
@@ -125,17 +128,29 @@ namespace ProjectServerW {
 			this->SocketBind->AutoSize = true;
 			this->SocketBind->Font = (gcnew System::Drawing::Font(L"Microsoft Sans Serif", 12, System::Drawing::FontStyle::Regular, System::Drawing::GraphicsUnit::Point,
 				static_cast<System::Byte>(204)));
-			this->SocketBind->Location = System::Drawing::Point(272, 153);
+			this->SocketBind->Location = System::Drawing::Point(274, 200);
 			this->SocketBind->Name = L"SocketBind";
 			this->SocketBind->Size = System::Drawing::Size(207, 29);
 			this->SocketBind->TabIndex = 5;
 			this->SocketBind->Text = L"Ïðèâÿçêà ñîêåòà";
+			// 
+			// WSAstartup
+			// 
+			this->WSAstartup->AutoSize = true;
+			this->WSAstartup->Font = (gcnew System::Drawing::Font(L"Microsoft Sans Serif", 12, System::Drawing::FontStyle::Regular, System::Drawing::GraphicsUnit::Point,
+				static_cast<System::Byte>(204)));
+			this->WSAstartup->Location = System::Drawing::Point(274, 101);
+			this->WSAstartup->Name = L"WSAstartup";
+			this->WSAstartup->Size = System::Drawing::Size(144, 29);
+			this->WSAstartup->TabIndex = 6;
+			this->WSAstartup->Text = L"WSA startup";
 			// 
 			// MyForm
 			// 
 			this->AutoScaleDimensions = System::Drawing::SizeF(9, 20);
 			this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
 			this->ClientSize = System::Drawing::Size(786, 392);
+			this->Controls->Add(this->WSAstartup);
 			this->Controls->Add(this->SocketBind);
 			this->Controls->Add(this->SocketState);
 			this->Controls->Add(this->label_N_port);
@@ -165,5 +180,9 @@ namespace ProjectServerW {
 		void SetSocketBind_TextValue(String^ text) {
 			SocketBind->Text = text;
 		};
-	};
+	public:
+		void SetWSA_TextValue(String^ text) {
+			WSAstartup->Text = text;
+		};
+	}; 
 }
