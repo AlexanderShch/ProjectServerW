@@ -1,6 +1,10 @@
 #pragma once
 #include "SServer.h"
 
+#include <mutex>
+#include <condition_variable>
+#include <queue>
+
 namespace ProjectServerW {
 
 	using namespace System;
@@ -124,6 +128,10 @@ namespace ProjectServerW {
 			Label_ID->Text = text;
 		};
 		static void ShowDataForm();
-		static void CreateAndShowDataForm();
+		//static void CreateAndShowDataForm();
+		static void CreateAndShowDataForm(	std::queue<std::wstring>& messageQueue,
+											std::mutex& mtx,
+											std::condition_variable& cv);
+		
 	};
 }

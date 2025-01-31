@@ -21,8 +21,11 @@ void ProjectServerW::DataForm::ShowDataForm() {
 }
 
 // Процедура создания формы с записью идентификатора в Label_ID
-void ProjectServerW::DataForm::CreateAndShowDataForm() {
-    DataForm^ form = gcnew DataForm();
+//void ProjectServerW::DataForm::CreateAndShowDataForm() {
+void ProjectServerW::DataForm::CreateAndShowDataForm(std::queue<std::wstring>& messageQueue, 
+                                                     std::mutex& mtx, 
+                                                     std::condition_variable& cv) {
+        DataForm^ form = gcnew DataForm();
     form->ShowDialog();
 
     // Инициализация библиотеки COM
@@ -43,6 +46,13 @@ void ProjectServerW::DataForm::CreateAndShowDataForm() {
 
             // Сохранение формы в карте
             formData_Map[guidString] = form;
+
+            // Установка значения в очередь сообщений
+            {
+                std::lock_guard<std::mutex> lock(mtx);
+                messageQueue.push(guidString);
+            }
+            cv.notify_one();
         }
         // Освобождение библиотеки COM
         CoUninitialize();
