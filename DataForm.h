@@ -124,5 +124,6 @@ namespace ProjectServerW {
 			Label_ID->Text = text;
 		};
 		static void ShowDataForm();
+		static void CreateAndShowDataForm();
 	};
 }
