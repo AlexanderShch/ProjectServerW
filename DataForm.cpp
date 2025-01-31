@@ -21,10 +21,41 @@ void ProjectServerW::DataForm::ShowDataForm() {
 }
 
 // Процедура создания формы с записью идентификатора в Label_ID
-//void ProjectServerW::DataForm::CreateAndShowDataForm() {
-void ProjectServerW::DataForm::CreateAndShowDataForm(std::queue<std::wstring>& messageQueue, 
-                                                     std::mutex& mtx, 
-                                                     std::condition_variable& cv) {
+void ProjectServerW::DataForm::CreateAndShowDataForm() {
+    DataForm^ form = gcnew DataForm();
+    form->ShowDialog();
+
+    // Инициализация библиотеки COM
+    HRESULT hr = CoInitialize(NULL);
+    if (SUCCEEDED(hr)) {
+        // Генерация уникального идентификатора формы
+        GUID guid;
+        HRESULT result = CoCreateGuid(&guid);
+        if (result == S_OK) {
+            // Преобразование GUID в строку
+            wchar_t guidString[40] = { 0 };
+            int simb_N = StringFromGUID2(guid, guidString, 40);
+
+            String^ formId = gcnew String(guidString);
+
+            // Установка уникального идентификатора в Label_ID
+            form->SetData_FormID_value(formId);
+
+            // Сохранение формы в карте
+            formData_Map[guidString] = form;
+        }
+        // Освобождение библиотеки COM
+        CoUninitialize();
+    }
+    else {
+        // Обработка ошибки инициализации COM
+        MessageBox::Show("Ошибка инициализации COM библиотеки", "Ошибка", MessageBoxButtons::OK, MessageBoxIcon::Error);
+    }
+}
+
+void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wstring>& messageQueue,
+                                                             std::mutex& mtx, 
+                                                             std::condition_variable& cv) {
         DataForm^ form = gcnew DataForm();
     form->ShowDialog();
 

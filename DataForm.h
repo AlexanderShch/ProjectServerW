@@ -128,10 +128,10 @@ namespace ProjectServerW {
 			Label_ID->Text = text;
 		};
 		static void ShowDataForm();
-		//static void CreateAndShowDataForm();
-		static void CreateAndShowDataForm(	std::queue<std::wstring>& messageQueue,
-											std::mutex& mtx,
-											std::condition_variable& cv);
+		static void CreateAndShowDataForm();
+		static void CreateAndShowDataFormInThread(	std::queue<std::wstring>& messageQueue,
+													std::mutex& mtx,
+													std::condition_variable& cv);
 		
 	};
 }

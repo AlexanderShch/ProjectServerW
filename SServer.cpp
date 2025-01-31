@@ -155,11 +155,31 @@ String^ bufferToHex(const char* buffer, int length) {
         char buffer[512];
         int bytesReceived;
 
-        // Открываем форму для демонстрации принятых данных в отдельном потоке
-        std::thread formThread(DataForm::ShowDataForm);
-        formThread.detach(); // Отсоединяем поток от клиентского потока, чтобы он работал независимо
+        //// Открываем форму для демонстрации принятых данных в отдельном потоке
+        //std::thread formThread(DataForm::ShowDataForm);
+        //formThread.detach(); // Отсоединяем поток от клиентского потока, чтобы он работал независимо
 
-        while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
+		std::queue<std::wstring> messageQueue;
+		std::mutex mtx;
+		std::condition_variable cv;
+
+		std::thread formThread([&messageQueue, &mtx, &cv]() {
+			ProjectServerW::DataForm::CreateAndShowDataFormInThread(messageQueue, mtx, cv);
+			});
+		formThread.detach(); // Отсоединяем поток от основного потока, чтобы он работал независимо
+
+		// Ожидание завершения работы потока формы
+		std::wstring guid;
+		{
+			std::unique_lock<std::mutex> lock(mtx);
+			cv.wait(lock, [&messageQueue] { return !messageQueue.empty(); });
+			guid = messageQueue.front();
+			messageQueue.pop();
+		}
+
+		std::wcout << L"GUID: " << guid << std::endl;
+
+		while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
             printCurrentTime();
 
             String^ hexStr = bufferToHex(buffer, bytesReceived);
