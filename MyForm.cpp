@@ -1,6 +1,5 @@
 #include "MyForm.h"
 #include "SServer.h"
-#include <thread>
 
 using namespace ProjectServerW;		// название проекта
 SServer server;

@@ -1,4 +1,5 @@
 #pragma once
+#include "SServer.h"
 
 namespace ProjectServerW {
 

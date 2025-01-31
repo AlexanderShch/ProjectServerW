@@ -1,9 +1,4 @@
 #include "SServer.h" // 
-#include "DataForm.h" //
-#include <sstream>
-#include <iomanip>
-#include <thread>
-#include <msclr/marshal_cppstd.h>
 
 using namespace System::Windows::Forms;
 using namespace ProjectServerW;
