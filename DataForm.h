@@ -39,6 +39,7 @@ namespace ProjectServerW {
 	protected:
 	private: System::Windows::Forms::ToolStripMenuItem^ ‚˚ıÓ‰ToolStripMenuItem;
 	private: System::Windows::Forms::Label^ Label_Data;
+	private: System::Windows::Forms::Label^ Label_ID;
 
 	private:
 		/// <summary>
@@ -56,6 +57,7 @@ namespace ProjectServerW {
 			this->menuStrip1 = (gcnew System::Windows::Forms::MenuStrip());
 			this->‚˚ıÓ‰ToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
 			this->Label_Data = (gcnew System::Windows::Forms::Label());
+			this->Label_ID = (gcnew System::Windows::Forms::Label());
 			this->menuStrip1->SuspendLayout();
 			this->SuspendLayout();
 			// 
@@ -73,24 +75,34 @@ namespace ProjectServerW {
 			// ‚˚ıÓ‰ToolStripMenuItem
 			// 
 			this->‚˚ıÓ‰ToolStripMenuItem->Name = L"‚˚ıÓ‰ToolStripMenuItem";
-			this->‚˚ıÓ‰ToolStripMenuItem->Size = System::Drawing::Size(80, 29);
+			this->‚˚ıÓ‰ToolStripMenuItem->Size = System::Drawing::Size(80, 32);
 			this->‚˚ıÓ‰ToolStripMenuItem->Text = L"¬˚ıÓ‰";
 			this->‚˚ıÓ‰ToolStripMenuItem->Click += gcnew System::EventHandler(this, &DataForm::‚˚ıÓ‰ToolStripMenuItem_Click);
 			// 
 			// Label_Data
 			// 
 			this->Label_Data->AutoSize = true;
-			this->Label_Data->Location = System::Drawing::Point(90, 72);
+			this->Label_Data->Location = System::Drawing::Point(86, 119);
 			this->Label_Data->Name = L"Label_Data";
 			this->Label_Data->Size = System::Drawing::Size(157, 20);
 			this->Label_Data->TabIndex = 1;
 			this->Label_Data->Text = L"ƒ‡ÌÌ˚Â ÓÚ ÍÎËÂÌÚ‡";
+			// 
+			// Label_ID
+			// 
+			this->Label_ID->AutoSize = true;
+			this->Label_ID->Location = System::Drawing::Point(90, 67);
+			this->Label_ID->Name = L"Label_ID";
+			this->Label_ID->Size = System::Drawing::Size(67, 20);
+			this->Label_ID->TabIndex = 2;
+			this->Label_ID->Text = L"Form ID";
 			// 
 			// DataForm
 			// 
 			this->AutoScaleDimensions = System::Drawing::SizeF(9, 20);
 			this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
 			this->ClientSize = System::Drawing::Size(1165, 529);
+			this->Controls->Add(this->Label_ID);
 			this->Controls->Add(this->Label_Data);
 			this->Controls->Add(this->menuStrip1);
 			this->MainMenuStrip = this->menuStrip1;
@@ -108,6 +120,9 @@ namespace ProjectServerW {
 		void SetData_TextValue(String^ text) {
 			Label_Data->Text = text;
 		};
-	public: static void ShowDataForm();
+		void SetData_FormID_value(String^ text) {
+			Label_ID->Text = text;
+		};
+		static void ShowDataForm();
 	};
 }
