@@ -31,19 +31,19 @@ void ProjectServerW::DataForm::CreateAndShowDataForm() {
         // Генерация уникального идентификатора формы
         GUID guid;
         HRESULT result = CoCreateGuid(&guid);
-        //if (result == S_OK) {
+        if (result == S_OK) {
             // Преобразование GUID в строку
-            //wchar_t guidString[40] = { 0 };
-            //int simb_N = StringFromGUID2(guid, guidString, 40);
+            wchar_t guidString[40] = { 0 };
+            int simb_N = StringFromGUID2(guid, guidString, 40);
 
-        //    String^ formId = gcnew String(guidString);
+            String^ formId = gcnew String(guidString);
 
-        //    // Установка уникального идентификатора в Label_ID
-        //    form->SetData_FormID_value(formId);
+            // Установка уникального идентификатора в Label_ID
+            form->SetData_FormID_value(formId);
 
-        //    // Сохранение формы в карте
-        //    formData_Map[guidString] = form;
-        //}
+            // Сохранение формы в карте
+            formData_Map[guidString] = form;
+        }
         // Освобождение библиотеки COM
         CoUninitialize();
     }
