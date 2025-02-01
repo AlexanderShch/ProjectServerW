@@ -14,50 +14,49 @@ System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System::Obje
 	return System::Void();
 }
 
-// "Старая" процедура открытия формы
-void ProjectServerW::DataForm::ShowDataForm() {
-    DataForm^ form = gcnew DataForm();
-    form->ShowDialog();
-}
+//// "Старая" процедура открытия формы
+//void ProjectServerW::DataForm::ShowDataForm() {
+//    DataForm^ form = gcnew DataForm();
+//    form->ShowDialog();
+//}
 
-// Процедура создания формы с записью идентификатора в Label_ID
-void ProjectServerW::DataForm::CreateAndShowDataForm() {
-    DataForm^ form = gcnew DataForm();
-    form->ShowDialog();
-
-    // Инициализация библиотеки COM
-    HRESULT hr = CoInitialize(NULL);
-    if (SUCCEEDED(hr)) {
-        // Генерация уникального идентификатора формы
-        GUID guid;
-        HRESULT result = CoCreateGuid(&guid);
-        if (result == S_OK) {
-            // Преобразование GUID в строку
-            wchar_t guidString[40] = { 0 };
-            int simb_N = StringFromGUID2(guid, guidString, 40);
-
-            String^ formId = gcnew String(guidString);
-
-            // Установка уникального идентификатора в Label_ID
-            form->SetData_FormID_value(formId);
-
-            // Сохранение формы в карте
-            formData_Map[guidString] = form;
-        }
-        // Освобождение библиотеки COM
-        CoUninitialize();
-    }
-    else {
-        // Обработка ошибки инициализации COM
-        MessageBox::Show("Ошибка инициализации COM библиотеки", "Ошибка", MessageBoxButtons::OK, MessageBoxIcon::Error);
-    }
-}
+//// Процедура создания формы с записью идентификатора в Label_ID
+//void ProjectServerW::DataForm::CreateAndShowDataForm() {
+//    DataForm^ form = gcnew DataForm();
+//    form->ShowDialog();
+//
+//    // Инициализация библиотеки COM
+//    HRESULT hr = CoInitialize(NULL);
+//    if (SUCCEEDED(hr)) {
+//        // Генерация уникального идентификатора формы
+//        GUID guid;
+//        HRESULT result = CoCreateGuid(&guid);
+//        if (result == S_OK) {
+//            // Преобразование GUID в строку
+//            wchar_t guidString[40] = { 0 };
+//            int simb_N = StringFromGUID2(guid, guidString, 40);
+//
+//            String^ formId = gcnew String(guidString);
+//
+//            // Установка уникального идентификатора в Label_ID
+//            form->SetData_FormID_value(formId);
+//
+//            // Сохранение формы в карте
+//            formData_Map[guidString] = form;
+//        }
+//        // Освобождение библиотеки COM
+//        CoUninitialize();
+//    }
+//    else {
+//        // Обработка ошибки инициализации COM
+//        MessageBox::Show("Ошибка инициализации COM библиотеки", "Ошибка", MessageBoxButtons::OK, MessageBoxIcon::Error);
+//    }
+//}
 
 void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wstring>& messageQueue,
                                                              std::mutex& mtx, 
                                                              std::condition_variable& cv) {
-        DataForm^ form = gcnew DataForm();
-    form->ShowDialog();
+    DataForm^ form = gcnew DataForm();
 
     // Инициализация библиотеки COM
     HRESULT hr = CoInitialize(NULL);
@@ -74,6 +73,7 @@ void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wst
 
             // Установка уникального идентификатора в Label_ID
             form->SetData_FormID_value(formId);
+			form->Refresh();
 
             // Сохранение формы в карте
             formData_Map[guidString] = form;
@@ -92,4 +92,15 @@ void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wst
          // Обработка ошибки инициализации COM
          MessageBox::Show("Ошибка инициализации COM библиотеки", "Ошибка", MessageBoxButtons::OK, MessageBoxIcon::Error);
     }
+
+	form->ShowDialog();
+}
+
+// Метод для получения формы по её GUID
+DataForm^ ProjectServerW::DataForm::GetFormByGuid(const std::wstring& guid) {
+    auto it = formData_Map.find(guid);
+    if (it != formData_Map.end()) {
+        return it->second;
+    }
+    return nullptr;
 }

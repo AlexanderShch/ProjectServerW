@@ -127,11 +127,11 @@ namespace ProjectServerW {
 		void SetData_FormID_value(String^ text) {
 			Label_ID->Text = text;
 		};
-		static void ShowDataForm();
-		static void CreateAndShowDataForm();
+		//static void ShowDataForm();
+		//static void CreateAndShowDataForm();
 		static void CreateAndShowDataFormInThread(	std::queue<std::wstring>& messageQueue,
 													std::mutex& mtx,
 													std::condition_variable& cv);
-		
+		static DataForm^ GetFormByGuid(const std::wstring& guid);
 	};
 }

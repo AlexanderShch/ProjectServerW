@@ -155,20 +155,24 @@ String^ bufferToHex(const char* buffer, int length) {
         char buffer[512];
         int bytesReceived;
 
-        //// Открываем форму для демонстрации принятых данных в отдельном потоке
-        //std::thread formThread(DataForm::ShowDataForm);
-        //formThread.detach(); // Отсоединяем поток от клиентского потока, чтобы он работал независимо
-
+        // Открываем форму для демонстрации принятых данных в отдельном потоке
+		// Идентификатор формы передаём через очередь сообщений
 		std::queue<std::wstring> messageQueue;
 		std::mutex mtx;
 		std::condition_variable cv;
 
-		std::thread formThread([&messageQueue, &mtx, &cv]() {
-			ProjectServerW::DataForm::CreateAndShowDataFormInThread(messageQueue, mtx, cv);
-			});
-		formThread.detach(); // Отсоединяем поток от основного потока, чтобы он работал независимо
+		try {
+			std::thread formThread([&messageQueue, &mtx, &cv]() {
+				ProjectServerW::DataForm::CreateAndShowDataFormInThread(messageQueue, mtx, cv);
+				});
+			formThread.detach(); // Отсоединяем поток от основного потока, чтобы он работал независимо
+		}
+		catch (const std::exception& e) {
+			std::cerr << "Error creating thread: " << e.what() << std::endl;
+			return 1;
+		}
 
-		// Ожидание завершения работы потока формы
+		// Ожидание идентификатора из очереди сообщений потока формы
 		std::wstring guid;
 		{
 			std::unique_lock<std::mutex> lock(mtx);
@@ -177,14 +181,15 @@ String^ bufferToHex(const char* buffer, int length) {
 			messageQueue.pop();
 		}
 
-		std::wcout << L"GUID: " << guid << std::endl;
+		//std::wcout << L"GUID: " << guid << std::endl;
 
 		while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
             printCurrentTime();
+			String^ hexStr = bufferToHex(buffer, bytesReceived);
 
-            String^ hexStr = bufferToHex(buffer, bytesReceived);
-            DataForm^ form2 = safe_cast<DataForm^>(Application::OpenForms["DataForm"]);
-            if (form2 != nullptr) {
+			// Найдём форму по идентификатору и обновим её
+			DataForm^ form2 = DataForm::GetFormByGuid(guid);
+			if (form2 != nullptr) {
 				form2->Invoke(gcnew Action<String^>(form2, &DataForm::SetData_TextValue), hexStr);
 				form2->Invoke(gcnew Action(form2, &DataForm::Refresh));
 			}
