@@ -43,6 +43,8 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::Label^ SocketState;
 	private: System::Windows::Forms::Label^ SocketBind;
 	private: System::Windows::Forms::Label^ WSAstartup;
+	private: System::Windows::Forms::Label^ ClientAddr;
+	private: System::Windows::Forms::Label^ labelMessage;
 
 
 
@@ -68,6 +70,8 @@ namespace ProjectServerW {
 			this->SocketState = (gcnew System::Windows::Forms::Label());
 			this->SocketBind = (gcnew System::Windows::Forms::Label());
 			this->WSAstartup = (gcnew System::Windows::Forms::Label());
+			this->ClientAddr = (gcnew System::Windows::Forms::Label());
+			this->labelMessage = (gcnew System::Windows::Forms::Label());
 			this->menuStrip1->SuspendLayout();
 			this->SuspendLayout();
 			// 
@@ -78,7 +82,7 @@ namespace ProjectServerW {
 			this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->âûõîäToolStripMenuItem });
 			this->menuStrip1->Location = System::Drawing::Point(0, 0);
 			this->menuStrip1->Name = L"menuStrip1";
-			this->menuStrip1->Size = System::Drawing::Size(786, 33);
+			this->menuStrip1->Size = System::Drawing::Size(786, 36);
 			this->menuStrip1->TabIndex = 0;
 			this->menuStrip1->Text = L"menuStrip1";
 			// 
@@ -145,11 +149,35 @@ namespace ProjectServerW {
 			this->WSAstartup->TabIndex = 6;
 			this->WSAstartup->Text = L"WSA startup";
 			// 
+			// ClientAddr
+			// 
+			this->ClientAddr->AutoSize = true;
+			this->ClientAddr->Font = (gcnew System::Drawing::Font(L"Microsoft Sans Serif", 12, System::Drawing::FontStyle::Regular, System::Drawing::GraphicsUnit::Point,
+				static_cast<System::Byte>(204)));
+			this->ClientAddr->Location = System::Drawing::Point(279, 308);
+			this->ClientAddr->Name = L"ClientAddr";
+			this->ClientAddr->Size = System::Drawing::Size(184, 29);
+			this->ClientAddr->TabIndex = 7;
+			this->ClientAddr->Text = L"Àäðåñ êëèåíòà";
+			// 
+			// labelMessage
+			// 
+			this->labelMessage->AutoSize = true;
+			this->labelMessage->Font = (gcnew System::Drawing::Font(L"Microsoft Sans Serif", 12, System::Drawing::FontStyle::Regular, System::Drawing::GraphicsUnit::Point,
+				static_cast<System::Byte>(204)));
+			this->labelMessage->Location = System::Drawing::Point(31, 371);
+			this->labelMessage->Name = L"labelMessage";
+			this->labelMessage->Size = System::Drawing::Size(150, 29);
+			this->labelMessage->TabIndex = 8;
+			this->labelMessage->Text = L"Ñîîáùåíèå";
+			// 
 			// MyForm
 			// 
 			this->AutoScaleDimensions = System::Drawing::SizeF(9, 20);
 			this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
-			this->ClientSize = System::Drawing::Size(786, 392);
+			this->ClientSize = System::Drawing::Size(786, 442);
+			this->Controls->Add(this->labelMessage);
+			this->Controls->Add(this->ClientAddr);
 			this->Controls->Add(this->WSAstartup);
 			this->Controls->Add(this->SocketBind);
 			this->Controls->Add(this->SocketState);
@@ -177,7 +205,6 @@ namespace ProjectServerW {
 				label_N_port->Text = text;
 			}
 		};
-	public:
 		void SetSocketState_TextValue(String^ text) {
 			if (this != nullptr && this->InvokeRequired) {
 				this->Invoke(gcnew Action<String^>(this, &MyForm::SetSocketState_TextValue), text);
@@ -186,9 +213,7 @@ namespace ProjectServerW {
 				SocketState->Text = text;
 			}
 		};
-	public:
 		void SetSocketBind_TextValue(String^ text) {
-			//SocketBind->Text = text;
 			if (this != nullptr && this->InvokeRequired) {
 				this->Invoke(gcnew Action<String^>(this, &MyForm::SetSocketBind_TextValue), text);
 			}
@@ -196,9 +221,7 @@ namespace ProjectServerW {
 				SocketBind->Text = text;
 			}
 		};
-	public:
 		void SetWSA_TextValue(String^ text) {
-			//WSAstartup->Text = text;
 			if (this != nullptr && this->InvokeRequired) {
 				this->Invoke(gcnew Action<String^>(this, &MyForm::SetWSA_TextValue), text);
 			}
@@ -206,6 +229,21 @@ namespace ProjectServerW {
 				WSAstartup->Text = text;
 			}
 		}
-
-	}; 
+		void SetClientAddr_TextValue(String^ text) {
+			if (this != nullptr && this->InvokeRequired) {
+				this->Invoke(gcnew Action<String^>(this, &MyForm::SetClientAddr_TextValue), text);
+			}
+			else if (this != nullptr && WSAstartup != nullptr) {
+				ClientAddr->Text = text;
+			}
+		}
+		void SetMessage_TextValue(String^ text) {
+			if (this != nullptr && this->InvokeRequired) {
+				this->Invoke(gcnew Action<String^>(this, &MyForm::SetMessage_TextValue), text);
+			}
+			else if (this != nullptr && WSAstartup != nullptr) {
+				labelMessage->Text = text;
+			}
+		}
+	};
 }

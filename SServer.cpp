@@ -75,51 +75,51 @@ void SServer::closeServer() {
 	form->SetTextValue(" ");
 }
 
+// Преобразование IP-адреса в строку
+String^ GetIPString(const SOCKADDR_IN& addr_c) {
+	String^ ipString = String::Format("{0}.{1}.{2}.{3}",
+		addr_c.sin_addr.S_un.S_un_b.s_b1,
+		addr_c.sin_addr.S_un.S_un_b.s_b2,
+		addr_c.sin_addr.S_un.S_un_b.s_b3,
+		addr_c.sin_addr.S_un.S_un_b.s_b4);
+
+	// Добавляем порт
+	int port = ntohs(addr_c.sin_port);
+	String^ fullAddress = String::Format("{0}:{1}", ipString, port);
+
+	return fullAddress;
+}
+
 void SServer::handle() {
 	while (true)
 	{
 		SOCKET acceptS;
 		SOCKADDR_IN addr_c{};
-		int SclientPort = 9000; // Порт Sclient
-		int ClientPort = 0;
+		MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
+
 		int addrlen = sizeof(addr_c);
 		if ((acceptS = accept(this_s, (struct sockaddr*)&addr_c, &addrlen)) != INVALID_SOCKET) {
-			ClientPort = ntohs(addr_c.sin_port);
-			//std::cout << "Client connected from "
-			//<<	to_string(addr_c.sin_addr.S_un.S_un_b.s_b1) << "." 
-			//<<	to_string(addr_c.sin_addr.S_un.S_un_b.s_b2) << "."
-			//<<	to_string(addr_c.sin_addr.S_un.S_un_b.s_b3) << "."
-			//<<	to_string(addr_c.sin_addr.S_un.S_un_b.s_b4) << ":"
-			//<<	ClientPort << std::endl;
+			int ClientPort = ntohs(addr_c.sin_port);
+			String^ address = GetIPString(addr_c);
+			form->SetClientAddr_TextValue(address);
 
             // Создание нового потока для обработки клиента
 			DWORD threadId;
 			HANDLE hThread;
-			if (ClientPort >= SclientPort) {
-				hThread = CreateThread(
-					NULL,                   // Дескриптор безопасности
-					0,                      // Начальный размер стека
-					ClientTextHandler,      // Функция потока текстового клиента
-					(LPVOID)acceptS,        // Параметр функции потока
-					0,                      // Флаги создания
-					&threadId);             // Идентификатор потока
-			} else {
-				hThread = CreateThread(
-					NULL,                   // Дескриптор безопасности
-					0,                      // Начальный размер стека
-					ClientHandler,          // Функция потока
-					(LPVOID)acceptS,        // Параметр функции потока
-					0,                      // Флаги создания
-					&threadId);             // Идентификатор потока
 
-			}
+			hThread = CreateThread(
+				NULL,                   // Дескриптор безопасности
+				0,                      // Начальный размер стека
+				ClientHandler,          // Функция потока
+				(LPVOID)acceptS,		// Параметр функции потока
+				0,                      // Флаги создания
+				&threadId);             // Идентификатор потока
+
             if (hThread == NULL) {
-                std::cout << "Failed to create thread: " << GetLastError() << std::endl;
-                closesocket(acceptS);
+				form->SetMessage_TextValue("Error: Failed to create thread");
+				closesocket(acceptS);
             } else {
-                std::cout << "New thread is created" << std::endl 
-						  << "=====================" 
-						  << std::endl;
+				form->SetMessage_TextValue("Information: New thread was created");
 				CloseHandle(hThread); // Закрытие дескриптора потока
             }
 		}
@@ -128,9 +128,9 @@ void SServer::handle() {
 }
 
 void printCurrentTime() {
-    std::time_t now = std::time(nullptr);
-    std::tm* localTime = std::localtime(&now);
-    std::cout << "Current time: " << std::put_time(localTime, "%Y-%m-%d %H:%M:%S") << std::endl;
+    //std::time_t now = std::time(nullptr);
+    //std::tm* localTime = std::localtime(&now);
+    //std::cout << "Current time: " << std::put_time(localTime, "%Y-%m-%d %H:%M:%S") << std::endl;
 }
 
 // Эта функция принимает буфер и его длину, затем преобразует каждый байт буфера в шестнадцатеричный формат и добавляет его в строку.
@@ -154,11 +154,22 @@ String^ bufferToHex(const char* buffer, int length) {
 
 
     DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
-        SOCKET clientSocket = (SOCKET)lpParam;
+		SOCKADDR_IN clientAddr;
+		int addrLen = sizeof(clientAddr);
+		int clientPort = 0;
+		int SclientPort = 9000; // Порт Sclient
+
+		SOCKET clientSocket = (SOCKET)lpParam;
         char buffer[512];
         int bytesReceived;
+		MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
 
-        // Открываем форму для демонстрации принятых данных в отдельном потоке
+		// Получаем информацию о клиенте
+		if (getpeername(clientSocket, (SOCKADDR*)&clientAddr, &addrLen) != SOCKET_ERROR) {
+			// Преобразуем порт из сетевого в локальный формат
+			clientPort = ntohs(clientAddr.sin_port);
+		}
+		// Открываем форму для демонстрации принятых данных в отдельном потоке
 		// Идентификатор формы передаём через очередь сообщений
 		std::queue<std::wstring> messageQueue;
 		std::mutex mtx;
@@ -181,7 +192,7 @@ String^ bufferToHex(const char* buffer, int length) {
 			ThreadStorage::StoreThread(id, formThread);
 		}
 		catch (const std::exception& e) {	// Обработка исключения, выводим сообщение об ошибке
-			MessageBox::Show(gcnew String(e.what()), "Error", MessageBoxButtons::OK, MessageBoxIcon::Error);
+			form->SetMessage_TextValue("Error: Couldn't create a form in a new thread");
 			return 1;
 		}
 
@@ -194,40 +205,47 @@ String^ bufferToHex(const char* buffer, int length) {
 			messageQueue.pop();
 		}
 		
-		int timeout = 5000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
+		int timeout = 60000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
 
 		// Установка тайм-аута для операций чтения (recv)
 		setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
-
+		String^ managedString{};
 
 		while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
             printCurrentTime();
 			send(clientSocket, buffer, bytesReceived, 0);
-
-			String^ hexStr = bufferToHex(buffer, bytesReceived);
+			
+			if (clientPort < SclientPort) {
+				// Это приём от удалённого устройства, преобразуем в HEX формат
+				managedString = bufferToHex(buffer, bytesReceived);
+			} else {
+				// Это приём от локального клиента, встроенного в компьютер, оставляем в текстовом формате
+				// Конвертация char* в String^
+				managedString = gcnew String(buffer, 0, bytesReceived);
+			}	// конец if
 
 			// Найдём форму по идентификатору и обновим её
 			DataForm^ form2 = DataForm::GetFormByGuid(guid);
 			if (form2 != nullptr) {
-				form2->Invoke(gcnew Action<String^>(form2, &DataForm::SetData_TextValue), hexStr);
+				form2->Invoke(gcnew Action<String^>(form2, &DataForm::SetData_TextValue), managedString);
 				form2->Invoke(gcnew Action(form2, &DataForm::Refresh));
 			}
-		}
+		}	// конец while
 		/*
 		Если функция recv возвращает 0, это означает, что соединение было закрыто клиентом.
 		Если функция recv возвращает SOCKET_ERROR, проверяется код ошибки с помощью функции WSAGetLastError.
 		Если код ошибки равен WSAETIMEDOUT, это означает, что операция чтения завершилась по тайм-ауту.
 		*/
 		if (bytesReceived == 0) {
-			MessageBox::Show("Connection closed by client", "Attention", MessageBoxButtons::OK, MessageBoxIcon::Warning);
+			form->SetMessage_TextValue("Attention: Connection closed by client");
 		}
 		else if (bytesReceived == SOCKET_ERROR) {
 			int error = WSAGetLastError();
 			if (error == WSAETIMEDOUT) {
-				MessageBox::Show("Recv timed out", "Attention", MessageBoxButtons::OK, MessageBoxIcon::Warning);
+				form->SetMessage_TextValue("Attention: Recv timed out");
 			}
 			else {
-				MessageBox::Show("Recv failed: " + error, "Attention", MessageBoxButtons::OK, MessageBoxIcon::Warning);
+				form->SetMessage_TextValue("Attention: Recv failed: " + error);
 			}
 		}
 
@@ -236,94 +254,6 @@ String^ bufferToHex(const char* buffer, int length) {
 		DataForm::CloseForm(guid);
 		// Закрытие потока
 		ThreadStorage::StopThread(id);
-		MessageBox::Show("The thread and form was closed", "Attention", MessageBoxButtons::OK, MessageBoxIcon::Warning);
+		//form->SetMessage_TextValue("Attention: The thread and form was closed");
 		return 0;
    }
-
-DWORD WINAPI SServer::ClientTextHandler(LPVOID lpParam) {
-	SOCKET clientSocket = (SOCKET)lpParam;
-	char buffer[512];
-	int bytesReceived;
-
-	// Открываем форму для демонстрации принятых данных в отдельном потоке
-	// Идентификатор формы передаём через очередь сообщений
-	std::queue<std::wstring> messageQueue;
-	std::mutex mtx;
-	std::condition_variable cv;
-
-	// Идентификатор потока формы
-	std::wstring id;
-
-	try {	// открываем форму в новом потоке, передаём в поток ссылки на очередь сообщений, мьютекс и условную переменную
-		std::thread formThread([&messageQueue, &mtx, &cv]() {
-			ProjectServerW::DataForm::CreateAndShowDataFormInThread(messageQueue, mtx, cv);
-			});
-		formThread.detach(); // Отсоединяем поток формы от основного потока, чтобы он работал независимо
-
-		// Получение Windows thread ID
-		DWORD threadId = GetCurrentThreadId();
-		// Преобразование thread ID в строку
-		id = std::to_wstring(threadId);
-		// Сохраним поток с идентификатором в map
-		ThreadStorage::StoreThread(id, formThread);
-	}
-	catch (const std::exception& e) {	// Обработка исключения, выводим сообщение об ошибке
-		MessageBox::Show(gcnew String(e.what()), "Error", MessageBoxButtons::OK, MessageBoxIcon::Error);
-		return 1;
-	}
-
-	// Ожидание идентификатора из очереди сообщений потока формы
-	std::wstring guid;
-	{
-		std::unique_lock<std::mutex> lock(mtx);
-		cv.wait(lock, [&messageQueue] { return !messageQueue.empty(); });
-		guid = messageQueue.front();
-		messageQueue.pop();
-	}
-
-	int timeout = 60000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
-
-	// Установка тайм-аута для операций чтения (recv)
-	setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
-
-
-	while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
-		printCurrentTime();
-		send(clientSocket, buffer, bytesReceived, 0);
-
-		// Конвертация char* в String^
-		String^ managedString = gcnew String(buffer, 0, bytesReceived);
-
-		// Найдём форму по идентификатору и обновим её
-		DataForm^ form2 = DataForm::GetFormByGuid(guid);
-		if (form2 != nullptr) {
-			form2->Invoke(gcnew Action<String^>(form2, &DataForm::SetData_TextValue), managedString);
-			form2->Invoke(gcnew Action(form2, &DataForm::Refresh));
-		}
-	}
-	/*
-	Если функция recv возвращает 0, это означает, что соединение было закрыто клиентом.
-	Если функция recv возвращает SOCKET_ERROR, проверяется код ошибки с помощью функции WSAGetLastError.
-	Если код ошибки равен WSAETIMEDOUT, это означает, что операция чтения завершилась по тайм-ауту.
-	*/
-	if (bytesReceived == 0) {
-		MessageBox::Show("Connection closed by client", "Attention", MessageBoxButtons::OK, MessageBoxIcon::Warning);
-	}
-	else if (bytesReceived == SOCKET_ERROR) {
-		int error = WSAGetLastError();
-		if (error == WSAETIMEDOUT) {
-			MessageBox::Show("Recv timed out", "Attention", MessageBoxButtons::OK, MessageBoxIcon::Warning);
-		}
-		else {
-			MessageBox::Show("Recv failed: " + error, "Attention", MessageBoxButtons::OK, MessageBoxIcon::Warning);
-		}
-	}
-
-	closesocket(clientSocket);
-	// Найдём форму по идентификатору и закроем её
-	DataForm::CloseForm(guid);
-	// Закрытие потока
-	ThreadStorage::StopThread(id);
-	MessageBox::Show("The thread and form was closed", "Attention", MessageBoxButtons::OK, MessageBoxIcon::Warning);
-	return 0;
-}
