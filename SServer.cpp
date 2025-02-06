@@ -202,6 +202,8 @@ String^ bufferToHex(const char* buffer, int length) {
 
 		while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
             printCurrentTime();
+			send(clientSocket, buffer, bytesReceived, 0);
+
 			String^ hexStr = bufferToHex(buffer, bytesReceived);
 
 			// Найдём форму по идентификатору и обновим её
@@ -239,39 +241,89 @@ String^ bufferToHex(const char* buffer, int length) {
    }
 
 DWORD WINAPI SServer::ClientTextHandler(LPVOID lpParam) {
- //   SOCKET clientSocket = (SOCKET)lpParam;
- //   char buffer[512];
- //   int bytesReceived;
+	SOCKET clientSocket = (SOCKET)lpParam;
+	char buffer[512];
+	int bytesReceived;
 
- //   int timeout = 60000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
-	//
-	//// Установка тайм-аута для операций чтения (recv)
-	//setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
-	//
-	//// Обработка клиента
-	//	while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
-	//		printCurrentTime();
-	//		std::cout << "Received from TEXT client: " << std::string(buffer, bytesReceived) << std::endl;
-	//		send(clientSocket, buffer, bytesReceived, 0);
-	//	}
+	// Открываем форму для демонстрации принятых данных в отдельном потоке
+	// Идентификатор формы передаём через очередь сообщений
+	std::queue<std::wstring> messageQueue;
+	std::mutex mtx;
+	std::condition_variable cv;
 
-	//	/*
-	//	Если функция recv возвращает 0, это означает, что соединение было закрыто клиентом. 
-	//	Если функция recv возвращает SOCKET_ERROR, проверяется код ошибки с помощью функции WSAGetLastError. 
-	//	Если код ошибки равен WSAETIMEDOUT, это означает, что операция чтения завершилась по тайм-ауту.
-	//	*/
-	//	if (bytesReceived == 0) {
-	//		std::cout << "Connection closed by client" << std::endl;
-	//	} else if (bytesReceived == SOCKET_ERROR) {
-	//		int error = WSAGetLastError();
-	//		if (error == WSAETIMEDOUT) {
-	//			std::cout << "Recv timed out" << std::endl;
-	//		} else {
-	//			std::cout << "Recv failed: " << error << std::endl;
-	//		}
- //   }
-	//closesocket(clientSocket);
-	//std::cout << "The thread is closed" << std::endl 
-	//		  << "********************" << std::endl;
-    return 0;
+	// Идентификатор потока формы
+	std::wstring id;
+
+	try {	// открываем форму в новом потоке, передаём в поток ссылки на очередь сообщений, мьютекс и условную переменную
+		std::thread formThread([&messageQueue, &mtx, &cv]() {
+			ProjectServerW::DataForm::CreateAndShowDataFormInThread(messageQueue, mtx, cv);
+			});
+		formThread.detach(); // Отсоединяем поток формы от основного потока, чтобы он работал независимо
+
+		// Получение Windows thread ID
+		DWORD threadId = GetCurrentThreadId();
+		// Преобразование thread ID в строку
+		id = std::to_wstring(threadId);
+		// Сохраним поток с идентификатором в map
+		ThreadStorage::StoreThread(id, formThread);
+	}
+	catch (const std::exception& e) {	// Обработка исключения, выводим сообщение об ошибке
+		MessageBox::Show(gcnew String(e.what()), "Error", MessageBoxButtons::OK, MessageBoxIcon::Error);
+		return 1;
+	}
+
+	// Ожидание идентификатора из очереди сообщений потока формы
+	std::wstring guid;
+	{
+		std::unique_lock<std::mutex> lock(mtx);
+		cv.wait(lock, [&messageQueue] { return !messageQueue.empty(); });
+		guid = messageQueue.front();
+		messageQueue.pop();
+	}
+
+	int timeout = 60000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
+
+	// Установка тайм-аута для операций чтения (recv)
+	setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+
+
+	while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
+		printCurrentTime();
+		send(clientSocket, buffer, bytesReceived, 0);
+
+		// Конвертация char* в String^
+		String^ managedString = gcnew String(buffer, 0, bytesReceived);
+
+		// Найдём форму по идентификатору и обновим её
+		DataForm^ form2 = DataForm::GetFormByGuid(guid);
+		if (form2 != nullptr) {
+			form2->Invoke(gcnew Action<String^>(form2, &DataForm::SetData_TextValue), managedString);
+			form2->Invoke(gcnew Action(form2, &DataForm::Refresh));
+		}
+	}
+	/*
+	Если функция recv возвращает 0, это означает, что соединение было закрыто клиентом.
+	Если функция recv возвращает SOCKET_ERROR, проверяется код ошибки с помощью функции WSAGetLastError.
+	Если код ошибки равен WSAETIMEDOUT, это означает, что операция чтения завершилась по тайм-ауту.
+	*/
+	if (bytesReceived == 0) {
+		MessageBox::Show("Connection closed by client", "Attention", MessageBoxButtons::OK, MessageBoxIcon::Warning);
+	}
+	else if (bytesReceived == SOCKET_ERROR) {
+		int error = WSAGetLastError();
+		if (error == WSAETIMEDOUT) {
+			MessageBox::Show("Recv timed out", "Attention", MessageBoxButtons::OK, MessageBoxIcon::Warning);
+		}
+		else {
+			MessageBox::Show("Recv failed: " + error, "Attention", MessageBoxButtons::OK, MessageBoxIcon::Warning);
+		}
+	}
+
+	closesocket(clientSocket);
+	// Найдём форму по идентификатору и закроем её
+	DataForm::CloseForm(guid);
+	// Закрытие потока
+	ThreadStorage::StopThread(id);
+	MessageBox::Show("The thread and form was closed", "Attention", MessageBoxButtons::OK, MessageBoxIcon::Warning);
+	return 0;
 }
