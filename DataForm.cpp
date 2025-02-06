@@ -1,6 +1,5 @@
 #include "DataForm.h"
 #include <objbase.h>                // Для CoCreateGuid - генерация уникального идентификатора
-#include <map>						// Для использования std::map - структуры, сохраняющей соответствие ID и ссылки на форму
 #include <string>
 #include <vcclr.h>					// Для использования gcroot
 
@@ -13,45 +12,6 @@ System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System::Obje
 	Application::Exit();
 	return System::Void();
 }
-
-//// "Старая" процедура открытия формы
-//void ProjectServerW::DataForm::ShowDataForm() {
-//    DataForm^ form = gcnew DataForm();
-//    form->ShowDialog();
-//}
-
-//// Процедура создания формы с записью идентификатора в Label_ID
-//void ProjectServerW::DataForm::CreateAndShowDataForm() {
-//    DataForm^ form = gcnew DataForm();
-//    form->ShowDialog();
-//
-//    // Инициализация библиотеки COM
-//    HRESULT hr = CoInitialize(NULL);
-//    if (SUCCEEDED(hr)) {
-//        // Генерация уникального идентификатора формы
-//        GUID guid;
-//        HRESULT result = CoCreateGuid(&guid);
-//        if (result == S_OK) {
-//            // Преобразование GUID в строку
-//            wchar_t guidString[40] = { 0 };
-//            int simb_N = StringFromGUID2(guid, guidString, 40);
-//
-//            String^ formId = gcnew String(guidString);
-//
-//            // Установка уникального идентификатора в Label_ID
-//            form->SetData_FormID_value(formId);
-//
-//            // Сохранение формы в карте
-//            formData_Map[guidString] = form;
-//        }
-//        // Освобождение библиотеки COM
-//        CoUninitialize();
-//    }
-//    else {
-//        // Обработка ошибки инициализации COM
-//        MessageBox::Show("Ошибка инициализации COM библиотеки", "Ошибка", MessageBoxButtons::OK, MessageBoxIcon::Error);
-//    }
-//}
 
 void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wstring>& messageQueue,
                                                              std::mutex& mtx, 
@@ -96,6 +56,23 @@ void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wst
 	form->ShowDialog();
 }
 
+// Метод закрытия формы
+void ProjectServerW::DataForm::CloseForm(const std::wstring& guid) {
+    // Находим форму
+    ProjectServerW::DataForm^ form = ProjectServerW::DataForm::GetFormByGuid(guid);
+
+    if (form != nullptr) {
+        // Проверяем, нужен ли Invoke
+        if (form->InvokeRequired) {
+            // Закрываем форму через Invoke
+            form->Invoke(gcnew Action(form, &ProjectServerW::DataForm::Close));
+        }
+        else {
+            form->Close();
+        }
+    }
+}
+        
 // Метод для получения формы по её GUID
 DataForm^ ProjectServerW::DataForm::GetFormByGuid(const std::wstring& guid) {
     auto it = formData_Map.find(guid);
@@ -103,4 +80,35 @@ DataForm^ ProjectServerW::DataForm::GetFormByGuid(const std::wstring& guid) {
         return it->second;
     }
     return nullptr;
+}
+
+// Записываем пару guid и поток в map
+void ThreadStorage::StoreThread(const std::wstring& guid, std::thread& thread) {
+    std::lock_guard<std::mutex> lock(GetMutex());
+    GetThreadMap()[guid] = std::move(thread);
+}
+
+// Останавливаем поток по guid
+void ThreadStorage::StopThread(const std::wstring& guid)
+{
+    std::lock_guard<std::mutex> lock(GetMutex());
+
+    // Ищем поток
+    auto it = GetThreadMap().find(guid);
+    if (it != GetThreadMap().end() && it->second.joinable()) {
+        it->second.join();  // Ждем завершения
+        GetThreadMap().erase(it);  // Удаляем из карты
+    }
+}
+
+// Функция для определения статической переменной map для потока
+std::map<std::wstring, std::thread>& ThreadStorage::GetThreadMap() {
+    static std::map<std::wstring, std::thread> threadMap;
+    return threadMap;
+}
+
+// Функция для определения статической переменной Mutex для потока
+std::mutex& ThreadStorage::GetMutex() {
+    static std::mutex mtx;
+    return mtx;
 }

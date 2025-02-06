@@ -2,6 +2,7 @@
 #include "SServer.h"
 
 #include <mutex>
+#include <map>						// Для использования std::map - структуры, сохраняющей соответствие ID и ссылки на форму
 #include <condition_variable>
 #include <queue>
 
@@ -119,7 +120,9 @@ namespace ProjectServerW {
 
 		}
 #pragma endregion
-	private: System::Void выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e);
+	private: 
+		System::Void выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e);
+
 	public:
 		void SetData_TextValue(String^ text) {
 			Label_Data->Text = text;
@@ -127,11 +130,22 @@ namespace ProjectServerW {
 		void SetData_FormID_value(String^ text) {
 			Label_ID->Text = text;
 		};
-		//static void ShowDataForm();
-		//static void CreateAndShowDataForm();
 		static void CreateAndShowDataFormInThread(	std::queue<std::wstring>& messageQueue,
 													std::mutex& mtx,
 													std::condition_variable& cv);
+		static void CloseForm(const std::wstring& guid);
 		static DataForm^ GetFormByGuid(const std::wstring& guid);
 	};
 }
+
+// Неуправляемый класс для хранения потоков
+class ThreadStorage {
+public:
+	static void StoreThread(const std::wstring& guid, std::thread& thread);
+	static void StopThread(const std::wstring& guid);
+private:
+	// Функция для определения статической переменной Mutex для потока
+	static std::mutex& GetMutex();
+	// Функция для определения статической переменной map для потока
+	static std::map<std::wstring, std::thread>& GetThreadMap();
+};
