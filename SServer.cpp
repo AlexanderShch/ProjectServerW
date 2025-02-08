@@ -214,7 +214,7 @@ String^ bufferToHex(const char* buffer, int length) {
 		while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
             printCurrentTime();
 			send(clientSocket, buffer, bytesReceived, 0);
-			ChartForm::ParseBuffer(buffer, bytesReceived);
+			DataForm::ParseBuffer(buffer, bytesReceived);
 			
 			if (clientPort < SclientPort) {
 				// Это приём от удалённого устройства, преобразуем в HEX формат

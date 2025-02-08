@@ -6,6 +6,8 @@
 #include <condition_variable>
 #include <queue>
 
+#define SQ 6				// sensors quantity for measures (0-4) + sets of T (5, 6) + MB_IO
+
 namespace ProjectServerW {
 
 	using namespace System;
@@ -20,10 +22,14 @@ namespace ProjectServerW {
 	/// </summary>
 	public ref class DataForm : public System::Windows::Forms::Form
 	{
+	private:
+		DataTable^ dataTable;
+
 	public:
 		DataForm(void)
 		{
 			InitializeComponent();
+			InitializeDataTable();
 			//
 			// TODO: добавьте код конструктора
 			//
@@ -38,20 +44,21 @@ namespace ProjectServerW {
 			if (components)
 			{
 				delete components;
-				}
+			}
 		}
 	private: System::Windows::Forms::MenuStrip^ menuStrip1;
 	protected:
 	private: System::Windows::Forms::ToolStripMenuItem^ выходToolStripMenuItem;
 	private: System::Windows::Forms::Label^ Label_Data;
 	private: System::Windows::Forms::Label^ Label_ID;
-	private: System::Windows::Forms::DataGridView^ dataGridView1;
+	private: System::Windows::Forms::DataGridView^ dataGridView;
+
 
 	private:
 		/// <summary>
 		/// Обязательная переменная конструктора.
 		/// </summary>
-		System::ComponentModel::Container ^components;
+		System::ComponentModel::Container^ components;
 
 #pragma region Windows Form Designer generated code
 		/// <summary>
@@ -64,9 +71,9 @@ namespace ProjectServerW {
 			this->выходToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
 			this->Label_Data = (gcnew System::Windows::Forms::Label());
 			this->Label_ID = (gcnew System::Windows::Forms::Label());
-			this->dataGridView1 = (gcnew System::Windows::Forms::DataGridView());
+			this->dataGridView = (gcnew System::Windows::Forms::DataGridView());
 			this->menuStrip1->SuspendLayout();
-			(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView1))->BeginInit();
+			(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView))->BeginInit();
 			this->SuspendLayout();
 			// 
 			// menuStrip1
@@ -76,7 +83,7 @@ namespace ProjectServerW {
 			this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->выходToolStripMenuItem });
 			this->menuStrip1->Location = System::Drawing::Point(0, 0);
 			this->menuStrip1->Name = L"menuStrip1";
-			this->menuStrip1->Size = System::Drawing::Size(1165, 33);
+			this->menuStrip1->Size = System::Drawing::Size(1628, 36);
 			this->menuStrip1->TabIndex = 0;
 			this->menuStrip1->Text = L"menuStrip1";
 			// 
@@ -105,22 +112,25 @@ namespace ProjectServerW {
 			this->Label_ID->TabIndex = 2;
 			this->Label_ID->Text = L"Form ID";
 			// 
-			// dataGridView1
+			// dataGridView
 			// 
-			this->dataGridView1->ColumnHeadersHeightSizeMode = System::Windows::Forms::DataGridViewColumnHeadersHeightSizeMode::AutoSize;
-			this->dataGridView1->Location = System::Drawing::Point(90, 183);
-			this->dataGridView1->Name = L"dataGridView1";
-			this->dataGridView1->RowHeadersWidth = 62;
-			this->dataGridView1->RowTemplate->Height = 28;
-			this->dataGridView1->Size = System::Drawing::Size(240, 150);
-			this->dataGridView1->TabIndex = 3;
+			this->dataGridView->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::ColumnHeader;
+			this->dataGridView->AutoSizeRowsMode = System::Windows::Forms::DataGridViewAutoSizeRowsMode::AllCellsExceptHeaders;
+			this->dataGridView->ColumnHeadersHeightSizeMode = System::Windows::Forms::DataGridViewColumnHeadersHeightSizeMode::AutoSize;
+			this->dataGridView->Dock = System::Windows::Forms::DockStyle::Bottom;
+			this->dataGridView->Location = System::Drawing::Point(0, 229);
+			this->dataGridView->Name = L"dataGridView";
+			this->dataGridView->RowHeadersWidth = 62;
+			this->dataGridView->RowTemplate->Height = 28;
+			this->dataGridView->Size = System::Drawing::Size(1628, 334);
+			this->dataGridView->TabIndex = 3;
 			// 
 			// DataForm
 			// 
 			this->AutoScaleDimensions = System::Drawing::SizeF(9, 20);
 			this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
-			this->ClientSize = System::Drawing::Size(1165, 529);
-			this->Controls->Add(this->dataGridView1);
+			this->ClientSize = System::Drawing::Size(1628, 563);
+			this->Controls->Add(this->dataGridView);
 			this->Controls->Add(this->Label_ID);
 			this->Controls->Add(this->Label_Data);
 			this->Controls->Add(this->menuStrip1);
@@ -129,13 +139,13 @@ namespace ProjectServerW {
 			this->Text = L"Приём данных";
 			this->menuStrip1->ResumeLayout(false);
 			this->menuStrip1->PerformLayout();
-			(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView1))->EndInit();
+			(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView))->EndInit();
 			this->ResumeLayout(false);
 			this->PerformLayout();
 
 		}
 #pragma endregion
-	private: 
+	private:
 		System::Void выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e);
 
 	public:
@@ -145,11 +155,14 @@ namespace ProjectServerW {
 		void SetData_FormID_value(String^ text) {
 			Label_ID->Text = text;
 		};
-		static void CreateAndShowDataFormInThread(	std::queue<std::wstring>& messageQueue,
-													std::mutex& mtx,
-													std::condition_variable& cv);
+		static void CreateAndShowDataFormInThread(std::queue<std::wstring>& messageQueue,
+			std::mutex& mtx,
+			std::condition_variable& cv);
 		static void CloseForm(const std::wstring& guid);
 		static DataForm^ GetFormByGuid(const std::wstring& guid);
+		static void ParseBuffer(const char* buffer, size_t size);
+
+		void InitializeDataTable();
 	};
 }
 
@@ -164,3 +177,4 @@ private:
 	// Функция для определения статической переменной map для потока
 	static std::map<std::wstring, std::thread>& GetThreadMap();
 };
+
