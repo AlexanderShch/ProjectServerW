@@ -15,6 +15,7 @@
 
 #include "MyForm.h"
 #include "DataForm.h"
+#include "Chart.h"
 
 using namespace std;
 

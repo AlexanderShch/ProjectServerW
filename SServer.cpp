@@ -205,7 +205,7 @@ String^ bufferToHex(const char* buffer, int length) {
 			messageQueue.pop();
 		}
 		
-		int timeout = 60000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
+		int timeout = 60*1000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
 
 		// Установка тайм-аута для операций чтения (recv)
 		setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
@@ -214,6 +214,7 @@ String^ bufferToHex(const char* buffer, int length) {
 		while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
             printCurrentTime();
 			send(clientSocket, buffer, bytesReceived, 0);
+			ChartForm::ParseBuffer(buffer, bytesReceived);
 			
 			if (clientPort < SclientPort) {
 				// Это приём от удалённого устройства, преобразуем в HEX формат

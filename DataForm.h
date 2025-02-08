@@ -45,6 +45,7 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::ToolStripMenuItem^ ‚˚ıÓ‰ToolStripMenuItem;
 	private: System::Windows::Forms::Label^ Label_Data;
 	private: System::Windows::Forms::Label^ Label_ID;
+	private: System::Windows::Forms::DataGridView^ dataGridView1;
 
 	private:
 		/// <summary>
@@ -63,7 +64,9 @@ namespace ProjectServerW {
 			this->‚˚ıÓ‰ToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
 			this->Label_Data = (gcnew System::Windows::Forms::Label());
 			this->Label_ID = (gcnew System::Windows::Forms::Label());
+			this->dataGridView1 = (gcnew System::Windows::Forms::DataGridView());
 			this->menuStrip1->SuspendLayout();
+			(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView1))->BeginInit();
 			this->SuspendLayout();
 			// 
 			// menuStrip1
@@ -73,14 +76,14 @@ namespace ProjectServerW {
 			this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->‚˚ıÓ‰ToolStripMenuItem });
 			this->menuStrip1->Location = System::Drawing::Point(0, 0);
 			this->menuStrip1->Name = L"menuStrip1";
-			this->menuStrip1->Size = System::Drawing::Size(1165, 36);
+			this->menuStrip1->Size = System::Drawing::Size(1165, 33);
 			this->menuStrip1->TabIndex = 0;
 			this->menuStrip1->Text = L"menuStrip1";
 			// 
 			// ‚˚ıÓ‰ToolStripMenuItem
 			// 
 			this->‚˚ıÓ‰ToolStripMenuItem->Name = L"‚˚ıÓ‰ToolStripMenuItem";
-			this->‚˚ıÓ‰ToolStripMenuItem->Size = System::Drawing::Size(80, 32);
+			this->‚˚ıÓ‰ToolStripMenuItem->Size = System::Drawing::Size(80, 29);
 			this->‚˚ıÓ‰ToolStripMenuItem->Text = L"¬˚ıÓ‰";
 			this->‚˚ıÓ‰ToolStripMenuItem->Click += gcnew System::EventHandler(this, &DataForm::‚˚ıÓ‰ToolStripMenuItem_Click);
 			// 
@@ -102,11 +105,22 @@ namespace ProjectServerW {
 			this->Label_ID->TabIndex = 2;
 			this->Label_ID->Text = L"Form ID";
 			// 
+			// dataGridView1
+			// 
+			this->dataGridView1->ColumnHeadersHeightSizeMode = System::Windows::Forms::DataGridViewColumnHeadersHeightSizeMode::AutoSize;
+			this->dataGridView1->Location = System::Drawing::Point(90, 183);
+			this->dataGridView1->Name = L"dataGridView1";
+			this->dataGridView1->RowHeadersWidth = 62;
+			this->dataGridView1->RowTemplate->Height = 28;
+			this->dataGridView1->Size = System::Drawing::Size(240, 150);
+			this->dataGridView1->TabIndex = 3;
+			// 
 			// DataForm
 			// 
 			this->AutoScaleDimensions = System::Drawing::SizeF(9, 20);
 			this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
 			this->ClientSize = System::Drawing::Size(1165, 529);
+			this->Controls->Add(this->dataGridView1);
 			this->Controls->Add(this->Label_ID);
 			this->Controls->Add(this->Label_Data);
 			this->Controls->Add(this->menuStrip1);
@@ -115,6 +129,7 @@ namespace ProjectServerW {
 			this->Text = L"œË∏Ï ‰‡ÌÌ˚ı";
 			this->menuStrip1->ResumeLayout(false);
 			this->menuStrip1->PerformLayout();
+			(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView1))->EndInit();
 			this->ResumeLayout(false);
 			this->PerformLayout();
 

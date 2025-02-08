@@ -120,9 +120,11 @@
   <ItemGroup>
     <ClCompile Include="MyForm.cpp" />
     <ClCompile Include="DataForm.cpp" />
+    <ClCompile Include="Chart.cpp" />
     <ClCompile Include="SServer.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Chart.h" />
     <ClInclude Include="MyForm.h">
       <FileType>CppForm</FileType>
     </ClInclude>
