@@ -163,11 +163,11 @@ namespace ProjectServerW {
 		static void ParseBuffer(const char* buffer, size_t size);
 
 		void InitializeDataTable();
-		void AddDataToTable() {	// запуск AddDataToTable без параметров, используетс€ внутренн€€ таблица
+		void AddDataToTable(const char* buffer, size_t size) {	// запуск AddDataToTable без параметров, используетс€ внутренн€€ таблица
 			// ѕередаЄм член класса dataTable
-			AddDataToTable(this->dataTable);
+			AddDataToTable(buffer, size, this->dataTable);
 		}
-		void AddDataToTable(DataTable^ table);
+		void AddDataToTable(const char* buffer, size_t size, DataTable^ table);
 };
 }
 

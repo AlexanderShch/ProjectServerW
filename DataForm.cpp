@@ -157,11 +157,25 @@ void ProjectServerW::DataForm::InitializeDataTable() {
 }
 
 // 2. Добавление данных
-void DataForm::AddDataToTable(DataTable^ table) {
+void DataForm::AddDataToTable(const char* buffer, size_t size, DataTable^ table) {
+    MSGQUEUE_OBJ_t data;
+
+    if (size < sizeof(data)) {
+        return; // Принятых данных слишком мало
+    }
+    memcpy(&data, buffer, sizeof(data));
+
     // Создание новой строки
     DataRow^ row = table->NewRow();
-    row["Time"] = 1010;// data.Time;
-    row["SQ"] = 6;
+    row["Time"] = data.Time;
+    row["SQ"] = data.SensorQuantity;
+    for (uint8_t i = 0; i < SQ; i++)
+    {
+        row["Typ" + i] = data.SensorType[i];
+        row["Act" + i] = data.Active[i];
+        row["T" + i] = data.T[i];
+        row["H" + i] = data.H[i];
+    }
 
     // Добавление строки в таблицу
     table->Rows->Add(row);

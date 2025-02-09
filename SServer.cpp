@@ -228,7 +228,7 @@ String^ bufferToHex(const char* buffer, int length) {
 			DataForm^ form2 = DataForm::GetFormByGuid(guid);
 			if (form2 != nullptr) {
 				form2->Invoke(gcnew Action<String^>(form2, &DataForm::SetData_TextValue), managedString);
-				form2->DataForm::AddDataToTable();
+				form2->DataForm::AddDataToTable(buffer, bytesReceived);
 				form2->Invoke(gcnew Action(form2, &DataForm::Refresh));
 			}
 		}	// конец while
