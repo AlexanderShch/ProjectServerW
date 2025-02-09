@@ -162,19 +162,15 @@ void ProjectServerW::DataForm::InitializeDataTable() {
 }
 
 // 2. Добавление данных
-//void ChatForm::AddDataToTable(DataTable^ table) {
-//    // Создание новой строки
-//    DataRow^ row = table->NewRow();
-//    //row["Time"] = data.Time;
-//    row["SQ"] = 8080;
-//
-//    row["IP"] = "192.168.1.1";
-//    row["Status"] = "Connected";
-//    row["ConnectTime"] = DateTime::Now;
-//
-//    // Добавление строки в таблицу
-//    table->Rows->Add(row);
-//}
+void DataForm::AddDataToTable(DataTable^ table) {
+    // Создание новой строки
+    DataRow^ row = table->NewRow();
+    row["Time"] = 1010;// data.Time;
+    row["SQ"] = 8080;
+
+    // Добавление строки в таблицу
+    table->Rows->Add(row);
+}
 
 // 3. Сохраняем таблицу в EXCEL
 // Установите NuGet пакет EPPlus

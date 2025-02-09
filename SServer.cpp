@@ -215,7 +215,9 @@ String^ bufferToHex(const char* buffer, int length) {
             printCurrentTime();
 			send(clientSocket, buffer, bytesReceived, 0);
 			DataForm::ParseBuffer(buffer, bytesReceived);
-			
+
+			DataTable^ myTable = gcnew DataTable();
+
 			if (clientPort < SclientPort) {
 				// Это приём от удалённого устройства, преобразуем в HEX формат
 				managedString = bufferToHex(buffer, bytesReceived);
@@ -229,6 +231,7 @@ String^ bufferToHex(const char* buffer, int length) {
 			DataForm^ form2 = DataForm::GetFormByGuid(guid);
 			if (form2 != nullptr) {
 				form2->Invoke(gcnew Action<String^>(form2, &DataForm::SetData_TextValue), managedString);
+				form2->DataForm::StartDataAddingThread(myTable);
 				form2->Invoke(gcnew Action(form2, &DataForm::Refresh));
 			}
 		}	// конец while

@@ -160,10 +160,36 @@ namespace ProjectServerW {
 			std::condition_variable& cv);
 		static void CloseForm(const std::wstring& guid);
 		static DataForm^ GetFormByGuid(const std::wstring& guid);
+		
+		// запуск обработки данных в отдельном потоке
+		void ThreadSafeAddDataToTable(DataTable^ table) {	// провер€ет необходимость вызова через Invoke
+			if (this->InvokeRequired) {
+				this->Invoke(gcnew Action<DataTable^>(this, &DataForm::AddDataToTable), table);
+			}
+			else {
+				AddDataToTable(table);
+			}
+		}
+		static void AddDataToTableWrapper(Object^ state) {	// обЄртка дл€ передачи параметров
+			Tuple<DataForm^, DataTable^>^ params = (Tuple<DataForm^, DataTable^>^)state;
+			params->Item1->AddDataToTable(params->Item2);
+		}
+		void StartDataAddingThread(DataTable^ table) {	// запускает поток с параметрами, упаковывает несколько параметров в один контейнер
+			Tuple<DataForm^, DataTable^>^ params = gcnew Tuple<DataForm^, DataTable^>(this, table);
+
+			System::Threading::Thread^ workerThread = gcnew System::Threading::Thread(
+				gcnew System::Threading::ParameterizedThreadStart(AddDataToTableWrapper)
+			);
+
+			workerThread->Start(params);
+		}
+
+
 		static void ParseBuffer(const char* buffer, size_t size);
 
 		void InitializeDataTable();
-	};
+		void AddDataToTable(DataTable^ table);
+};
 }
 
 // Ќеуправл€емый класс дл€ хранени€ потоков
