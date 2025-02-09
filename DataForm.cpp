@@ -146,11 +146,6 @@ void ProjectServerW::DataForm::InitializeDataTable() {
     dataTable->Columns->Add("Time", uint16_t::typeid);
     dataTable->Columns->Add("SQ", uint8_t::typeid);
 
-    //DataGridViewCellStyle^ headerStyle = gcnew DataGridViewCellStyle();
-    //headerStyle->Alignment = DataGridViewContentAlignment::MiddleLeft;
-    //headerStyle->WrapMode = DataGridViewTriState::True;
-
-
     for (uint8_t i = 0; i < SQ; i++)
     {
         dataTable->Columns->Add("Typ" + i, uint8_t::typeid);
@@ -166,7 +161,7 @@ void DataForm::AddDataToTable(DataTable^ table) {
     // Создание новой строки
     DataRow^ row = table->NewRow();
     row["Time"] = 1010;// data.Time;
-    row["SQ"] = 8080;
+    row["SQ"] = 6;
 
     // Добавление строки в таблицу
     table->Rows->Add(row);
