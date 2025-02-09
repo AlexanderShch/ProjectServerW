@@ -143,6 +143,7 @@ std::mutex& ThreadStorage::GetMutex() {
 void ProjectServerW::DataForm::InitializeDataTable() {
     // Создаем таблицу данных
     dataTable = gcnew DataTable("SensorData");
+    dataTable->Columns->Add("RealTime", String::typeid);
     dataTable->Columns->Add("Time", uint16_t::typeid);
     dataTable->Columns->Add("SQ", uint8_t::typeid);
 
@@ -159,6 +160,7 @@ void ProjectServerW::DataForm::InitializeDataTable() {
 // 2. Добавление данных
 void DataForm::AddDataToTable(const char* buffer, size_t size, DataTable^ table) {
     MSGQUEUE_OBJ_t data;
+    DateTime now = DateTime::Now;   // Получение текущего времени
 
     if (size < sizeof(data)) {
         return; // Принятых данных слишком мало
@@ -167,6 +169,7 @@ void DataForm::AddDataToTable(const char* buffer, size_t size, DataTable^ table)
 
     // Создание новой строки
     DataRow^ row = table->NewRow();
+    row["RealTime"] = now.ToString("HH:mm:ss");
     row["Time"] = data.Time;
     row["SQ"] = data.SensorQuantity;
     for (uint8_t i = 0; i < SQ; i++)

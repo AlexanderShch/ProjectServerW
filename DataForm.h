@@ -51,6 +51,8 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::Label^ Label_Data;
 	private: System::Windows::Forms::Label^ Label_ID;
 	private: System::Windows::Forms::DataGridView^ dataGridView;
+	private: System::Windows::Forms::Label^ labelCRC;
+
 
 
 	private:
@@ -71,6 +73,7 @@ namespace ProjectServerW {
 			this->Label_Data = (gcnew System::Windows::Forms::Label());
 			this->Label_ID = (gcnew System::Windows::Forms::Label());
 			this->dataGridView = (gcnew System::Windows::Forms::DataGridView());
+			this->labelCRC = (gcnew System::Windows::Forms::Label());
 			this->menuStrip1->SuspendLayout();
 			(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView))->BeginInit();
 			this->SuspendLayout();
@@ -82,7 +85,7 @@ namespace ProjectServerW {
 			this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->âûõîäToolStripMenuItem });
 			this->menuStrip1->Location = System::Drawing::Point(0, 0);
 			this->menuStrip1->Name = L"menuStrip1";
-			this->menuStrip1->Size = System::Drawing::Size(1628, 36);
+			this->menuStrip1->Size = System::Drawing::Size(1628, 33);
 			this->menuStrip1->TabIndex = 0;
 			this->menuStrip1->Text = L"menuStrip1";
 			// 
@@ -124,11 +127,21 @@ namespace ProjectServerW {
 			this->dataGridView->Size = System::Drawing::Size(1628, 334);
 			this->dataGridView->TabIndex = 3;
 			// 
+			// labelCRC
+			// 
+			this->labelCRC->AutoSize = true;
+			this->labelCRC->Location = System::Drawing::Point(980, 67);
+			this->labelCRC->Name = L"labelCRC";
+			this->labelCRC->Size = System::Drawing::Size(43, 20);
+			this->labelCRC->TabIndex = 4;
+			this->labelCRC->Text = L"CRC";
+			// 
 			// DataForm
 			// 
 			this->AutoScaleDimensions = System::Drawing::SizeF(9, 20);
 			this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
 			this->ClientSize = System::Drawing::Size(1628, 563);
+			this->Controls->Add(this->labelCRC);
 			this->Controls->Add(this->dataGridView);
 			this->Controls->Add(this->Label_ID);
 			this->Controls->Add(this->Label_Data);
@@ -148,6 +161,9 @@ namespace ProjectServerW {
 		System::Void âûõîäToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e);
 
 	public:
+		void SetData_CRC_Value(String^ text) {
+			labelCRC->Text = text;
+		};
 		void SetData_TextValue(String^ text) {
 			Label_Data->Text = text;
 		};
