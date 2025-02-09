@@ -1,35 +1,35 @@
 #include "DataForm.h"
-#include <objbase.h>                // Для CoCreateGuid - генерация уникального идентификатора
+#include <objbase.h>                // пїЅпїЅпїЅ CoCreateGuid - пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 #include <string>
-#include <vcclr.h>					// Для использования gcroot
+#include <vcclr.h>					// пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ gcroot
 
-using namespace ProjectServerW; // Добавлено пространство имен
+using namespace ProjectServerW; // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ
 
-std::map<std::wstring, gcroot<DataForm^>> formData_Map; // Определение переменной formData_Map
+std::map<std::wstring, gcroot<DataForm^>> formData_Map; // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ formData_Map
 
-typedef struct   // object data for Server type из STM32
+typedef struct   // object data for Server type пїЅпїЅ STM32
 {
-    uint16_t Time;				// Количество секунд с момента включения
-    uint8_t SensorQuantity;		// Количество сенсоров
-    uint8_t SensorType[SQ];		// Тип сенсора
-    uint8_t Active[SQ];			// Активность сенсора
-    uint16_t T[SQ];				// Значение 1 сенсора (температура)
-    uint16_t H[SQ];				// Значение 2 сенсора (влажность)
-    uint16_t CRC_SUM;			// Контрольное значение
+    uint16_t Time;				// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+    uint8_t SensorQuantity;		// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+    uint8_t SensorType[SQ];		// пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+    uint8_t Active[SQ];			// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+    uint16_t T[SQ];				// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ 1 пїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ)
+    uint16_t H[SQ];				// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ 2 пїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ)
+    uint16_t CRC_SUM;			// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 } MSGQUEUE_OBJ_t;
 
-// Преобразование данных из буфера в структуру типа MSGQUEUE_OBJ_t из STM32
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ MSGQUEUE_OBJ_t пїЅпїЅ STM32
 void ProjectServerW::DataForm::ParseBuffer(const char* buffer, size_t size) {
 
     MSGQUEUE_OBJ_t data;
 
     if (size < sizeof(data)) {
-        return; // Принятых данных слишком мало
+        return; // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ
     }
     memcpy(&data, buffer, sizeof(data));
 }
 
-System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e)
+System::Void ProjectServerW::DataForm::пїЅпїЅпїЅпїЅпїЅToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e)
 {
 	Application::Exit();
 	return System::Void();
@@ -40,53 +40,53 @@ void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wst
                                                              std::condition_variable& cv) {
     DataForm^ form = gcnew DataForm();
 
-    // Инициализация библиотеки COM
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ COM
     HRESULT hr = CoInitialize(NULL);
     if (SUCCEEDED(hr)) {
-        // Генерация уникального идентификатора формы
+        // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
         GUID guid;
         HRESULT result = CoCreateGuid(&guid);
         if (result == S_OK) {
-            // Преобразование GUID в строку
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ GUID пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
             wchar_t guidString[40] = { 0 };
             int simb_N = StringFromGUID2(guid, guidString, 40);
 
             String^ formId = gcnew String(guidString);
 
-            // Установка уникального идентификатора в Label_ID
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ Label_ID
             form->SetData_FormID_value(formId);
 			form->Refresh();
 
-            // Сохранение формы в карте
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅ
             formData_Map[guidString] = form;
 
-            // Установка значения в очередь сообщений
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
             {
                 std::lock_guard<std::mutex> lock(mtx);
                 messageQueue.push(guidString);
             }
             cv.notify_one();
         }
-        // Освобождение библиотеки COM
+        // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ COM
         CoUninitialize();
     }
     else {
-         // Обработка ошибки инициализации COM
-         MessageBox::Show("Ошибка инициализации COM библиотеки", "Ошибка", MessageBoxButtons::OK, MessageBoxIcon::Error);
+         // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ COM
+         MessageBox::Show("пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ COM пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ", "пїЅпїЅпїЅпїЅпїЅпїЅ", MessageBoxButtons::OK, MessageBoxIcon::Error);
     }
 
 	form->ShowDialog();
 }
 
-// Метод закрытия формы
+// пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 void ProjectServerW::DataForm::CloseForm(const std::wstring& guid) {
-    // Находим форму
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
     ProjectServerW::DataForm^ form = ProjectServerW::DataForm::GetFormByGuid(guid);
 
     if (form != nullptr) {
-        // Проверяем, нужен ли Invoke
+        // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅ пїЅпїЅ Invoke
         if (form->InvokeRequired) {
-            // Закрываем форму через Invoke
+            // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ Invoke
             form->Invoke(gcnew Action(form, &ProjectServerW::DataForm::Close));
         }
         else {
@@ -95,7 +95,7 @@ void ProjectServerW::DataForm::CloseForm(const std::wstring& guid) {
     }
 }
         
-// Метод для получения формы по её GUID
+// пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅ GUID
 DataForm^ ProjectServerW::DataForm::GetFormByGuid(const std::wstring& guid) {
     auto it = formData_Map.find(guid);
     if (it != formData_Map.end()) {
@@ -104,44 +104,44 @@ DataForm^ ProjectServerW::DataForm::GetFormByGuid(const std::wstring& guid) {
     return nullptr;
 }
 
-// Записываем пару guid и поток в map
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ guid пїЅ пїЅпїЅпїЅпїЅпїЅ пїЅ map
 void ThreadStorage::StoreThread(const std::wstring& guid, std::thread& thread) {
     std::lock_guard<std::mutex> lock(GetMutex());
     GetThreadMap()[guid] = std::move(thread);
 }
 
-// Останавливаем поток по guid
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅ guid
 void ThreadStorage::StopThread(const std::wstring& guid)
 {
     std::lock_guard<std::mutex> lock(GetMutex());
 
-    // Ищем поток
+    // пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
     auto it = GetThreadMap().find(guid);
     if (it != GetThreadMap().end() && it->second.joinable()) {
-        it->second.join();  // Ждем завершения
-        GetThreadMap().erase(it);  // Удаляем из карты
+        it->second.join();  // пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+        GetThreadMap().erase(it);  // пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
     }
 }
 
-// Функция для определения статической переменной map для потока
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ map пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
 std::map<std::wstring, std::thread>& ThreadStorage::GetThreadMap() {
     static std::map<std::wstring, std::thread> threadMap;
     return threadMap;
 }
 
-// Функция для определения статической переменной Mutex для потока
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ Mutex пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
 std::mutex& ThreadStorage::GetMutex() {
     static std::mutex mtx;
     return mtx;
 }
 
 /*
-*********** Создаём таблицу *******************
+*********** пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ *******************
 */
 
-// 1. Создаём таблицу данных
+// 1. пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
 void ProjectServerW::DataForm::InitializeDataTable() {
-    // Создаем таблицу данных
+    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
     dataTable = gcnew DataTable("SensorData");
     dataTable->Columns->Add("Time", uint16_t::typeid);
     dataTable->Columns->Add("SQ", uint8_t::typeid);
@@ -156,45 +156,85 @@ void ProjectServerW::DataForm::InitializeDataTable() {
     dataGridView->DataSource = dataTable;
 }
 
-// 2. Добавление данных
+// 2. пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
+#include <windows.h>
+#include <string>
+#include <sstream>
+#include <codecvt>
+
 void DataForm::AddDataToTable(const char* buffer, size_t size, DataTable^ table) {
     MSGQUEUE_OBJ_t data;
 
-    if (size < sizeof(data)) {
-        return; // Принятых данных слишком мало
-    }
+    if (size < sizeof(data)) return;
     memcpy(&data, buffer, sizeof(data));
 
-    // Создание новой строки
     DataRow^ row = table->NewRow();
+    
+    // РћСЃРЅРѕРІРЅС‹Рµ РїРѕР»СЏ
     row["Time"] = data.Time;
     row["SQ"] = data.SensorQuantity;
-    for (uint8_t i = 0; i < SQ; i++)
-    {
+
+    // Р”Р°РЅРЅС‹Рµ РґР°С‚С‡РёРєРѕРІ
+    for (uint8_t i = 0; i < SQ; i++) {
         row["Typ" + i] = data.SensorType[i];
         row["Act" + i] = data.Active[i];
         row["T" + i] = data.T[i];
         row["H" + i] = data.H[i];
     }
 
-    // Добавление строки в таблицу
     table->Rows->Add(row);
+
+    // РљРѕРЅРІРµСЂС‚Р°С†РёСЏ Р±РёРЅР°СЂРЅС‹С… РґР°РЅРЅС‹С… РІ HEX-СЃС‚СЂРѕРєСѓ
+    std::stringstream hex_stream;
+    for(size_t i = 0; i < sizeof(data); ++i) {
+        hex_stream << std::hex << std::setw(2) << std::setfill('0') 
+                 << static_cast<int>(buffer[i]);
+    }
+    std::string hex_str = hex_stream.str();
+
+    // РџРѕРґРіРѕС‚РѕРІРєР° РєРѕРјР°РЅРґРЅРѕР№ СЃС‚СЂРѕРєРё
+    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+    std::wstring command = L"python create_excel.py " + converter.from_bytes(hex_str);
+
+    // Р—Р°РїСѓСЃРє РїСЂРѕС†РµСЃСЃР°
+    STARTUPINFOW si = {sizeof(STARTUPINFOW)};
+    PROCESS_INFORMATION pi;
+    
+    if(CreateProcessW(
+        NULL,                   // РСЃРїРѕР»РЅСЏРµРјС‹Р№ РјРѕРґСѓР»СЊ (Р±РµСЂРµС‚СЃСЏ РёР· РєРѕРјР°РЅРґРЅРѕР№ СЃС‚СЂРѕРєРё)
+        &command[0],            // РљРѕРјР°РЅРґРЅР°СЏ СЃС‚СЂРѕРєР°
+        NULL,                   // РђС‚СЂРёР±СѓС‚С‹ Р±РµР·РѕРїР°СЃРЅРѕСЃС‚Рё РїСЂРѕС†РµСЃСЃР°
+        NULL,                   // РђС‚СЂРёР±СѓС‚С‹ Р±РµР·РѕРїР°СЃРЅРѕСЃС‚Рё РїРѕС‚РѕРєР°
+        FALSE,                  // РќР°СЃР»РµРґРѕРІР°РЅРёРµ РґРµСЃРєСЂРёРїС‚РѕСЂРѕРІ
+        CREATE_NO_WINDOW,       // Р¤Р»Р°РіРё СЃРѕР·РґР°РЅРёСЏ
+        NULL,                   // РћРєСЂСѓР¶РµРЅРёРµ
+        NULL,                   // РўРµРєСѓС‰Р°СЏ РґРёСЂРµРєС‚РѕСЂРёСЏ
+        &si,                    // STARTUPINFO
+        &pi                     // PROCESS_INFORMATION
+    )) {
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    } else {
+        // РћР±СЂР°Р±РѕС‚РєР° РѕС€РёР±РєРё
+        DWORD err = GetLastError();
+        std::wcerr << L"CreateProcess failed (" << err << L")" << std::endl;
+    }
 }
 
-// 3. Сохраняем таблицу в EXCEL
-// Установите NuGet пакет EPPlus
+// 3. пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ EXCEL
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ NuGet пїЅпїЅпїЅпїЅпїЅ EPPlus
 //using namespace OfficeOpenXml;
 //
 //void SaveToExcelEPPlus(DataTable^ table, String^ filePath) {
 //    ExcelPackage^ package = gcnew ExcelPackage();
 //    ExcelWorksheet^ worksheet = package->Workbook->Worksheets->Add("Sheet1");
 //
-//    // Записываем заголовки
+//    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 //    for (int i = 0; i < table->Columns->Count; i++) {
 //        worksheet->Cells[1, i + 1]->Value = table->Columns[i]->ColumnName;
 //    }
 //
-//    // Записываем данные
+//    // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
 //    for (int i = 0; i < table->Rows->Count; i++) {
 //        for (int j = 0; j < table->Columns->Count; j++) {
 //            worksheet->Cells[i + 2, j + 1]->Value =

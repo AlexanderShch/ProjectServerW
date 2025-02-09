@@ -2,9 +2,12 @@
 #include "SServer.h"
 
 #include <mutex>
-#include <map>						// Для использования std::map - структуры, сохраняющей соответствие ID и ссылки на форму
+#include <map>						// пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ std::map - пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ ID пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 #include <condition_variable>
 #include <queue>
+
+#include <cstdlib> // Р”Р»СЏ system()
+#include <sstream>
 
 #define SQ 6				// sensors quantity for measures (0-4) + sets of T (5, 6) + MB_IO
 
@@ -18,25 +21,25 @@ namespace ProjectServerW {
 	using namespace System::Drawing;
 
 	/// <summary>
-	/// Сводка для DataForm
+	/// пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ DataForm
 	/// </summary>
 	public ref class DataForm : public System::Windows::Forms::Form
 	{
 	private:
-		DataTable^ dataTable;  // Объявление таблицы как члена класса
+		DataTable^ dataTable;  // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
 	public:
 		DataForm(void)
 		{
 			InitializeComponent();
 			InitializeDataTable();
 			//
-			// TODO: добавьте код конструктора
+			// TODO: пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 			//
 		}
 
 	protected:
 		/// <summary>
-		/// Освободить все используемые ресурсы.
+		/// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
 		/// </summary>
 		~DataForm()
 		{
@@ -47,7 +50,7 @@ namespace ProjectServerW {
 		}
 	private: System::Windows::Forms::MenuStrip^ menuStrip1;
 	protected:
-	private: System::Windows::Forms::ToolStripMenuItem^ выходToolStripMenuItem;
+	private: System::Windows::Forms::ToolStripMenuItem^ пїЅпїЅпїЅпїЅпїЅToolStripMenuItem;
 	private: System::Windows::Forms::Label^ Label_Data;
 	private: System::Windows::Forms::Label^ Label_ID;
 	private: System::Windows::Forms::DataGridView^ dataGridView;
@@ -55,19 +58,19 @@ namespace ProjectServerW {
 
 	private:
 		/// <summary>
-		/// Обязательная переменная конструктора.
+		/// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ.
 		/// </summary>
 		System::ComponentModel::Container^ components;
 
 #pragma region Windows Form Designer generated code
 		/// <summary>
-		/// Требуемый метод для поддержки конструктора — не изменяйте 
-		/// содержимое этого метода с помощью редактора кода.
+		/// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ 
+		/// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ.
 		/// </summary>
 		void InitializeComponent(void)
 		{
 			this->menuStrip1 = (gcnew System::Windows::Forms::MenuStrip());
-			this->выходToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
+			this->пїЅпїЅпїЅпїЅпїЅToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
 			this->Label_Data = (gcnew System::Windows::Forms::Label());
 			this->Label_ID = (gcnew System::Windows::Forms::Label());
 			this->dataGridView = (gcnew System::Windows::Forms::DataGridView());
@@ -79,19 +82,19 @@ namespace ProjectServerW {
 			// 
 			this->menuStrip1->GripMargin = System::Windows::Forms::Padding(2, 2, 0, 2);
 			this->menuStrip1->ImageScalingSize = System::Drawing::Size(24, 24);
-			this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->выходToolStripMenuItem });
+			this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->пїЅпїЅпїЅпїЅпїЅToolStripMenuItem });
 			this->menuStrip1->Location = System::Drawing::Point(0, 0);
 			this->menuStrip1->Name = L"menuStrip1";
 			this->menuStrip1->Size = System::Drawing::Size(1628, 36);
 			this->menuStrip1->TabIndex = 0;
 			this->menuStrip1->Text = L"menuStrip1";
 			// 
-			// выходToolStripMenuItem
+			// пїЅпїЅпїЅпїЅпїЅToolStripMenuItem
 			// 
-			this->выходToolStripMenuItem->Name = L"выходToolStripMenuItem";
-			this->выходToolStripMenuItem->Size = System::Drawing::Size(80, 29);
-			this->выходToolStripMenuItem->Text = L"Выход";
-			this->выходToolStripMenuItem->Click += gcnew System::EventHandler(this, &DataForm::выходToolStripMenuItem_Click);
+			this->пїЅпїЅпїЅпїЅпїЅToolStripMenuItem->Name = L"пїЅпїЅпїЅпїЅпїЅToolStripMenuItem";
+			this->пїЅпїЅпїЅпїЅпїЅToolStripMenuItem->Size = System::Drawing::Size(80, 29);
+			this->пїЅпїЅпїЅпїЅпїЅToolStripMenuItem->Text = L"пїЅпїЅпїЅпїЅпїЅ";
+			this->пїЅпїЅпїЅпїЅпїЅToolStripMenuItem->Click += gcnew System::EventHandler(this, &DataForm::пїЅпїЅпїЅпїЅпїЅToolStripMenuItem_Click);
 			// 
 			// Label_Data
 			// 
@@ -100,7 +103,7 @@ namespace ProjectServerW {
 			this->Label_Data->Name = L"Label_Data";
 			this->Label_Data->Size = System::Drawing::Size(157, 20);
 			this->Label_Data->TabIndex = 1;
-			this->Label_Data->Text = L"Данные от клиента";
+			this->Label_Data->Text = L"пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ";
 			// 
 			// Label_ID
 			// 
@@ -135,7 +138,7 @@ namespace ProjectServerW {
 			this->Controls->Add(this->menuStrip1);
 			this->MainMenuStrip = this->menuStrip1;
 			this->Name = L"DataForm";
-			this->Text = L"Приём данных";
+			this->Text = L"пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ";
 			this->menuStrip1->ResumeLayout(false);
 			this->menuStrip1->PerformLayout();
 			(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView))->EndInit();
@@ -145,7 +148,7 @@ namespace ProjectServerW {
 		}
 #pragma endregion
 	private:
-		System::Void выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e);
+		System::Void пїЅпїЅпїЅпїЅпїЅToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e);
 
 	public:
 		void SetData_TextValue(String^ text) {
@@ -163,23 +166,23 @@ namespace ProjectServerW {
 		static void ParseBuffer(const char* buffer, size_t size);
 
 		void InitializeDataTable();
-		void AddDataToTable(const char* buffer, size_t size) {	// запуск AddDataToTable без параметров, используется внутренняя таблица
-			// Передаём член класса dataTable
+		void AddDataToTable(const char* buffer, size_t size) {	// пїЅпїЅпїЅпїЅпїЅпїЅ AddDataToTable пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ, пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+			// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ dataTable
 			AddDataToTable(buffer, size, this->dataTable);
 		}
 		void AddDataToTable(const char* buffer, size_t size, DataTable^ table);
 };
 }
 
-// Неуправляемый класс для хранения потоков
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 class ThreadStorage {
 public:
 	static void StoreThread(const std::wstring& guid, std::thread& thread);
 	static void StopThread(const std::wstring& guid);
 private:
-	// Функция для определения статической переменной Mutex для потока
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ Mutex пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
 	static std::mutex& GetMutex();
-	// Функция для определения статической переменной map для потока
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ map пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
 	static std::map<std::wstring, std::thread>& GetThreadMap();
 };
 
