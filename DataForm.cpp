@@ -39,8 +39,13 @@ System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System::Obje
 
 System::Void ProjectServerW::DataForm::buttonEXCEL_Click(System::Object^ sender, System::EventArgs^ e)
 {
-    ProjectServerW::DataForm::AddDataToExcel(); 
-    //return System::Void();
+    // Отключаем кнопку на время обработки
+    buttonExcel->Enabled = false;
+
+    // Создаем и запускаем поток
+    excelThread = gcnew Thread(gcnew ThreadStart(this, &DataForm::AddDataToExcel));
+    excelThread->IsBackground = true;
+    excelThread->Start();
 }
 
 void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wstring>& messageQueue,
@@ -196,6 +201,13 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
 // 3. Сохраняем таблицу в EXCEL
 void ProjectServerW::DataForm::AddDataToExcel() {
     try {
+        // DataTable не является потокобезопасной структурой, в Excel будем перегонять копию
+        System::Data::DataTable^ copiedTable = dataTable->Copy();
+        // Последняя строка может быть не запонена полностью, её удалим
+        if (copiedTable->Rows->Count > 0) {
+            copiedTable->Rows->RemoveAt(copiedTable->Rows->Count - 1);
+        }
+
         ExcelHelper^ excel = gcnew ExcelHelper();
         if (excel->CreateNewWorkbook()) {
             Microsoft::Office::Interop::Excel::Worksheet^ ws = excel->GetWorksheet();
@@ -214,7 +226,7 @@ void ProjectServerW::DataForm::AddDataToExcel() {
 
             // Данные
             int row = 2;
-            for each (DataRow ^ dr in dataTable->Rows)
+            for each (DataRow ^ dr in copiedTable->Rows)
             {
                 ws->Cells[row, 1] = dr["RealTime"]->ToString();
                 ws->Cells[row, 2] = Convert::ToInt32(dr["Time"]);
@@ -232,9 +244,21 @@ void ProjectServerW::DataForm::AddDataToExcel() {
             // Сохранение
             excel->SaveAs("D:\\SensorData.xlsx");
             excel->Close();
+            // Освободим память от копии таблицы
+            delete copiedTable;
         }
     }
     catch (Exception^ ex) {
         MessageBox::Show("Excel error: " + ex->Message);
     }
+    finally
+    {
+        // Включаем кнопку обратно
+        this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::EnableButton));
+    }
+}
+
+void DataForm::EnableButton()
+{
+    buttonExcel->Enabled = true;
 }

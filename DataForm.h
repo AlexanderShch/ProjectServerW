@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <queue>
 
+
 #define SQ 6				// sensors quantity for measures (0-4) + sets of T (5, 6) + MB_IO
 
 namespace ProjectServerW {
@@ -16,6 +17,7 @@ namespace ProjectServerW {
 	using namespace System::Windows::Forms;
 	using namespace System::Data;
 	using namespace System::Drawing;
+	using namespace System::Threading;
 
 	/// <summary>
 	/// Сводка для DataForm
@@ -24,6 +26,7 @@ namespace ProjectServerW {
 	{
 	private:
 		System::Data::DataTable^ dataTable;  // Объявление таблицы как члена класса
+		Thread^ excelThread;				// Объявим объект для работы с Excel в отдельном потоке
 	public:
 		DataForm(void)
 		{
@@ -201,7 +204,9 @@ namespace ProjectServerW {
 		void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, System::Data::DataTable^ table);
 		void ProjectServerW::DataForm::AddDataToExcel();
 	
-	};
+		void EnableButton();
+
+};
 }
 
 // Неуправляемый класс для хранения потоков
