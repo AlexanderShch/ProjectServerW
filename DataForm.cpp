@@ -1,4 +1,5 @@
 #include "DataForm.h"
+#include "Chart.h"
 #include <objbase.h>                // Для CoCreateGuid - генерация уникального идентификатора
 #include <string>
 #include <vcclr.h>					// Для использования gcroot
@@ -31,8 +32,15 @@ void ProjectServerW::DataForm::ParseBuffer(const char* buffer, size_t size) {
 
 System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e)
 {
-	Application::Exit();
+    ProjectServerW::DataForm::Close();
+    System::Windows::Forms::Application::Exit();
 	return System::Void();
+}
+
+System::Void ProjectServerW::DataForm::buttonEXCEL_Click(System::Object^ sender, System::EventArgs^ e)
+{
+    ProjectServerW::DataForm::AddDataToExcel(); 
+    //return System::Void();
 }
 
 void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wstring>& messageQueue,
@@ -87,7 +95,7 @@ void ProjectServerW::DataForm::CloseForm(const std::wstring& guid) {
         // Проверяем, нужен ли Invoke
         if (form->InvokeRequired) {
             // Закрываем форму через Invoke
-            form->Invoke(gcnew Action(form, &ProjectServerW::DataForm::Close));
+            form->Invoke(gcnew System::Action(form, &ProjectServerW::DataForm::Close));
         }
         else {
             form->Close();
@@ -142,7 +150,8 @@ std::mutex& ThreadStorage::GetMutex() {
 // 1. Создаём таблицу данных
 void ProjectServerW::DataForm::InitializeDataTable() {
     // Создаем таблицу данных
-    dataTable = gcnew DataTable("SensorData");
+    dataTable = gcnew System::Data::DataTable("SensorData");
+ 
     dataTable->Columns->Add("RealTime", String::typeid);
     dataTable->Columns->Add("Time", uint16_t::typeid);
     dataTable->Columns->Add("SQ", uint8_t::typeid);
@@ -158,7 +167,7 @@ void ProjectServerW::DataForm::InitializeDataTable() {
 }
 
 // 2. Добавление данных
-void DataForm::AddDataToTable(const char* buffer, size_t size, DataTable^ table) {
+void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, System::Data::DataTable^ table) {
     MSGQUEUE_OBJ_t data;
     DateTime now = DateTime::Now;   // Получение текущего времени
 
@@ -185,25 +194,47 @@ void DataForm::AddDataToTable(const char* buffer, size_t size, DataTable^ table)
 }
 
 // 3. Сохраняем таблицу в EXCEL
-// Установите NuGet пакет EPPlus
-//using namespace OfficeOpenXml;
-//
-//void SaveToExcelEPPlus(DataTable^ table, String^ filePath) {
-//    ExcelPackage^ package = gcnew ExcelPackage();
-//    ExcelWorksheet^ worksheet = package->Workbook->Worksheets->Add("Sheet1");
-//
-//    // Записываем заголовки
-//    for (int i = 0; i < table->Columns->Count; i++) {
-//        worksheet->Cells[1, i + 1]->Value = table->Columns[i]->ColumnName;
-//    }
-//
-//    // Записываем данные
-//    for (int i = 0; i < table->Rows->Count; i++) {
-//        for (int j = 0; j < table->Columns->Count; j++) {
-//            worksheet->Cells[i + 2, j + 1]->Value =
-//                table->Rows[i][j]->ToString();
-//        }
-//    }
-//
-//    package->SaveAs(gcnew System::IO::FileInfo(filePath));
-//}
+void ProjectServerW::DataForm::AddDataToExcel() {
+    try {
+        ExcelHelper^ excel = gcnew ExcelHelper();
+        if (excel->CreateNewWorkbook()) {
+            Microsoft::Office::Interop::Excel::Worksheet^ ws = excel->GetWorksheet();
+
+            // Заголовки
+            ws->Cells[1, 1] = "RealTime";
+            ws->Cells[1, 2] = "Time";
+            ws->Cells[1, 3] = "SQ";
+            for (uint8_t i = 0; i < SQ; i++)
+            {
+                ws->Cells[1, 4 + 4*i] = "Typ" + i;
+                ws->Cells[1, 5 + 4*i] = "Act" + i;
+                ws->Cells[1, 6 + 4*i] = "T" + i;
+                ws->Cells[1, 7 + 4*i] = "H" + i;
+            }
+
+            // Данные
+            int row = 2;
+            for each (DataRow ^ dr in dataTable->Rows)
+            {
+                ws->Cells[row, 1] = dr["RealTime"]->ToString();
+                ws->Cells[row, 2] = Convert::ToInt32(dr["Time"]);
+                ws->Cells[row, 3] = Convert::ToUInt16(dr["SQ"]);
+                for (uint8_t i = 0; i < SQ; i++)
+                {
+                    ws->Cells[row, 4 + 4*i] = Convert::ToUInt16(dr["Typ" + i]);
+                    ws->Cells[row, 5 + 4*i] = Convert::ToUInt16(dr["Act" + i]);
+                    ws->Cells[row, 6 + 4*i] = Convert::ToInt32(dr["T" + i]);
+                    ws->Cells[row, 7 + 4*i] = Convert::ToInt32(dr["H" + i]);
+                }
+                row++;
+            }
+
+            // Сохранение
+            excel->SaveAs("D:\\SensorData.xlsx");
+            excel->Close();
+        }
+    }
+    catch (Exception^ ex) {
+        MessageBox::Show("Excel error: " + ex->Message);
+    }
+}

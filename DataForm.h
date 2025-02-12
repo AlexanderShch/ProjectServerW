@@ -23,7 +23,7 @@ namespace ProjectServerW {
 	public ref class DataForm : public System::Windows::Forms::Form
 	{
 	private:
-		DataTable^ dataTable;  // Объявление таблицы как члена класса
+		System::Data::DataTable^ dataTable;  // Объявление таблицы как члена класса
 	public:
 		DataForm(void)
 		{
@@ -52,6 +52,8 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::Label^ Label_ID;
 	private: System::Windows::Forms::DataGridView^ dataGridView;
 	private: System::Windows::Forms::Label^ labelCRC;
+	private: System::Windows::Forms::Button^ buttonExcel;
+
 
 
 
@@ -74,6 +76,7 @@ namespace ProjectServerW {
 			this->Label_ID = (gcnew System::Windows::Forms::Label());
 			this->dataGridView = (gcnew System::Windows::Forms::DataGridView());
 			this->labelCRC = (gcnew System::Windows::Forms::Label());
+			this->buttonExcel = (gcnew System::Windows::Forms::Button());
 			this->menuStrip1->SuspendLayout();
 			(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView))->BeginInit();
 			this->SuspendLayout();
@@ -136,11 +139,22 @@ namespace ProjectServerW {
 			this->labelCRC->TabIndex = 4;
 			this->labelCRC->Text = L"CRC";
 			// 
+			// buttonExcel
+			// 
+			this->buttonExcel->Location = System::Drawing::Point(1381, 56);
+			this->buttonExcel->Name = L"buttonExcel";
+			this->buttonExcel->Size = System::Drawing::Size(207, 42);
+			this->buttonExcel->TabIndex = 5;
+			this->buttonExcel->Text = L"Запись в EXCEL";
+			this->buttonExcel->UseVisualStyleBackColor = true;
+			this->buttonExcel->Click += gcnew System::EventHandler(this, &DataForm::buttonEXCEL_Click);
+			// 
 			// DataForm
 			// 
 			this->AutoScaleDimensions = System::Drawing::SizeF(9, 20);
 			this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
 			this->ClientSize = System::Drawing::Size(1628, 563);
+			this->Controls->Add(this->buttonExcel);
 			this->Controls->Add(this->labelCRC);
 			this->Controls->Add(this->dataGridView);
 			this->Controls->Add(this->Label_ID);
@@ -159,6 +173,7 @@ namespace ProjectServerW {
 #pragma endregion
 	private:
 		System::Void выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e);
+		System::Void buttonEXCEL_Click(System::Object^ sender, System::EventArgs^ e);
 
 	public:
 		void SetData_CRC_Value(String^ text) {
@@ -179,12 +194,14 @@ namespace ProjectServerW {
 		static void ParseBuffer(const char* buffer, size_t size);
 
 		void InitializeDataTable();
-		void AddDataToTable(const char* buffer, size_t size) {	// запуск AddDataToTable без параметров, используется внутренняя таблица
+		void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size) {	// запуск AddDataToTable без параметров, используется внутренняя таблица
 			// Передаём член класса dataTable
-			AddDataToTable(buffer, size, this->dataTable);
+			ProjectServerW::DataForm::AddDataToTable(buffer, size, this->dataTable);
 		}
-		void AddDataToTable(const char* buffer, size_t size, DataTable^ table);
-};
+		void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, System::Data::DataTable^ table);
+		void ProjectServerW::DataForm::AddDataToExcel();
+	
+	};
 }
 
 // Неуправляемый класс для хранения потоков

@@ -1,10 +1,9 @@
 #pragma once
 #include "DataForm.h"
 
-//#using <mscorlib.dll>
-//#using <System.dll>
-//#using <C:\Windows\assembly\GAC_MSIL\Microsoft.Office.Interop.Excel\15.0.0.0__71e9bce111e9429c\Microsoft.Office.Interop.Excel.dll>
-//#using "Microsoft.Office.Interop.Excel.dll"
+#using <C:\Windows\assembly\GAC_MSIL\Microsoft.Office.Interop.Excel\15.0.0.0__71e9bce111e9429c\Microsoft.Office.Interop.Excel.dll>
+#using <mscorlib.dll>
+#using <System.dll>
 
 using namespace System;
 using namespace System::Runtime::InteropServices;
@@ -64,6 +63,11 @@ public:
         }
     }
 
+    // Метод для получения worksheet
+    Microsoft::Office::Interop::Excel::Worksheet^ GetWorksheet() {
+        return worksheet;
+    }
+
     bool SaveAs(String^ filename) {
         if (!isInitialized || workbook == nullptr) return false;
 
@@ -99,6 +103,7 @@ public:
             excel->Quit();
         }
 
+        // освобождаем ресурсы
         ReleaseComObject(worksheet);
         ReleaseComObject(workbook);
         ReleaseComObject(excel);
@@ -107,7 +112,8 @@ public:
         workbook = nullptr;
         excel = nullptr;
         isInitialized = false;
-
+        
+        // запускаем системный сборщик мусора
         GC::Collect();
         GC::WaitForPendingFinalizers();
     }
