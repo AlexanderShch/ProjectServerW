@@ -26,7 +26,14 @@ namespace ProjectServerW {
 	{
 	private:
 		System::Data::DataTable^ dataTable;  // Îáúÿâëåíèå òàáëèöû êàê ÷ëåíà êëàññà
-		Thread^ excelThread;				// Îáúÿâèì îáúåêò äëÿ ðàáîòû ñ Excel â îòäåëüíîì ïîòîêå
+	private: System::Windows::Forms::TabControl^ tabControl1;
+	private: System::Windows::Forms::TabPage^ tabPage1;
+	private: System::Windows::Forms::TabPage^ tabPage2;
+	private: System::Windows::Forms::DataGridView^ dataGridView;
+
+
+
+		   Thread^ excelThread;				// Îáúÿâèì îáúåêò äëÿ ðàáîòû ñ Excel â îòäåëüíîì ïîòîêå
 	public:
 		DataForm(void)
 		{
@@ -53,7 +60,7 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::ToolStripMenuItem^ âûõîäToolStripMenuItem;
 	private: System::Windows::Forms::Label^ Label_Data;
 	private: System::Windows::Forms::Label^ Label_ID;
-	private: System::Windows::Forms::DataGridView^ dataGridView;
+
 	private: System::Windows::Forms::Label^ labelCRC;
 	private: System::Windows::Forms::Button^ buttonExcel;
 
@@ -77,10 +84,15 @@ namespace ProjectServerW {
 			this->âûõîäToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
 			this->Label_Data = (gcnew System::Windows::Forms::Label());
 			this->Label_ID = (gcnew System::Windows::Forms::Label());
-			this->dataGridView = (gcnew System::Windows::Forms::DataGridView());
 			this->labelCRC = (gcnew System::Windows::Forms::Label());
 			this->buttonExcel = (gcnew System::Windows::Forms::Button());
+			this->tabControl1 = (gcnew System::Windows::Forms::TabControl());
+			this->tabPage1 = (gcnew System::Windows::Forms::TabPage());
+			this->dataGridView = (gcnew System::Windows::Forms::DataGridView());
+			this->tabPage2 = (gcnew System::Windows::Forms::TabPage());
 			this->menuStrip1->SuspendLayout();
+			this->tabControl1->SuspendLayout();
+			this->tabPage1->SuspendLayout();
 			(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView))->BeginInit();
 			this->SuspendLayout();
 			// 
@@ -91,7 +103,7 @@ namespace ProjectServerW {
 			this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->âûõîäToolStripMenuItem });
 			this->menuStrip1->Location = System::Drawing::Point(0, 0);
 			this->menuStrip1->Name = L"menuStrip1";
-			this->menuStrip1->Size = System::Drawing::Size(1628, 33);
+			this->menuStrip1->Size = System::Drawing::Size(2216, 33);
 			this->menuStrip1->TabIndex = 0;
 			this->menuStrip1->Text = L"menuStrip1";
 			// 
@@ -105,7 +117,7 @@ namespace ProjectServerW {
 			// Label_Data
 			// 
 			this->Label_Data->AutoSize = true;
-			this->Label_Data->Location = System::Drawing::Point(86, 119);
+			this->Label_Data->Location = System::Drawing::Point(17, 81);
 			this->Label_Data->Name = L"Label_Data";
 			this->Label_Data->Size = System::Drawing::Size(157, 20);
 			this->Label_Data->TabIndex = 1;
@@ -114,29 +126,16 @@ namespace ProjectServerW {
 			// Label_ID
 			// 
 			this->Label_ID->AutoSize = true;
-			this->Label_ID->Location = System::Drawing::Point(90, 67);
+			this->Label_ID->Location = System::Drawing::Point(17, 38);
 			this->Label_ID->Name = L"Label_ID";
 			this->Label_ID->Size = System::Drawing::Size(67, 20);
 			this->Label_ID->TabIndex = 2;
 			this->Label_ID->Text = L"Form ID";
 			// 
-			// dataGridView
-			// 
-			this->dataGridView->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::ColumnHeader;
-			this->dataGridView->AutoSizeRowsMode = System::Windows::Forms::DataGridViewAutoSizeRowsMode::AllCellsExceptHeaders;
-			this->dataGridView->ColumnHeadersHeightSizeMode = System::Windows::Forms::DataGridViewColumnHeadersHeightSizeMode::AutoSize;
-			this->dataGridView->Dock = System::Windows::Forms::DockStyle::Bottom;
-			this->dataGridView->Location = System::Drawing::Point(0, 229);
-			this->dataGridView->Name = L"dataGridView";
-			this->dataGridView->RowHeadersWidth = 62;
-			this->dataGridView->RowTemplate->Height = 28;
-			this->dataGridView->Size = System::Drawing::Size(1628, 334);
-			this->dataGridView->TabIndex = 3;
-			// 
 			// labelCRC
 			// 
 			this->labelCRC->AutoSize = true;
-			this->labelCRC->Location = System::Drawing::Point(980, 67);
+			this->labelCRC->Location = System::Drawing::Point(914, 27);
 			this->labelCRC->Name = L"labelCRC";
 			this->labelCRC->Size = System::Drawing::Size(43, 20);
 			this->labelCRC->TabIndex = 4;
@@ -144,7 +143,7 @@ namespace ProjectServerW {
 			// 
 			// buttonExcel
 			// 
-			this->buttonExcel->Location = System::Drawing::Point(1381, 56);
+			this->buttonExcel->Location = System::Drawing::Point(1869, 16);
 			this->buttonExcel->Name = L"buttonExcel";
 			this->buttonExcel->Size = System::Drawing::Size(207, 42);
 			this->buttonExcel->TabIndex = 5;
@@ -152,22 +151,69 @@ namespace ProjectServerW {
 			this->buttonExcel->UseVisualStyleBackColor = true;
 			this->buttonExcel->Click += gcnew System::EventHandler(this, &DataForm::buttonEXCEL_Click);
 			// 
+			// tabControl1
+			// 
+			this->tabControl1->Controls->Add(this->tabPage1);
+			this->tabControl1->Controls->Add(this->tabPage2);
+			this->tabControl1->Location = System::Drawing::Point(0, 36);
+			this->tabControl1->Name = L"tabControl1";
+			this->tabControl1->SelectedIndex = 0;
+			this->tabControl1->Size = System::Drawing::Size(2216, 527);
+			this->tabControl1->TabIndex = 6;
+			// 
+			// tabPage1
+			// 
+			this->tabPage1->Controls->Add(this->dataGridView);
+			this->tabPage1->Controls->Add(this->Label_ID);
+			this->tabPage1->Controls->Add(this->buttonExcel);
+			this->tabPage1->Controls->Add(this->Label_Data);
+			this->tabPage1->Controls->Add(this->labelCRC);
+			this->tabPage1->Location = System::Drawing::Point(4, 29);
+			this->tabPage1->Name = L"tabPage1";
+			this->tabPage1->Padding = System::Windows::Forms::Padding(3);
+			this->tabPage1->Size = System::Drawing::Size(2208, 494);
+			this->tabPage1->TabIndex = 0;
+			this->tabPage1->Text = L"Äàííûå";
+			this->tabPage1->UseVisualStyleBackColor = true;
+			// 
+			// dataGridView
+			// 
+			this->dataGridView->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::ColumnHeader;
+			this->dataGridView->AutoSizeRowsMode = System::Windows::Forms::DataGridViewAutoSizeRowsMode::AllCellsExceptHeaders;
+			this->dataGridView->ColumnHeadersHeightSizeMode = System::Windows::Forms::DataGridViewColumnHeadersHeightSizeMode::AutoSize;
+			this->dataGridView->Dock = System::Windows::Forms::DockStyle::Bottom;
+			this->dataGridView->Location = System::Drawing::Point(3, 117);
+			this->dataGridView->Name = L"dataGridView";
+			this->dataGridView->RowHeadersWidth = 62;
+			this->dataGridView->RowTemplate->Height = 28;
+			this->dataGridView->Size = System::Drawing::Size(2202, 374);
+			this->dataGridView->TabIndex = 6;
+			// 
+			// tabPage2
+			// 
+			this->tabPage2->Location = System::Drawing::Point(4, 29);
+			this->tabPage2->Name = L"tabPage2";
+			this->tabPage2->Padding = System::Windows::Forms::Padding(3);
+			this->tabPage2->Size = System::Drawing::Size(1541, 494);
+			this->tabPage2->TabIndex = 1;
+			this->tabPage2->Text = L"Íàñòðîéêè";
+			this->tabPage2->UseVisualStyleBackColor = true;
+			// 
 			// DataForm
 			// 
 			this->AutoScaleDimensions = System::Drawing::SizeF(9, 20);
 			this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
-			this->ClientSize = System::Drawing::Size(1628, 563);
-			this->Controls->Add(this->buttonExcel);
-			this->Controls->Add(this->labelCRC);
-			this->Controls->Add(this->dataGridView);
-			this->Controls->Add(this->Label_ID);
-			this->Controls->Add(this->Label_Data);
+			this->ClientSize = System::Drawing::Size(2216, 563);
+			this->Controls->Add(this->tabControl1);
 			this->Controls->Add(this->menuStrip1);
 			this->MainMenuStrip = this->menuStrip1;
 			this->Name = L"DataForm";
 			this->Text = L"Ïðè¸ì äàííûõ";
 			this->menuStrip1->ResumeLayout(false);
 			this->menuStrip1->PerformLayout();
+			this->tabControl1->ResumeLayout(false);
+			this->tabPage1->ResumeLayout(false);
+			this->tabPage1->PerformLayout();
 			(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView))->EndInit();
 			this->ResumeLayout(false);
 			this->PerformLayout();

@@ -44,6 +44,7 @@ System::Void ProjectServerW::DataForm::buttonEXCEL_Click(System::Object^ sender,
 
     // Создаем и запускаем поток
     excelThread = gcnew Thread(gcnew ThreadStart(this, &DataForm::AddDataToExcel));
+    excelThread->SetApartmentState(ApartmentState::STA);  // Обязательно для Excel!
     excelThread->IsBackground = true;
     excelThread->Start();
 }
@@ -52,44 +53,31 @@ void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wst
                                                              std::mutex& mtx, 
                                                              std::condition_variable& cv) {
     DataForm^ form = gcnew DataForm();
+    GUID guid;
+    HRESULT result = CoCreateGuid(&guid);
+    if (result == S_OK) {
+        // Преобразование GUID в строку
+        wchar_t guidString[40] = { 0 };
+        int simb_N = StringFromGUID2(guid, guidString, 40);
 
-    // Инициализация библиотеки COM
-    HRESULT hr = CoInitialize(NULL);
-    if (SUCCEEDED(hr)) {
-        // Генерация уникального идентификатора формы
-        GUID guid;
-        HRESULT result = CoCreateGuid(&guid);
-        if (result == S_OK) {
-            // Преобразование GUID в строку
-            wchar_t guidString[40] = { 0 };
-            int simb_N = StringFromGUID2(guid, guidString, 40);
+        String^ formId = gcnew String(guidString);
 
-            String^ formId = gcnew String(guidString);
+        // Установка уникального идентификатора в Label_ID
+        form->SetData_FormID_value(formId);
+		form->Refresh();
 
-            // Установка уникального идентификатора в Label_ID
-            form->SetData_FormID_value(formId);
-			form->Refresh();
+        // Сохранение формы в карте
+        formData_Map[guidString] = form;
 
-            // Сохранение формы в карте
-            formData_Map[guidString] = form;
-
-            // Установка значения в очередь сообщений
-            {
-                std::lock_guard<std::mutex> lock(mtx);
-                messageQueue.push(guidString);
-            }
-            cv.notify_one();
+        // Установка значения в очередь сообщений
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            messageQueue.push(guidString);
         }
-        // Освобождение библиотеки COM
-        CoUninitialize();
+        cv.notify_one();
     }
-    else {
-         // Обработка ошибки инициализации COM
-         MessageBox::Show("Ошибка инициализации COM библиотеки", "Ошибка", MessageBoxButtons::OK, MessageBoxIcon::Error);
-    }
-
-	form->ShowDialog();
-}
+    form->ShowDialog();
+ }
 
 // Метод закрытия формы
 void ProjectServerW::DataForm::CloseForm(const std::wstring& guid) {
@@ -246,6 +234,11 @@ void ProjectServerW::DataForm::AddDataToExcel() {
             excel->Close();
             // Освободим память от копии таблицы
             delete copiedTable;
+            // Правильное освобождение COM-объектов
+            if (ws != nullptr) {
+                Marshal::ReleaseComObject(ws);
+                ws = nullptr;
+            }
         }
     }
     catch (Exception^ ex) {
@@ -253,8 +246,17 @@ void ProjectServerW::DataForm::AddDataToExcel() {
     }
     finally
     {
+        CoUninitialize();
+        //GC::WaitForPendingFinalizers();
+        //for (int i = 0; i < 3; i++) {
+            //GC::Collect();
+        GC::SuppressFinalize(this);
+        Thread::Sleep(100);  // Короткая пауза
+        //}
         // Включаем кнопку обратно
         this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::EnableButton));
+        // Сборка мусора только при необходимости
+        GC::Collect();
     }
 }
 
