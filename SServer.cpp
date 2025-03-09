@@ -1,6 +1,9 @@
 #include "SServer.h" // 
 #include <map>						// Для использования std::map - структуры, сохраняющей соответствие ID и ссылки на потоки
 
+// Добавьте эту строку для доступа к Marshal
+using namespace System::Runtime::InteropServices;
+
 using namespace System::Windows::Forms;
 using namespace ProjectServerW;
 
@@ -116,6 +119,7 @@ void SServer::handle() {
 	{
 		SOCKET acceptS;
 		SOCKADDR_IN addr_c{};
+		// откроем форму MyForm для вывода сообщений о клиенте и ошибок
 		MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
 
 		int addrlen = sizeof(addr_c);
@@ -170,120 +174,118 @@ String^ bufferToHex(const char* buffer, int length) {
     return gcnew String(ss.str().c_str());
 }
 
-    DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
-		SOCKADDR_IN clientAddr;
-		int addrLen = sizeof(clientAddr);
-		int clientPort = 0;
-		int SclientPort = 9000; // Порт Sclient
+DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
+	SOCKADDR_IN clientAddr;
+	int addrLen = sizeof(clientAddr);
+	int clientPort = 0;
+	int SclientPort = 900000; // Порт Sclient
 
-		SOCKET clientSocket = (SOCKET)lpParam;
-        char buffer[512];
-        int bytesReceived;
-		MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
+	SOCKET clientSocket = (SOCKET)lpParam;
+    char buffer[512];
+    int bytesReceived;
+	// откроем форму MyForm для записи сообщений об ошибках
+	MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
 
-		// Получаем информацию о клиенте
-		if (getpeername(clientSocket, (SOCKADDR*)&clientAddr, &addrLen) != SOCKET_ERROR) {
-			// Преобразуем порт из сетевого в локальный формат
-			clientPort = ntohs(clientAddr.sin_port);
-		}
-		// Открываем форму для демонстрации принятых данных в отдельном потоке
-		// Идентификатор формы передаём через очередь сообщений
-		std::queue<std::wstring> messageQueue;
-		std::mutex mtx;
-		std::condition_variable cv;
+	// Получаем информацию о клиенте
+	if (getpeername(clientSocket, (SOCKADDR*)&clientAddr, &addrLen) != SOCKET_ERROR) {
+		// Преобразуем порт из сетевого в локальный формат
+		clientPort = ntohs(clientAddr.sin_port);
+	}
+	// Открываем форму DataForm для демонстрации принятых данных в отдельном потоке
+	// Идентификатор формы возвращаем обратно через очередь сообщений
+	std::queue<std::wstring> messageQueue;
+	std::mutex mtx;
+	std::condition_variable cv;
 		
-		// Идентификатор потока формы
-		std::wstring id;
+	// Идентификатор потока формы
+	std::wstring id;
 
-		try {	// открываем форму в новом потоке, передаём в поток ссылки на очередь сообщений, мьютекс и условную переменную
-			std::thread formThread([&messageQueue, &mtx, &cv]() {
-				ProjectServerW::DataForm::CreateAndShowDataFormInThread(messageQueue, mtx, cv);
-				});
-			formThread.detach(); // Отсоединяем поток формы от основного потока, чтобы он работал независимо
+	try {	// открываем форму DataForm в новом потоке, передаём в поток ссылки на очередь сообщений, мьютекс и условную переменную
+		std::thread formThread([&messageQueue, &mtx, &cv]() {
+			ProjectServerW::DataForm::CreateAndShowDataFormInThread(messageQueue, mtx, cv);
+			});
+		formThread.detach(); // Отсоединяем поток формы от основного потока, чтобы он работал независимо
 
-			// Получение Windows thread ID
-			DWORD threadId = GetCurrentThreadId();
-			// Преобразование thread ID в строку
-			id = std::to_wstring(threadId);
-			// Сохраним поток с идентификатором в map
-			ThreadStorage::StoreThread(id, formThread);
-		}
-		catch (const std::exception& e) {	// Обработка исключения, выводим сообщение об ошибке
-			form->SetMessage_TextValue("Error: Couldn't create a form in a new thread");
-			return 1;
-		}
+		// Получение Windows thread ID
+		DWORD threadId = GetCurrentThreadId();
+		// Преобразование thread ID в строку
+		id = std::to_wstring(threadId);
+		// Сохраним поток с идентификатором в map
+		ThreadStorage::StoreThread(id, formThread);
+	}
+	catch (const std::exception& e) {	// Обработка исключения, выводим сообщение об ошибке
+		String^ errorMessage = gcnew String(e.what());
+		form->SetMessage_TextValue("Error: Couldn't create a form in a new thread "+ errorMessage);
+		return 1;
+	}
 
-		// Ожидание идентификатора из очереди сообщений потока формы
-		std::wstring guid;
-		{
-			std::unique_lock<std::mutex> lock(mtx);
-			cv.wait(lock, [&messageQueue] { return !messageQueue.empty(); });
-			guid = messageQueue.front();
-			messageQueue.pop();
-		}
+	// Ожидание идентификатора из очереди сообщений потока формы
+	std::wstring guid;		// это переменная для идентификатора потока
+	// область видимости нужна для мьютекса, при выходе из области видимости мьютекс разблокируется
+	{
+		std::unique_lock<std::mutex> lock(mtx);
+		cv.wait(lock, [&messageQueue] { return !messageQueue.empty(); });
+		guid = messageQueue.front();
+		messageQueue.pop();
+	}
 		
-		int timeout = 60*1000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
+	int timeout = 600*1000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
 
-		// Установка тайм-аута для операций чтения (recv)
-		setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
-		String^ managedString{};
-		String^ dataCRC_String{};
+	// Установка тайм-аута для операций чтения (recv)
+	setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+	String^ managedString{};
+	String^ dataCRC_String{};
 
-		while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
-			uint16_t dataCRC = MB_GetCRC(buffer, 40);
-			dataCRC_String = bufferToHex((const char*) &dataCRC, 2);
-			uint16_t DatCRC;
-			memcpy(&DatCRC, &buffer[40], 2);
+	// Бесконечный цикл считывания данных
+	while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
+		uint16_t dataCRC = MB_GetCRC(buffer, 40);
+		dataCRC_String = bufferToHex((const char*) &dataCRC, 2);
+		uint16_t DatCRC;
+		memcpy(&DatCRC, &buffer[40], 2);
 
-			if (DatCRC == dataCRC)		// обрабатываем принятые данные, если CRC совпадает
-			{
-				send(clientSocket, buffer, bytesReceived, 0);
+		if (DatCRC == dataCRC) {
+			send(clientSocket, buffer, bytesReceived, 0);
 
+			// Найдём форму по идентификатору
+			DataForm^ form2 = DataForm::GetFormByGuid(guid);
+			if (form2 != nullptr) {
 				if (clientPort < SclientPort) {
-					// Это приём от удалённого устройства, преобразуем в HEX формат
-					managedString = bufferToHex(buffer, bytesReceived);
-				} else {
-					// Это приём от локального клиента, встроенного в компьютер, оставляем в текстовом формате
-					// Конвертация char* в String^
-					managedString = gcnew String(buffer, 0, bytesReceived);
-				}	// конец if
+					// Создаем копию данных для безопасной передачи в другой поток
+					cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(bytesReceived);
+					Marshal::Copy(IntPtr(buffer), dataBuffer, 0, bytesReceived);
 
-				// Найдём форму по идентификатору и обновим её
-				DataForm^ form2 = DataForm::GetFormByGuid(guid);
-				if (form2 != nullptr) {
-					form2->Invoke(gcnew Action<String^>(form2, &DataForm::SetData_TextValue), managedString);
-					form2->Invoke(gcnew Action<String^>(form2, &DataForm::SetData_CRC_Value), dataCRC_String);
-					if (clientPort < SclientPort) {
-						form2->DataForm::AddDataToTable(buffer, bytesReceived);
-					}
-					form2->Invoke(gcnew Action(form2, &DataForm::Refresh));
+					// Вызываем AddDataToTable через Invoke для выполнения в потоке формы
+					form2->Invoke(gcnew Action<cli::array<System::Byte>^, int>(
+						form2, &DataForm::AddDataToTableThreadSafe),
+						dataBuffer, bytesReceived);
+
+					// Refresh вызывать отдельно уже не нужно - он будет вызван в AddDataToTableThreadSafe
 				}
-
-			}
-		}	// конец while
-		/*
-		Если функция recv возвращает 0, это означает, что соединение было закрыто клиентом.
-		Если функция recv возвращает SOCKET_ERROR, проверяется код ошибки с помощью функции WSAGetLastError.
-		Если код ошибки равен WSAETIMEDOUT, это означает, что операция чтения завершилась по тайм-ауту.
-		*/
-		if (bytesReceived == 0) {
-			form->SetMessage_TextValue("Attention: Connection closed by client");
-		}
-		else if (bytesReceived == SOCKET_ERROR) {
-			int error = WSAGetLastError();
-			if (error == WSAETIMEDOUT) {
-				form->SetMessage_TextValue("Attention: Recv timed out");
-			}
-			else {
-				form->SetMessage_TextValue("Attention: Recv failed: " + error);
 			}
 		}
+	}	// конец while
+	/*
+	Если функция recv возвращает 0, это означает, что соединение было закрыто клиентом.
+	Если функция recv возвращает SOCKET_ERROR, проверяется код ошибки с помощью функции WSAGetLastError.
+	Если код ошибки равен WSAETIMEDOUT, это означает, что операция чтения завершилась по тайм-ауту.
+	*/
+	if (bytesReceived == 0) {
+		form->SetMessage_TextValue("Attention: Connection closed by client");
+	}
+	else if (bytesReceived == SOCKET_ERROR) {
+		int error = WSAGetLastError();
+		if (error == WSAETIMEDOUT) {
+			form->SetMessage_TextValue("Attention: Recv timed out");
+		}
+		else {
+			form->SetMessage_TextValue("Attention: Recv failed: " + error);
+		}
+	}
 
-		closesocket(clientSocket);
-		// Найдём форму по идентификатору и закроем её
-		DataForm::CloseForm(guid);
-		// Закрытие потока
-		ThreadStorage::StopThread(id);
-		//form->SetMessage_TextValue("Attention: The thread and form was closed");
-		return 0;
-   }
+	closesocket(clientSocket);
+	// Найдём форму по идентификатору и закроем её
+	DataForm::CloseForm(guid);
+	// Закрытие потока
+	ThreadStorage::StopThread(id);
+	return 0;
+}

@@ -42,8 +42,8 @@ public:
 
         HRESULT hra = CoGetApartmentType(&currentType, &currentQualifier);
 
+        // Проверим тип апартмента текущего потока, должен быть STA для EXCEL
         if (SUCCEEDED(hra)) {
-            // COM уже инициализирован
             DWORD desiredMode = COINIT_APARTMENTTHREADED;
 
             bool isSTA = (currentType == APTTYPE_STA);
@@ -85,8 +85,8 @@ public:
             throw gcnew Exception("COM initialization failed: " + message);
         }
 
+        // Все проверки пройдены, установим флаг, что COM инициализирован
         isComInitialized = true;
-
 
         try {
             // Инициализация безопасности
@@ -128,6 +128,7 @@ public:
         }
         catch (Exception^ ex) {
             CoUninitialize();
+            isComInitialized = false;
             MessageBox::Show("Excel initialization error: " + ex->Message);
         }
     }
@@ -191,21 +192,72 @@ public:
     }
 
     void Close() {
-        if (!isInitialized) return;
-
         try {
-            // Правильный порядок закрытия
+            // Отключаем события для предотвращения дополнительных вызовов
+            // (если используете события Excel)
+
+            // Сначала закрываем книгу, ЗАТЕМ освобождаем объекты
+            if (workbook != nullptr) {
+                try {
+                    workbook->Close(false, Type::Missing, Type::Missing);
+                }
+                catch (...) {}
+            }
+
+            // Закрываем Excel
+            if (excel != nullptr) {
+                try {
+                    excel->Quit();
+                }
+                catch (...) {}
+            }
+
+            // Теперь освобождаем объекты в обратном порядке их создания
+            if (worksheet != nullptr) {
+                try {
+                    Marshal::ReleaseComObject(worksheet);
+                }
+                catch (...) {}
+                worksheet = nullptr;
+            }
+
+            if (workbook != nullptr) {
+                try {
+                    Marshal::ReleaseComObject(workbook);
+                }
+                catch (...) {}
+                workbook = nullptr;
+            }
+            // В последнюю очередь закрыть Excel приложение
+            if (excel != nullptr) {
+                try {
+                    Marshal::ReleaseComObject(excel);
+                }
+                catch (...) {}
+                excel = nullptr;
+            }
+
+        }
+        catch (Exception^ ex) {
+            // Логирование ошибки (можно заменить на свой метод)
+#ifdef _DEBUG
+            System::Diagnostics::Debug::WriteLine("Close error: " + ex->Message);
+#endif
+        }
+        finally {
+            isInitialized = false;  // Отмечаем, что объект закрыт
+        }
+    }
+
+    // Финализатор
+    !ExcelHelper() {
+        try {
             if (worksheet != nullptr) {
                 Marshal::ReleaseComObject(worksheet);
                 worksheet = nullptr;
             }
 
             if (workbook != nullptr) {
-                workbook->Close(
-                    false,  // SaveChanges
-                    Type::Missing,  // FileName
-                    Type::Missing   // RouteWorkbook
-                );
                 Marshal::ReleaseComObject(workbook);
                 workbook = nullptr;
             }
@@ -216,19 +268,16 @@ public:
                 excel = nullptr;
             }
         }
-        catch (Exception^ ex) {
-            MessageBox::Show("Close error: " + ex->Message);
-        }
-        finally {
-            isInitialized = false;
-        }
-
+        catch (...) {}
     }
+
 
     ~ExcelHelper() {
         Close();
         if (isComInitialized) {
             CoUninitialize();
+            isComInitialized = false;
         }
+        this->!ExcelHelper();
     }
 };

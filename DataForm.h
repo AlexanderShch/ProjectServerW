@@ -26,14 +26,15 @@ namespace ProjectServerW {
 	{
 	private:
 		System::Data::DataTable^ dataTable;  // Объявление таблицы как члена класса
+		//static int excelOperationCount = 0;	 // Переменная-счетчик для очистки кэша COM
+		Thread^ excelThread;				 // Объявим объект для работы с Excel в отдельном потоке
+
 	private: System::Windows::Forms::TabControl^ tabControl1;
 	private: System::Windows::Forms::TabPage^ tabPage1;
 	private: System::Windows::Forms::TabPage^ tabPage2;
+	private: System::Windows::Forms::OpenFileDialog^ openFileDialog1;
 	private: System::Windows::Forms::DataGridView^ dataGridView;
 
-
-
-		   Thread^ excelThread;				// Объявим объект для работы с Excel в отдельном потоке
 	public:
 		DataForm(void)
 		{
@@ -59,13 +60,9 @@ namespace ProjectServerW {
 	protected:
 	private: System::Windows::Forms::ToolStripMenuItem^ выходToolStripMenuItem;
 	private: System::Windows::Forms::Label^ Label_Data;
-	private: System::Windows::Forms::Label^ Label_ID;
 
-	private: System::Windows::Forms::Label^ labelCRC;
+
 	private: System::Windows::Forms::Button^ buttonExcel;
-
-
-
 
 	private:
 		/// <summary>
@@ -83,13 +80,12 @@ namespace ProjectServerW {
 			this->menuStrip1 = (gcnew System::Windows::Forms::MenuStrip());
 			this->выходToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
 			this->Label_Data = (gcnew System::Windows::Forms::Label());
-			this->Label_ID = (gcnew System::Windows::Forms::Label());
-			this->labelCRC = (gcnew System::Windows::Forms::Label());
 			this->buttonExcel = (gcnew System::Windows::Forms::Button());
 			this->tabControl1 = (gcnew System::Windows::Forms::TabControl());
 			this->tabPage1 = (gcnew System::Windows::Forms::TabPage());
 			this->dataGridView = (gcnew System::Windows::Forms::DataGridView());
 			this->tabPage2 = (gcnew System::Windows::Forms::TabPage());
+			this->openFileDialog1 = (gcnew System::Windows::Forms::OpenFileDialog());
 			this->menuStrip1->SuspendLayout();
 			this->tabControl1->SuspendLayout();
 			this->tabPage1->SuspendLayout();
@@ -123,24 +119,6 @@ namespace ProjectServerW {
 			this->Label_Data->TabIndex = 1;
 			this->Label_Data->Text = L"Данные от клиента";
 			// 
-			// Label_ID
-			// 
-			this->Label_ID->AutoSize = true;
-			this->Label_ID->Location = System::Drawing::Point(17, 38);
-			this->Label_ID->Name = L"Label_ID";
-			this->Label_ID->Size = System::Drawing::Size(67, 20);
-			this->Label_ID->TabIndex = 2;
-			this->Label_ID->Text = L"Form ID";
-			// 
-			// labelCRC
-			// 
-			this->labelCRC->AutoSize = true;
-			this->labelCRC->Location = System::Drawing::Point(914, 27);
-			this->labelCRC->Name = L"labelCRC";
-			this->labelCRC->Size = System::Drawing::Size(43, 20);
-			this->labelCRC->TabIndex = 4;
-			this->labelCRC->Text = L"CRC";
-			// 
 			// buttonExcel
 			// 
 			this->buttonExcel->Location = System::Drawing::Point(1869, 16);
@@ -164,10 +142,8 @@ namespace ProjectServerW {
 			// tabPage1
 			// 
 			this->tabPage1->Controls->Add(this->dataGridView);
-			this->tabPage1->Controls->Add(this->Label_ID);
 			this->tabPage1->Controls->Add(this->buttonExcel);
 			this->tabPage1->Controls->Add(this->Label_Data);
-			this->tabPage1->Controls->Add(this->labelCRC);
 			this->tabPage1->Location = System::Drawing::Point(4, 29);
 			this->tabPage1->Name = L"tabPage1";
 			this->tabPage1->Padding = System::Windows::Forms::Padding(3);
@@ -194,10 +170,14 @@ namespace ProjectServerW {
 			this->tabPage2->Location = System::Drawing::Point(4, 29);
 			this->tabPage2->Name = L"tabPage2";
 			this->tabPage2->Padding = System::Windows::Forms::Padding(3);
-			this->tabPage2->Size = System::Drawing::Size(1541, 494);
+			this->tabPage2->Size = System::Drawing::Size(2208, 494);
 			this->tabPage2->TabIndex = 1;
 			this->tabPage2->Text = L"Настройки";
 			this->tabPage2->UseVisualStyleBackColor = true;
+			// 
+			// openFileDialog1
+			// 
+			this->openFileDialog1->FileName = L"openFileDialog1";
 			// 
 			// DataForm
 			// 
@@ -225,14 +205,8 @@ namespace ProjectServerW {
 		System::Void buttonEXCEL_Click(System::Object^ sender, System::EventArgs^ e);
 
 	public:
-		void SetData_CRC_Value(String^ text) {
-			labelCRC->Text = text;
-		};
 		void SetData_TextValue(String^ text) {
 			Label_Data->Text = text;
-		};
-		void SetData_FormID_value(String^ text) {
-			Label_ID->Text = text;
 		};
 		static void CreateAndShowDataFormInThread(std::queue<std::wstring>& messageQueue,
 			std::mutex& mtx,
@@ -249,8 +223,11 @@ namespace ProjectServerW {
 		}
 		void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, System::Data::DataTable^ table);
 		void ProjectServerW::DataForm::AddDataToExcel();
-	
+		void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size);
+
 		void EnableButton();
+		void ShowSuccess();
+		void ShowError(String^ message);
 
 };
 }

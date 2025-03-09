@@ -4,7 +4,11 @@
 #include <string>
 #include <vcclr.h>					// Для использования gcroot
 
+// Добавьте эту строку для доступа к Process
+using namespace System::Diagnostics;
+
 using namespace ProjectServerW; // Добавлено пространство имен
+using namespace Microsoft::Office::Interop::Excel;
 
 std::map<std::wstring, gcroot<DataForm^>> formData_Map; // Определение переменной formData_Map
 
@@ -41,12 +45,14 @@ System::Void ProjectServerW::DataForm::buttonEXCEL_Click(System::Object^ sender,
 {
     // Отключаем кнопку на время обработки
     buttonExcel->Enabled = false;
-
     // Создаем и запускаем поток
     excelThread = gcnew Thread(gcnew ThreadStart(this, &DataForm::AddDataToExcel));
     excelThread->SetApartmentState(ApartmentState::STA);  // Обязательно для Excel!
-    excelThread->IsBackground = true;
+    // Важно! Установка как основного, не фонового потока. 
+    // Даем потоку завершиться правильно, блокирует завершение программы до своего завершения
+    excelThread->IsBackground = false; 
     excelThread->Start();
+
 }
 
 void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wstring>& messageQueue,
@@ -61,10 +67,6 @@ void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wst
         int simb_N = StringFromGUID2(guid, guidString, 40);
 
         String^ formId = gcnew String(guidString);
-
-        // Установка уникального идентификатора в Label_ID
-        form->SetData_FormID_value(formId);
-		form->Refresh();
 
         // Сохранение формы в карте
         formData_Map[guidString] = form;
@@ -83,6 +85,7 @@ void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wst
 void ProjectServerW::DataForm::CloseForm(const std::wstring& guid) {
     // Находим форму
     ProjectServerW::DataForm^ form = ProjectServerW::DataForm::GetFormByGuid(guid);
+    MessageBox::Show("DataForm will be closed!");
 
     if (form != nullptr) {
         // Проверяем, нужен ли Invoke
@@ -161,6 +164,7 @@ void ProjectServerW::DataForm::InitializeDataTable() {
 
 // 2. Добавление данных
 void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, System::Data::DataTable^ table) {
+    
     MSGQUEUE_OBJ_t data;
     DateTime now = DateTime::Now;   // Получение текущего времени
 
@@ -188,6 +192,10 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
 
 // 3. Сохраняем таблицу в EXCEL
 void ProjectServerW::DataForm::AddDataToExcel() {
+    // Создаём объект Excel в STA-потоке
+    ExcelHelper^ excel = nullptr;
+    excel = gcnew ExcelHelper();
+
     try {
         // DataTable не является потокобезопасной структурой, в Excel будем перегонять копию
         System::Data::DataTable^ copiedTable = dataTable->Copy();
@@ -196,7 +204,6 @@ void ProjectServerW::DataForm::AddDataToExcel() {
             copiedTable->Rows->RemoveAt(copiedTable->Rows->Count - 1);
         }
 
-        ExcelHelper^ excel = gcnew ExcelHelper();
         if (excel->CreateNewWorkbook()) {
             Microsoft::Office::Interop::Excel::Worksheet^ ws = excel->GetWorksheet();
 
@@ -231,36 +238,88 @@ void ProjectServerW::DataForm::AddDataToExcel() {
 
             // Сохранение
             excel->SaveAs("D:\\SensorData.xlsx");
-            excel->Close();
-            // Освободим память от копии таблицы
+            // Сообщаем об успешном создании файла ДО закрытия COM-объектов
+            this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::ShowSuccess));
+
+            // Освободим память от copiedTable
             delete copiedTable;
-            // Правильное освобождение COM-объектов
-            if (ws != nullptr) {
-                Marshal::ReleaseComObject(ws);
-                ws = nullptr;
-            }
+            copiedTable = nullptr;
         }
     }
+    catch (System::Runtime::InteropServices::COMException^ comEx) {
+        // Специальная обработка COM-исключений
+        String^ errorMsg = "COM error: " + comEx->Message + " (Code: " +
+            comEx->ErrorCode.ToString("X8") + ")";
+        this->BeginInvoke(gcnew System::Action<String^>(this, &DataForm::ShowError), errorMsg);
+    }
     catch (Exception^ ex) {
-        MessageBox::Show("Excel error: " + ex->Message);
+        // В случае ошибки
+        String^ errorMsg = "Excel error: " + ex->Message;
+        this->BeginInvoke(gcnew System::Action<String^>(this, &DataForm::ShowError), errorMsg);
+        // Необходимо освободить ресурсы даже при ошибке
+        try {
+            if (excel != nullptr) {
+                excel->Close();
+                delete excel;
+                excel = nullptr;
+            }
+        }
+        catch (...) { /* Игнорируем ошибки при очистке */ }
     }
-    finally
-    {
-        CoUninitialize();
-        //GC::WaitForPendingFinalizers();
-        //for (int i = 0; i < 3; i++) {
-            //GC::Collect();
-        GC::SuppressFinalize(this);
-        Thread::Sleep(100);  // Короткая пауза
-        //}
-        // Включаем кнопку обратно
-        this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::EnableButton));
-        // Сборка мусора только при необходимости
-        GC::Collect();
-    }
+    finally {
+        try {
+            // Важно! Сначала включить кнопку - до освобождения COM-объектов
+            this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::EnableButton));
+
+            // Затем небольшая пауза для обработки BeginInvoke
+            Thread::Sleep(50);
+
+            // Только после этого освобождаем Excel
+            if (excel != nullptr) {
+                excel->Close();
+                delete excel;
+                excel = nullptr;
+            }
+
+            // Очистка COM-объектов в самом конце
+            GC::Collect();
+            GC::WaitForPendingFinalizers();
+        }
+        catch (...) {}
+    }    
+
 }
 
 void DataForm::EnableButton()
 {
     buttonExcel->Enabled = true;
+}
+
+// Вспомогательные методы для UI-операций
+void DataForm::ShowSuccess() {
+    MessageBox::Show("Excel file was recorded successfully!");
+}
+
+void DataForm::ShowError(String^ message) {
+    MessageBox::Show(message);
+}
+
+void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size) {
+    // Этот метод уже выполняется в потоке формы благодаря Invoke
+
+    // Преобразуем управляемый массив байтов в неуправляемый буфер
+    pin_ptr<Byte> pinnedBuffer = &buffer[0];
+    char* rawBuffer = reinterpret_cast<char*>(pinnedBuffer);
+
+    // Вызываем стандартный метод добавления данных
+    AddDataToTable(rawBuffer, size, dataTable);
+
+    // Автоматически обновляем форму после добавления данных
+    if (dataGridView->RowCount > 0) {
+        // Прокрутка к последней строке
+        dataGridView->FirstDisplayedScrollingRowIndex = dataGridView->RowCount - 1;
+    }
+
+    // Обновляем UI (это безопасно, т.к. мы уже в потоке формы)
+    this->Refresh();
 }
