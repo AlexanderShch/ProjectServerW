@@ -32,7 +32,15 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::TabControl^ tabControl1;
 	private: System::Windows::Forms::TabPage^ tabPage1;
 	private: System::Windows::Forms::TabPage^ tabPage2;
-	private: System::Windows::Forms::OpenFileDialog^ openFileDialog1;
+	private: System::Windows::Forms::Button^ buttonBrowse;
+
+	private: System::Windows::Forms::TextBox^ textBoxExcelDirectory;
+	private: System::Windows::Forms::Label^ labelExcelDirectory;
+	private: System::String^ excelSavePath;  // Для хранения пути
+
+
+
+
 	private: System::Windows::Forms::DataGridView^ dataGridView;
 
 	public:
@@ -40,9 +48,12 @@ namespace ProjectServerW {
 		{
 			InitializeComponent();
 			InitializeDataTable();
-			//
-			// TODO: добавьте код конструктора
-			//
+
+			// Инициализируем путь сохранения из текстового поля
+			excelSavePath = textBoxExcelDirectory->Text;
+			// Загружаем настройки сразу после инициализации компонентов
+			LoadSettings();
+
 		}
 
 	protected:
@@ -85,16 +96,18 @@ namespace ProjectServerW {
 			this->tabPage1 = (gcnew System::Windows::Forms::TabPage());
 			this->dataGridView = (gcnew System::Windows::Forms::DataGridView());
 			this->tabPage2 = (gcnew System::Windows::Forms::TabPage());
-			this->openFileDialog1 = (gcnew System::Windows::Forms::OpenFileDialog());
+			this->buttonBrowse = (gcnew System::Windows::Forms::Button());
+			this->textBoxExcelDirectory = (gcnew System::Windows::Forms::TextBox());
+			this->labelExcelDirectory = (gcnew System::Windows::Forms::Label());
 			this->menuStrip1->SuspendLayout();
 			this->tabControl1->SuspendLayout();
 			this->tabPage1->SuspendLayout();
 			(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView))->BeginInit();
+			this->tabPage2->SuspendLayout();
 			this->SuspendLayout();
 			// 
 			// menuStrip1
 			// 
-			this->menuStrip1->GripMargin = System::Windows::Forms::Padding(2, 2, 0, 2);
 			this->menuStrip1->ImageScalingSize = System::Drawing::Size(24, 24);
 			this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->выходToolStripMenuItem });
 			this->menuStrip1->Location = System::Drawing::Point(0, 0);
@@ -167,6 +180,9 @@ namespace ProjectServerW {
 			// 
 			// tabPage2
 			// 
+			this->tabPage2->Controls->Add(this->buttonBrowse);
+			this->tabPage2->Controls->Add(this->textBoxExcelDirectory);
+			this->tabPage2->Controls->Add(this->labelExcelDirectory);
 			this->tabPage2->Location = System::Drawing::Point(4, 29);
 			this->tabPage2->Name = L"tabPage2";
 			this->tabPage2->Padding = System::Windows::Forms::Padding(3);
@@ -175,9 +191,32 @@ namespace ProjectServerW {
 			this->tabPage2->Text = L"Настройки";
 			this->tabPage2->UseVisualStyleBackColor = true;
 			// 
-			// openFileDialog1
+			// buttonBrowse
 			// 
-			this->openFileDialog1->FileName = L"openFileDialog1";
+			this->buttonBrowse->Location = System::Drawing::Point(734, 21);
+			this->buttonBrowse->Name = L"buttonBrowse";
+			this->buttonBrowse->Size = System::Drawing::Size(91, 36);
+			this->buttonBrowse->TabIndex = 2;
+			this->buttonBrowse->Text = L"Обзор...";
+			this->buttonBrowse->UseVisualStyleBackColor = true;
+			this->buttonBrowse->Click += gcnew System::EventHandler(this, &DataForm::buttonBrowse_Click);
+			// 
+			// textBoxExcelDirectory
+			// 
+			this->textBoxExcelDirectory->Location = System::Drawing::Point(268, 26);
+			this->textBoxExcelDirectory->Name = L"textBoxExcelDirectory";
+			this->textBoxExcelDirectory->Size = System::Drawing::Size(460, 26);
+			this->textBoxExcelDirectory->TabIndex = 1;
+			this->textBoxExcelDirectory->Text = L"D:\\";
+			// 
+			// labelExcelDirectory
+			// 
+			this->labelExcelDirectory->AutoSize = true;
+			this->labelExcelDirectory->Location = System::Drawing::Point(40, 29);
+			this->labelExcelDirectory->Name = L"labelExcelDirectory";
+			this->labelExcelDirectory->Size = System::Drawing::Size(222, 20);
+			this->labelExcelDirectory->TabIndex = 0;
+			this->labelExcelDirectory->Text = L"Размещение EXCEL файла:";
 			// 
 			// DataForm
 			// 
@@ -195,6 +234,8 @@ namespace ProjectServerW {
 			this->tabPage1->ResumeLayout(false);
 			this->tabPage1->PerformLayout();
 			(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView))->EndInit();
+			this->tabPage2->ResumeLayout(false);
+			this->tabPage2->PerformLayout();
 			this->ResumeLayout(false);
 			this->PerformLayout();
 
@@ -203,7 +244,7 @@ namespace ProjectServerW {
 	private:
 		System::Void выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e);
 		System::Void buttonEXCEL_Click(System::Object^ sender, System::EventArgs^ e);
-
+		System::Void buttonBrowse_Click(System::Object^ sender, System::EventArgs^ e);
 	public:
 		void SetData_TextValue(String^ text) {
 			Label_Data->Text = text;
@@ -213,7 +254,7 @@ namespace ProjectServerW {
 			std::condition_variable& cv);
 		static void CloseForm(const std::wstring& guid);
 		static DataForm^ GetFormByGuid(const std::wstring& guid);
-		
+		static void DelayedGarbageCollection(Object^ state);
 		static void ParseBuffer(const char* buffer, size_t size);
 
 		void InitializeDataTable();
@@ -228,6 +269,9 @@ namespace ProjectServerW {
 		void EnableButton();
 		void ShowSuccess();
 		void ShowError(String^ message);
+	private: 
+		void SaveSettings();
+		void LoadSettings();
 
 };
 }

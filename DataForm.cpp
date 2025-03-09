@@ -6,7 +6,6 @@
 
 // Добавьте эту строку для доступа к Process
 using namespace System::Diagnostics;
-
 using namespace ProjectServerW; // Добавлено пространство имен
 using namespace Microsoft::Office::Interop::Excel;
 
@@ -55,6 +54,33 @@ System::Void ProjectServerW::DataForm::buttonEXCEL_Click(System::Object^ sender,
 
 }
 
+System::Void ProjectServerW::DataForm::buttonBrowse_Click(System::Object^ sender, System::EventArgs^ e)
+{
+    // Создаем диалог выбора папки
+    FolderBrowserDialog^ folderDialog = gcnew FolderBrowserDialog();
+
+    // Настройка диалога
+    folderDialog->Description = "Выберите папку для сохранения Excel файлов";
+    folderDialog->ShowNewFolderButton = true;
+
+    // Устанавливаем начальную директорию из текстового поля
+    if (textBoxExcelDirectory->Text->Length > 0) {
+        folderDialog->SelectedPath = textBoxExcelDirectory->Text;
+    }
+
+    // Показываем диалог и проверяем результат
+    if (folderDialog->ShowDialog() == System::Windows::Forms::DialogResult::OK) {
+        // Обновляем текстовое поле выбранным путем
+        textBoxExcelDirectory->Text = folderDialog->SelectedPath;
+
+        // Сохраняем выбранный путь
+        excelSavePath = folderDialog->SelectedPath;
+        // Сохранение настроек
+        SaveSettings();
+
+    }
+}
+
 void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wstring>& messageQueue,
                                                              std::mutex& mtx, 
                                                              std::condition_variable& cv) {
@@ -79,6 +105,7 @@ void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wst
         cv.notify_one();
     }
     form->ShowDialog();
+
  }
 
 // Метод закрытия формы
@@ -230,14 +257,28 @@ void ProjectServerW::DataForm::AddDataToExcel() {
                 {
                     ws->Cells[row, 4 + 4*i] = Convert::ToUInt16(dr["Typ" + i]);
                     ws->Cells[row, 5 + 4*i] = Convert::ToUInt16(dr["Act" + i]);
-                    ws->Cells[row, 6 + 4*i] = Convert::ToInt32(dr["T" + i]);
-                    ws->Cells[row, 7 + 4*i] = Convert::ToInt32(dr["H" + i]);
+                    ws->Cells[row, 6 + 4*i] = Math::Round(Convert::ToSingle(dr["T" + i]) / 10.0, 1);
+                    ws->Cells[row, 7 + 4*i] = Math::Round(Convert::ToSingle(dr["H" + i]) / 10.0, 1);
                 }
                 row++;
             }
 
-            // Сохранение
-            excel->SaveAs("D:\\SensorData.xlsx");
+            // Сохранение файла
+            // Формируем полный путь к файлу
+            String^ filePath = excelSavePath;
+
+            // Добавляем разделитель в конец пути, если его нет
+            if (!filePath->EndsWith("\\")) {
+                filePath += "\\";
+            }
+
+            // Добавляем имя файла с текущей датой и временем
+            DateTime now = DateTime::Now;
+            filePath += "SensorData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + ".xlsx";
+
+            // Сохранение по выбранному пути
+            excel->SaveAs(filePath);
+
             // Сообщаем об успешном создании файла ДО закрытия COM-объектов
             this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::ShowSuccess));
 
@@ -281,13 +322,25 @@ void ProjectServerW::DataForm::AddDataToExcel() {
                 excel = nullptr;
             }
 
-            // Очистка COM-объектов в самом конце
-            GC::Collect();
-            GC::WaitForPendingFinalizers();
+            // Запускаем отложенную сборку мусора
+            ThreadPool::QueueUserWorkItem(gcnew WaitCallback(DataForm::DelayedGarbageCollection));
         }
         catch (...) {}
     }    
 
+}
+
+// Отложенная сборка мусора
+void DataForm::DelayedGarbageCollection(Object^ state) {
+    try {
+        // Пауза перед сборкой мусора
+        Thread::Sleep(500);
+
+        // Сборка мусора в отдельном потоке
+        GC::Collect();
+        GC::WaitForPendingFinalizers();
+    }
+    catch (...) {}
 }
 
 void DataForm::EnableButton()
@@ -322,4 +375,56 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
 
     // Обновляем UI (это безопасно, т.к. мы уже в потоке формы)
     this->Refresh();
+}
+
+/*
+********************** методы для сохранения и загрузки настроек **********************
+*/
+
+void ProjectServerW::DataForm::SaveSettings() {
+    try {
+        // Создаем или открываем файл настроек
+        // Получаем директорию, где находится исполняемый файл
+        String^ appPath = System::IO::Path::GetDirectoryName(System::Windows::Forms::Application::ExecutablePath);
+        String^ settingsPath = System::IO::Path::Combine(appPath, "ExcelSettings.txt");
+
+        System::IO::StreamWriter^ writer = gcnew System::IO::StreamWriter(settingsPath);
+        // Записываем путь
+        writer->WriteLine(textBoxExcelDirectory->Text);
+
+        // Закрываем файл
+        writer->Close();
+    }
+    catch (Exception^ ex) {
+        // Обработка ошибок
+        MessageBox::Show("Не удалось сохранить настройки: " + ex->Message);
+    }
+}
+
+void ProjectServerW::DataForm::LoadSettings() {
+    try {
+        // Проверяем существование файла настроек
+        String^ appPath = System::IO::Path::GetDirectoryName(System::Windows::Forms::Application::ExecutablePath);
+        String^ settingsPath = System::IO::Path::Combine(appPath, "ExcelSettings.txt");
+        if (System::IO::File::Exists(settingsPath)) {
+            // Открываем и читаем файл
+            System::IO::StreamReader^ reader = gcnew System::IO::StreamReader("ExcelSettings.txt");
+
+            // Читаем первую строку (путь)
+            String^ path = reader->ReadLine();
+
+            // Закрываем файл
+            reader->Close();
+
+            // Обновляем текстовое поле и переменную пути
+            if (path != nullptr && path->Length > 0) {
+                textBoxExcelDirectory->Text = path;
+                excelSavePath = path;
+            }
+        }
+    }
+    catch (Exception^ ex) {
+        // Обработка ошибок
+        MessageBox::Show("Не удалось загрузить настройки: " + ex->Message);
+    }
 }
