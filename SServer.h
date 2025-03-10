@@ -2,6 +2,7 @@
 #define SSERVER_H
 
 #pragma once
+#pragma comment(lib, "Ws2_32.lib")
 
 #include <winsock2.h>       // Должен быть первым!
 #include <ws2tcpip.h>       // После winsock2.h
