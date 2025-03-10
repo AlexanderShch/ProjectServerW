@@ -2,7 +2,6 @@
 #include "Chart.h"
 #include <objbase.h>                // Для CoCreateGuid - генерация уникального идентификатора
 #include <string>
-#include <vcclr.h>					// Для использования gcroot
 
 // Добавьте эту строку для доступа к Process
 using namespace System::Diagnostics;
@@ -10,7 +9,7 @@ using namespace ProjectServerW; // Добавлено пространство имен
 using namespace Microsoft::Office::Interop::Excel;
 
 std::map<std::wstring, gcroot<DataForm^>> formData_Map; // Определение переменной formData_Map
-
+//
 typedef struct   // object data for Server type из STM32
 {
     uint16_t Time;				// Количество секунд с момента включения
@@ -179,13 +178,32 @@ void ProjectServerW::DataForm::InitializeDataTable() {
     dataTable->Columns->Add("Time", uint16_t::typeid);
     dataTable->Columns->Add("SQ", uint8_t::typeid);
 
-    for (uint8_t i = 0; i < SQ; i++)
+    for (uint8_t i = 0; i < (SQ - 1); i++)
     {
         dataTable->Columns->Add("Typ" + i, uint8_t::typeid);
         dataTable->Columns->Add("Act" + i, uint8_t::typeid);
         dataTable->Columns->Add("T" + i, uint16_t::typeid);
         dataTable->Columns->Add("H" + i, uint16_t::typeid);
     }
+
+    // Обработка сигналов с устройства ввода-вывода
+    dataTable->Columns->Add("Typ" + (SQ - 1), uint8_t::typeid);
+    dataTable->Columns->Add("Act" + (SQ - 1), uint8_t::typeid);
+
+    cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();
+    if (bitNames[0] != nullptr) {
+        // Работа с массивом имен сигналов состояния дефростера
+        for (uint8_t i = 0; i < 16; i++)
+        {
+            dataTable->Columns->Add(bitNames[0][i], uint8_t::typeid);
+        }
+        // Работа с массивом имен сигналов управления дефростером
+        for (uint8_t i = 0; i < 16; i++)
+        {
+            dataTable->Columns->Add(bitNames[1][i], uint8_t::typeid);
+        }
+    }
+
     dataGridView->DataSource = dataTable;
 }
 
@@ -205,12 +223,27 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     row["RealTime"] = now.ToString("HH:mm:ss");
     row["Time"] = data.Time;
     row["SQ"] = data.SensorQuantity;
-    for (uint8_t i = 0; i < SQ; i++)
+    for (uint8_t i = 0; i < (SQ - 1); i++)
     {
         row["Typ" + i] = data.SensorType[i];
         row["Act" + i] = data.Active[i];
         row["T" + i] = data.T[i];
         row["H" + i] = data.H[i];
+    }
+ 
+    cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();
+    uint16_t bitField;
+    bitField = data.T[SQ - 1];
+    // Извлекаем каждый бит и добавляем в таблицу сигналов состояния дефростера
+    for (int bit = 0; bit < 16; bit++) {
+        bool bitValue = (bitField & (1 << bit)) != 0;
+        row[bitNames[0][bit]] = bitValue;
+    }
+    bitField = data.H[SQ - 1];
+    // Извлекаем каждый бит и добавляем в таблицу сигналов управления дефростером
+    for (int bit = 0; bit < 16; bit++) {
+        bool bitValue = (bitField & (1 << bit)) != 0;
+        row[bitNames[1][bit]] = bitValue;
     }
 
     // Добавление строки в таблицу
@@ -238,12 +271,32 @@ void ProjectServerW::DataForm::AddDataToExcel() {
             ws->Cells[1, 1] = "RealTime";
             ws->Cells[1, 2] = "Time";
             ws->Cells[1, 3] = "SQ";
-            for (uint8_t i = 0; i < SQ; i++)
+            for (uint8_t i = 0; i < (SQ - 1); i++)
             {
                 ws->Cells[1, 4 + 4*i] = "Typ" + i;
                 ws->Cells[1, 5 + 4*i] = "Act" + i;
                 ws->Cells[1, 6 + 4*i] = "T" + i;
                 ws->Cells[1, 7 + 4*i] = "H" + i;
+            }
+            // Обработка сигналов с устройства ввода-вывода
+            ws->Cells[1, 4 + 4 * (SQ - 1)] = "Typ" + (SQ - 1);
+            ws->Cells[1, 5 + 4 * (SQ - 1)] = "Act" + (SQ - 1);
+            uint8_t ColomnNumber = 6 + 4 * (SQ - 1);
+
+            cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();
+            // Работа с массивом имен сигналов состояния дефростера
+            if (bitNames[0] != nullptr) {
+                for (uint8_t i = 0; i < 16; i++)
+                {
+                    ws->Cells[1, ColomnNumber++] = bitNames[0][i];
+                }
+            }
+            // Работа с массивом имен сигналов управления дефростером
+            if (bitNames[1] != nullptr) {
+                for (uint8_t i = 0; i < 16; i++)
+                {
+                    ws->Cells[1, ColomnNumber++] = bitNames[1][i];
+                }
             }
 
             // Данные
@@ -253,13 +306,30 @@ void ProjectServerW::DataForm::AddDataToExcel() {
                 ws->Cells[row, 1] = dr["RealTime"]->ToString();
                 ws->Cells[row, 2] = Convert::ToInt32(dr["Time"]);
                 ws->Cells[row, 3] = Convert::ToUInt16(dr["SQ"]);
-                for (uint8_t i = 0; i < SQ; i++)
+                for (uint8_t i = 0; i < (SQ - 1); i++)
                 {
                     ws->Cells[row, 4 + 4*i] = Convert::ToUInt16(dr["Typ" + i]);
                     ws->Cells[row, 5 + 4*i] = Convert::ToUInt16(dr["Act" + i]);
                     ws->Cells[row, 6 + 4*i] = Math::Round(Convert::ToSingle(dr["T" + i]) / 10.0, 1);
                     ws->Cells[row, 7 + 4*i] = Math::Round(Convert::ToSingle(dr["H" + i]) / 10.0, 1);
                 }
+
+                ColomnNumber = 6 + 4 * (SQ - 1);
+                // Работа с массивом имен сигналов состояния дефростера
+                if (bitNames[0] != nullptr) {
+                    for (uint8_t i = 0; i < 16; i++)
+                    {
+                        ws->Cells[row, ColomnNumber++] = Convert::ToUInt16(dr[bitNames[0][i]]);
+                    }
+                }
+                // Работа с массивом имен сигналов управления дефростером
+                if (bitNames[1] != nullptr) {
+                    for (uint8_t i = 0; i < 16; i++)
+                    {
+                        ws->Cells[row, ColomnNumber++] = Convert::ToUInt16(dr[bitNames[1][i]]);
+                    }
+                }
+
                 row++;
             }
 
@@ -427,4 +497,40 @@ void ProjectServerW::DataForm::LoadSettings() {
         // Обработка ошибок
         MessageBox::Show("Не удалось загрузить настройки: " + ex->Message);
     }
+}
+
+//*******************************************************************************************
+// Реализация метода инициализации названий битовых полей
+void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::array<String^>^>^>& namesRef) {
+    namesRef = gcnew cli::array<cli::array<String^>^>(10);
+
+    // Инициализация массива состояния устройств дефростера
+    namesRef[0] = gcnew cli::array<String^>(16) {
+        "Vent0", "Vent1", "Vent2", "Vent3", // Работа циркуляционного вентилятора 1..4
+        "Heat0", "Heat1", "Heat2", "Heat3", // Работа нагревателя  (ТЭНа) 1..4
+        "OutA",     // Работа вытяжного вентилятора
+        "InjW",     // Работа водяных форсунок
+        "Work",     // Лампа РАБОТА 
+        "Alrm",     // Лампа АВАРИЯ 
+        "Open",     // Сигнал «Ворота открыты»
+        "Clse",     // Сигнал «Ворота закрыты»
+        "StUP",     // Сигнал «Промежуточное положение ворот при движении вверх»
+        "StDN"      // Сигнал «Промежуточное положение ворот при движении вниз»
+    };
+
+    // Инициализация массива cигналов управления устройствами дефростера
+    namesRef[1] = gcnew cli::array<String^>(16) {
+        "_V0", "_V1", "_V2", "_V3", // Циркуляционный вентилятор 1..4 включить
+        "_H0", "_H1", "_H2", "_H3", // Нагреватель (ТЭН) 1..4 включить
+        "_Out",     // Вытяжной вентилятор включить
+        "_Inj",     // Водяную форсунку включить
+        "_Flp",     // Закрыть защитную заслонку вытяжного вентилятора 
+        "_Opn",     // Ворота открыть
+        "_Stp",     // Ворота остановить
+        "_Cls",     // Ворота закрыть
+        "_Snd",     // Звуковой сигнал включить
+        "_Wrk"      // Включить зелёную лампу РАБОТА
+    };
+
+    // Добавьте другие типы сенсоров по мере необходимости
 }

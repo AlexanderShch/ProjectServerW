@@ -5,7 +5,7 @@
 #include <map>						// Для использования std::map - структуры, сохраняющей соответствие ID и ссылки на форму
 #include <condition_variable>
 #include <queue>
-
+#include <vcclr.h>					// Для использования gcroot
 
 #define SQ 6				// sensors quantity for measures (0-4) + sets of T (5, 6) + MB_IO
 
@@ -28,6 +28,8 @@ namespace ProjectServerW {
 		System::Data::DataTable^ dataTable;  // Объявление таблицы как члена класса
 		//static int excelOperationCount = 0;	 // Переменная-счетчик для очистки кэша COM
 		Thread^ excelThread;				 // Объявим объект для работы с Excel в отдельном потоке
+		// Массив наименований битовых полей для каждого типа сенсора
+		// Индекс первого уровня - тип сенсора, второго уровня - номер бита
 
 	private: System::Windows::Forms::TabControl^ tabControl1;
 	private: System::Windows::Forms::TabPage^ tabPage1;
@@ -47,6 +49,7 @@ namespace ProjectServerW {
 		DataForm(void)
 		{
 			InitializeComponent();
+			GetBitFieldNames();	// Инициализация имен битов (если еще не инициализированы)
 			InitializeDataTable();
 
 			// Инициализируем путь сохранения из текстового поля
@@ -262,6 +265,19 @@ namespace ProjectServerW {
 			// Передаём член класса dataTable
 			ProjectServerW::DataForm::AddDataToTable(buffer, size, this->dataTable);
 		}
+
+		static cli::array<cli::array<String^>^>^ GetBitFieldNames() {
+			static bool initialized = false;
+			static gcroot<cli::array<cli::array<String^>^>^> names = nullptr;
+
+			if (!initialized) {
+				InitializeBitFieldNames(names);
+				initialized = true;
+			}
+
+			return names;
+		}
+
 		void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, System::Data::DataTable^ table);
 		void ProjectServerW::DataForm::AddDataToExcel();
 		void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size);
@@ -272,7 +288,8 @@ namespace ProjectServerW {
 	private: 
 		void SaveSettings();
 		void LoadSettings();
-
+		// Метод для инициализации наименований битов
+		static void InitializeBitFieldNames(gcroot<cli::array<cli::array<String^>^>^>& namesRef);
 };
 }
 
