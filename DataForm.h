@@ -30,6 +30,8 @@ namespace ProjectServerW {
 		Thread^ excelThread;				 // Объявим объект для работы с Excel в отдельном потоке
 		// Массив наименований битовых полей для каждого типа сенсора
 		// Индекс первого уровня - тип сенсора, второго уровня - номер бита
+		ManualResetEvent^ exportCompletedEvent;
+		bool exportSuccessful;
 
 	private: System::Windows::Forms::TabControl^ tabControl1;
 	private: System::Windows::Forms::TabPage^ tabPage1;
@@ -55,7 +57,9 @@ namespace ProjectServerW {
 			InitializeDataTable();
 
 			// Подписка на событие закрытия формы
-			//this->FormClosing += gcnew System::Windows::Forms::FormClosingEventHandler(this, &DataForm::DataForm_FormClosing);
+			this->FormClosing += gcnew System::Windows::Forms::FormClosingEventHandler(this, &DataForm::DataForm_FormClosing);
+			// Инициализация объекта для синхронизации
+			exportCompletedEvent = gcnew System::Threading::ManualResetEvent(false);
 
 			// Инициализируем путь сохранения из текстового поля
 			excelSavePath = textBoxExcelDirectory->Text;
@@ -300,10 +304,7 @@ namespace ProjectServerW {
 		void SaveSettings();
 		void LoadSettings();
 		// Обработчик события закрытия формы
-		//System::Void DataForm_FormClosing(System::Object^ sender, System::Windows::Forms::FormClosingEventArgs^ e);
-		// Методы для безопасного вызова BeginInvoke
-		//void SafeBeginInvoke(MethodInvoker^ method);
-		//void SafeBeginInvoke(System::Action<String^>^ method, String^ param);		void CloseFormAfterExport();
+		System::Void DataForm_FormClosing(System::Object^ sender, System::Windows::Forms::FormClosingEventArgs^ e);
 		
 		// Метод для инициализации наименований битов
 		static void InitializeBitFieldNames(gcroot<cli::array<cli::array<String^>^>^>& namesRef);
