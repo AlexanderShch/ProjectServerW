@@ -35,13 +35,15 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::TabPage^ tabPage1;
 	private: System::Windows::Forms::TabPage^ tabPage2;
 	private: System::Windows::Forms::Button^ buttonBrowse;
+	private: System::Windows::Forms::Label^ Label_Data;
 
 	private: System::Windows::Forms::TextBox^ textBoxExcelDirectory;
 	private: System::Windows::Forms::Label^ labelExcelDirectory;
 	private: System::String^ excelSavePath;  // Для хранения пути
-
-
-
+		     System::String^ excelFileName;   // Для хранения имени файла, связанного с битом "Work"
+		     bool workBitDetected;            // Флаг для отслеживания активации бита "Work"
+			 bool pendingExcelExport;		  // Флаг ожидания освобождения кнопки записи Excel
+			 System::Windows::Forms::Timer^ exportTimer;	// Таймер для проверки освобождения кнопки
 
 	private: System::Windows::Forms::DataGridView^ dataGridView;
 
@@ -52,8 +54,15 @@ namespace ProjectServerW {
 			GetBitFieldNames();	// Инициализация имен битов (если еще не инициализированы)
 			InitializeDataTable();
 
+			// Подписка на событие закрытия формы
+			//this->FormClosing += gcnew System::Windows::Forms::FormClosingEventHandler(this, &DataForm::DataForm_FormClosing);
+
 			// Инициализируем путь сохранения из текстового поля
 			excelSavePath = textBoxExcelDirectory->Text;
+			// Имя файла будет сгенерировано позже, когда "Work" станет активным
+			excelFileName = nullptr;
+			workBitDetected = false;
+
 			// Загружаем настройки сразу после инициализации компонентов
 			LoadSettings();
 
@@ -73,7 +82,7 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::MenuStrip^ menuStrip1;
 	protected:
 	private: System::Windows::Forms::ToolStripMenuItem^ выходToolStripMenuItem;
-	private: System::Windows::Forms::Label^ Label_Data;
+
 
 
 	private: System::Windows::Forms::Button^ buttonExcel;
@@ -93,7 +102,6 @@ namespace ProjectServerW {
 		{
 			this->menuStrip1 = (gcnew System::Windows::Forms::MenuStrip());
 			this->выходToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
-			this->Label_Data = (gcnew System::Windows::Forms::Label());
 			this->buttonExcel = (gcnew System::Windows::Forms::Button());
 			this->tabControl1 = (gcnew System::Windows::Forms::TabControl());
 			this->tabPage1 = (gcnew System::Windows::Forms::TabPage());
@@ -102,6 +110,8 @@ namespace ProjectServerW {
 			this->buttonBrowse = (gcnew System::Windows::Forms::Button());
 			this->textBoxExcelDirectory = (gcnew System::Windows::Forms::TextBox());
 			this->labelExcelDirectory = (gcnew System::Windows::Forms::Label());
+			Label_Data = (gcnew System::Windows::Forms::Label());
+			this->Label_Data = (gcnew System::Windows::Forms::Label());
 			this->menuStrip1->SuspendLayout();
 			this->tabControl1->SuspendLayout();
 			this->tabPage1->SuspendLayout();
@@ -111,6 +121,7 @@ namespace ProjectServerW {
 			// 
 			// menuStrip1
 			// 
+			this->menuStrip1->GripMargin = System::Windows::Forms::Padding(2, 2, 0, 2);
 			this->menuStrip1->ImageScalingSize = System::Drawing::Size(24, 24);
 			this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->выходToolStripMenuItem });
 			this->menuStrip1->Location = System::Drawing::Point(0, 0);
@@ -128,12 +139,12 @@ namespace ProjectServerW {
 			// 
 			// Label_Data
 			// 
-			this->Label_Data->AutoSize = true;
-			this->Label_Data->Location = System::Drawing::Point(17, 81);
-			this->Label_Data->Name = L"Label_Data";
-			this->Label_Data->Size = System::Drawing::Size(157, 20);
-			this->Label_Data->TabIndex = 1;
-			this->Label_Data->Text = L"Данные от клиента";
+			Label_Data->AutoSize = true;
+			Label_Data->Location = System::Drawing::Point(17, 81);
+			Label_Data->Name = L"Label_Data";
+			Label_Data->Size = System::Drawing::Size(157, 20);
+			Label_Data->TabIndex = 1;
+			Label_Data->Text = L"Данные от клиента";
 			// 
 			// buttonExcel
 			// 
@@ -159,7 +170,7 @@ namespace ProjectServerW {
 			// 
 			this->tabPage1->Controls->Add(this->dataGridView);
 			this->tabPage1->Controls->Add(this->buttonExcel);
-			this->tabPage1->Controls->Add(this->Label_Data);
+			this->tabPage1->Controls->Add(Label_Data);
 			this->tabPage1->Location = System::Drawing::Point(4, 29);
 			this->tabPage1->Name = L"tabPage1";
 			this->tabPage1->Padding = System::Windows::Forms::Padding(3);
@@ -288,9 +299,58 @@ namespace ProjectServerW {
 	private: 
 		void SaveSettings();
 		void LoadSettings();
+		// Обработчик события закрытия формы
+		//System::Void DataForm_FormClosing(System::Object^ sender, System::Windows::Forms::FormClosingEventArgs^ e);
+		// Методы для безопасного вызова BeginInvoke
+		//void SafeBeginInvoke(MethodInvoker^ method);
+		//void SafeBeginInvoke(System::Action<String^>^ method, String^ param);		void CloseFormAfterExport();
+		
 		// Метод для инициализации наименований битов
 		static void InitializeBitFieldNames(gcroot<cli::array<cli::array<String^>^>^>& namesRef);
-};
+
+		void TriggerExcelExport() {
+			// Проверка доступности кнопки Excel
+			if (buttonExcel->Enabled) {
+				// Автоматически запустить экспорт в Excel
+				buttonEXCEL_Click(nullptr, nullptr);
+			}
+			else {
+				// Кнопка недоступна, устанавливаем флаг ожидания и запускаем таймер
+				pendingExcelExport = true;
+
+				// Создаем таймер, если он еще не создан
+				if (exportTimer == nullptr) {
+					exportTimer = gcnew System::Windows::Forms::Timer();
+					exportTimer->Interval = 500; // Проверка каждые 500 мс
+					exportTimer->Tick += gcnew EventHandler(this, &DataForm::CheckExcelButtonStatus);
+				}
+
+				// Запускаем таймер
+				exportTimer->Start();
+
+				// Выводим сообщение для пользователя
+				Label_Data->Text = "Ожидание возможности записи в Excel...";
+			}
+		}
+
+		// Обработчик события таймера
+		void CheckExcelButtonStatus(Object^ sender, EventArgs^ e) {
+			// Проверяем, доступна ли кнопка
+			if (buttonExcel->Enabled && pendingExcelExport) {
+				// Останавливаем таймер
+				exportTimer->Stop();
+
+				// Сбрасываем флаг
+				pendingExcelExport = false;
+
+				// Запускаем экспорт
+				buttonEXCEL_Click(nullptr, nullptr);
+
+				// Обновляем метку
+				Label_Data->Text = "Данные записываются в Excel...";
+			}
+		}
+	};
 }
 
 // Неуправляемый класс для хранения потоков

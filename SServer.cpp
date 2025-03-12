@@ -163,17 +163,6 @@ static uint16_t MB_GetCRC(char* buf, uint16_t len)
 	return crc_16;
 }
 
-// Эта функция принимает буфер и его длину, затем преобразует каждый байт буфера в шестнадцатеричный формат и добавляет его в строку.
-String^ bufferToHex(const char* buffer, int length) {
-	// Использование std::stringstream позволяет преобразовывать данные в строку и форматировать их.
-    std::stringstream ss;
-    ss << std::hex << std::setfill('0');
-    for (int i = 0; i < length; ++i) {
-        ss << std::setw(2) << static_cast<unsigned int>(static_cast<unsigned char>(buffer[i])) << " ";
-    }
-    return gcnew String(ss.str().c_str());
-}
-
 DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	SOCKADDR_IN clientAddr;
 	int addrLen = sizeof(clientAddr);
@@ -233,13 +222,10 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 
 	// Установка тайм-аута для операций чтения (recv)
 	setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
-	String^ managedString{};
-	String^ dataCRC_String{};
 
 	// Бесконечный цикл считывания данных
 	while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
 		uint16_t dataCRC = MB_GetCRC(buffer, 40);
-		dataCRC_String = bufferToHex((const char*) &dataCRC, 2);
 		uint16_t DatCRC;
 		memcpy(&DatCRC, &buffer[40], 2);
 
@@ -255,7 +241,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 					Marshal::Copy(IntPtr(buffer), dataBuffer, 0, bytesReceived);
 
 					// Вызываем AddDataToTable через Invoke для выполнения в потоке формы
-					form2->Invoke(gcnew Action<cli::array<System::Byte>^, int>(
+					form2->Invoke(gcnew Action<cli::array <System::Byte>^, int>(
 						form2, &DataForm::AddDataToTableThreadSafe),
 						dataBuffer, bytesReceived);
 

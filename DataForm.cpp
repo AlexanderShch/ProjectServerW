@@ -165,6 +165,17 @@ std::mutex& ThreadStorage::GetMutex() {
     return mtx;
 }
 
+// Эта функция принимает буфер и его длину, затем преобразует каждый байт буфера в шестнадцатеричный формат и добавляет его в строку.
+String^ bufferToHex(const char* buffer, size_t length) {
+    // Использование std::stringstream позволяет преобразовывать данные в строку и форматировать их.
+    std::stringstream ss;
+    ss << std::hex << std::setfill('0');
+    for (int i = 0; i < length; ++i) {
+        ss << std::setw(2) << static_cast<unsigned int>(static_cast<unsigned char>(buffer[i])) << " ";
+    }
+    return gcnew String(ss.str().c_str());
+}
+
 /*
 *********** Создаём таблицу *******************
 */
@@ -212,11 +223,16 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     
     MSGQUEUE_OBJ_t data;
     DateTime now = DateTime::Now;   // Получение текущего времени
+    String^ data_String{};
 
     if (size < sizeof(data)) {
         return; // Принятых данных слишком мало
     }
     memcpy(&data, buffer, sizeof(data));
+
+    data_String = bufferToHex(buffer, size);
+    // Выводим значение строки data_String в элемент Label_Data
+    DataForm::SetData_TextValue("Принятые данные: " + data_String);
 
     // Создание новой строки
     DataRow^ row = table->NewRow();
@@ -232,8 +248,40 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     }
  
     cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();
+
+    // Находим индекс бита "Work" в массиве bitNames[0]
+    int workBitIndex = -1;
+    // Найдем индекс бита "Work" в массиве имен
+    for (int i = 0; i < bitNames[0]->Length; i++) {
+        if (bitNames[0][i] == "Work") {
+            workBitIndex = i;
+            break;
+        }
+    }
+
     uint16_t bitField;
     bitField = data.T[SQ - 1];
+    if (workBitIndex != -1) {
+        // Проверяем текущее состояние бита "Work"
+        bool currentWorkBitState = (bitField & (1 << workBitIndex)) != 0;
+
+        // Если бит "Work" переходит из 0 в 1 (дефростер is ON)
+        if (!workBitDetected && currentWorkBitState) {
+            // Создаем имя файла на основе текущего времени
+            excelFileName = "WorkData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + ".xlsx";
+            //this->BeginInvoke(gcnew System::Action<String^>(this, &DataForm::UpdateFileNameLabel), excelFileName);
+        }
+
+        // Если бит "Work" переходит из 1 в 0 (дефростер is OFF)
+        if (workBitDetected && !currentWorkBitState) {
+            // Запускаем запись в Excel в отдельном потоке
+            this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));
+        }
+
+        // Обновляем состояние флага
+        workBitDetected = currentWorkBitState;
+    }
+
     // Извлекаем каждый бит и добавляем в таблицу сигналов состояния дефростера
     for (int bit = 0; bit < 16; bit++) {
         bool bitValue = (bitField & (1 << bit)) != 0;
@@ -246,8 +294,11 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         row[bitNames[1][bit]] = bitValue;
     }
 
-    // Добавление строки в таблицу
-    table->Rows->Add(row);
+    // Добавление строки в таблицу только во время работы дефростера
+    if (workBitDetected)
+    {
+        table->Rows->Add(row);
+    }
 }
 
 // 3. Сохраняем таблицу в EXCEL
@@ -343,14 +394,21 @@ void ProjectServerW::DataForm::AddDataToExcel() {
             }
 
             // Добавляем имя файла с текущей датой и временем
-            DateTime now = DateTime::Now;
-            filePath += "SensorData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + ".xlsx";
+            if (excelFileName != nullptr) {
+                // Используем имя файла, созданное при обнаружении бита "Work"
+                filePath += excelFileName;
+            }
+            else {
+                // Используем стандартное имя с текущей датой и временем
+                DateTime now = DateTime::Now;
+                filePath += "SensorData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + ".xlsx";
+            }
 
             // Сохранение по выбранному пути
             excel->SaveAs(filePath);
 
             // Сообщаем об успешном создании файла ДО закрытия COM-объектов
-            this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::ShowSuccess));
+            Invoke(gcnew MethodInvoker(this, &DataForm::ShowSuccess));
 
             // Освободим память от copiedTable
             delete copiedTable;
@@ -361,12 +419,12 @@ void ProjectServerW::DataForm::AddDataToExcel() {
         // Специальная обработка COM-исключений
         String^ errorMsg = "COM error: " + comEx->Message + " (Code: " +
             comEx->ErrorCode.ToString("X8") + ")";
-        this->BeginInvoke(gcnew System::Action<String^>(this, &DataForm::ShowError), errorMsg);
+        Invoke(gcnew System::Action<String^>(this, &DataForm::ShowError), errorMsg);
     }
     catch (Exception^ ex) {
         // В случае ошибки
         String^ errorMsg = "Excel error: " + ex->Message;
-        this->BeginInvoke(gcnew System::Action<String^>(this, &DataForm::ShowError), errorMsg);
+        Invoke(gcnew System::Action<String^>(this, &DataForm::ShowError), errorMsg);
         // Необходимо освободить ресурсы даже при ошибке
         try {
             if (excel != nullptr) {
@@ -380,7 +438,7 @@ void ProjectServerW::DataForm::AddDataToExcel() {
     finally {
         try {
             // Важно! Сначала включить кнопку - до освобождения COM-объектов
-            this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::EnableButton));
+            Invoke(gcnew MethodInvoker(this, &DataForm::EnableButton));
 
             // Затем небольшая пауза для обработки BeginInvoke
             Thread::Sleep(50);
@@ -534,3 +592,108 @@ void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::ar
 
     // Добавьте другие типы сенсоров по мере необходимости
 }
+
+////******************** Обработка завершения формы ***************************************
+//System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ sender, System::Windows::Forms::FormClosingEventArgs^ e) {
+//    try {
+//        // Проверяем, есть ли данные в таблице
+//        if (dataTable != nullptr && dataTable->Rows->Count > 0) {
+//            // Сначала отключаем обработчик события FormClosing, чтобы предотвратить повторный вызов
+//            this->FormClosing -= gcnew System::Windows::Forms::FormClosingEventHandler(this, &DataForm::DataForm_FormClosing);
+//            // Блокируем закрытие формы на время сохранения
+//            e->Cancel = true;
+//
+//            // Создаем имя файла, если оно еще не создано
+//            if (excelFileName == nullptr) {
+//                DateTime now = DateTime::Now;
+//                excelFileName = "CloseData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + ".xlsx";
+//            }
+//
+//            // Обновляем метку
+//            if (Label_Data != nullptr) {
+//                Label_Data->Text = "Сохранение данных в Excel...";
+//                Label_Data->Refresh();
+//            }
+//
+//            // Создаем и запускаем поток с STA-моделью для работы с Excel
+//            Thread^ closeExcelThread = gcnew Thread(gcnew ThreadStart(this, &DataForm::AddDataToExcel));
+//            closeExcelThread->SetApartmentState(ApartmentState::STA);
+//            closeExcelThread->IsBackground = false;
+//
+//            // Добавляем метод, который будет вызван после завершения потока
+//            this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::CloseFormAfterExport));
+//
+//            closeExcelThread->Start();
+//        }
+//    }
+//    catch (Exception^ ex) {
+//        MessageBox::Show("Ошибка при попытке сохранения данных: " + ex->Message);
+//        // В случае ошибки разрешаем закрытие формы
+//        e->Cancel = false;
+//    }
+//}
+//
+//// метод для экспорта и закрытия формы
+//void ProjectServerW::DataForm::ExportAndClose() {
+//    try {
+//        // Вызываем метод экспорта напрямую, не через кнопку
+//        AddDataToExcel();
+//
+//        // После завершения экспорта закрываем форму из потока UI
+//        this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::CloseFormAfterExport));
+//    }
+//    catch (Exception^ ex) {
+//        this->BeginInvoke(gcnew System::Action<String^>(this, &DataForm::ShowError),
+//            "Ошибка при экспорте: " + ex->Message);
+//
+//        // В случае ошибки все равно закрываем форму
+//        this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::CloseFormAfterExport));
+//    }
+//}
+
+//// Метод для закрытия формы после экспорта
+//void ProjectServerW::DataForm::CloseFormAfterExport() {
+//    // Проверяем, завершился ли поток экспорта в Excel
+//    // Подождем несколько секунд для завершения операции
+//    int timeoutSeconds = 5;
+//    DateTime startTime = DateTime::Now;
+//
+//    while (DateTime::Now.Subtract(startTime).TotalSeconds < timeoutSeconds) {
+//        if (buttonExcel->Enabled) {
+//            // Кнопка Excel включена обратно, значит экспорт завершен
+//            break;
+//        }
+//        Thread::Sleep(100);
+//    }
+//
+//    // Отключаем обработчик закрытия формы, чтобы избежать повторного вызова
+//    this->FormClosing -= gcnew System::Windows::Forms::FormClosingEventHandler(this, &DataForm::DataForm_FormClosing);
+//
+//    // Закрываем форму
+//    this->Close();
+//}
+//// Метод для безопасного вызова BeginInvoke
+//void ProjectServerW::DataForm::SafeBeginInvoke(MethodInvoker^ method) {
+//    try {
+//        // Проверяем, что форма открыта и создана
+//        if (!this->IsDisposed && this->IsHandleCreated && !this->Disposing) {
+//            this->BeginInvoke(method);
+//        }
+//    }
+//    catch (...) {
+//        // Игнорируем любые ошибки
+//    }
+//}
+
+//// Перегрузка для методов с параметром
+//void ProjectServerW::DataForm::SafeBeginInvoke(System::Action<String^>^ method, String^ param) {
+//    try {
+//        // Проверяем, что форма открыта и создана
+//        if (!this->IsDisposed && this->IsHandleCreated && !this->Disposing) {
+//            this->BeginInvoke(method, param);
+//        }
+//    }
+//    catch (...) {
+//        // Игнорируем любые ошибки
+//    }
+//}
