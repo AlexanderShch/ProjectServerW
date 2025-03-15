@@ -164,7 +164,7 @@ static uint16_t MB_GetCRC(char* buf, uint16_t len)
 }
 
 DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
-	SOCKADDR_IN clientAddr;
+	SOCKADDR_IN clientAddr = {};
 	int addrLen = sizeof(clientAddr);
 	int clientPort = 0;
 	int SclientPort = 900000; // Порт Sclient
@@ -195,7 +195,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 			});
 		formThread.detach(); // Отсоединяем поток формы от основного потока, чтобы он работал независимо
 
-		// Получение Windows thread ID
+		// Получение thread ID - id текущего потока обработки клиента
 		DWORD threadId = GetCurrentThreadId();
 		// Преобразование thread ID в строку
 		id = std::to_wstring(threadId);
@@ -208,8 +208,9 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		return 1;
 	}
 
+	// Получение идентификатора формы данных клиента - guid
 	// Ожидание идентификатора из очереди сообщений потока формы
-	std::wstring guid;		// это переменная для идентификатора потока
+	std::wstring guid;		
 	// область видимости нужна для мьютекса, при выходе из области видимости мьютекс разблокируется
 	{
 		std::unique_lock<std::mutex> lock(mtx);
@@ -234,7 +235,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 
 			// Найдём форму по идентификатору
 			DataForm^ form2 = DataForm::GetFormByGuid(guid);
-			if (form2 != nullptr) {
+			if (form2 != nullptr && !form2->IsDisposed && form2->IsHandleCreated && !form2->Disposing) {
 				if (clientPort < SclientPort) {
 					// Создаем копию данных для безопасной передачи в другой поток
 					cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(bytesReceived);
@@ -246,6 +247,9 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 						dataBuffer, bytesReceived);
 
 					// Refresh вызывать отдельно уже не нужно - он будет вызван в AddDataToTableThreadSafe
+				} else {
+						// Форма закрыта, завершаем поток
+					return 0;
 				}
 			}
 		}
@@ -273,5 +277,6 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	DataForm::CloseForm(guid);
 	// Закрытие потока
 	ThreadStorage::StopThread(id);
+
 	return 0;
 }

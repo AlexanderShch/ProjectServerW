@@ -35,7 +35,7 @@ void ProjectServerW::DataForm::ParseBuffer(const char* buffer, size_t size) {
 System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e)
 {
     ProjectServerW::DataForm::Close();
-    System::Windows::Forms::Application::Exit();
+    //System::Windows::Forms::Application::Exit();
 	return System::Void();
 }
 
@@ -111,7 +111,7 @@ void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wst
 void ProjectServerW::DataForm::CloseForm(const std::wstring& guid) {
     // Находим форму
     ProjectServerW::DataForm^ form = ProjectServerW::DataForm::GetFormByGuid(guid);
-    MessageBox::Show("DataForm will be closed!");
+    //MessageBox::Show("DataForm will be closed!");
 
     if (form != nullptr) {
         // Проверяем, нужен ли Invoke
@@ -464,9 +464,7 @@ void ProjectServerW::DataForm::AddDataToExcel() {
 void DataForm::DelayedGarbageCollection(Object^ state) {
     try {
         // Пауза перед сборкой мусора
-        // Сообщаем об успешном создании файла ДО закрытия COM-объектов
-        //Invoke(gcnew MethodInvoker(this, &DataForm::ShowSuccess));
-        MessageBox::Show("Excel file was recorded successfully!");
+        //MessageBox::Show("Excel file was recorded successfully!");
         Thread::Sleep(500);
 
         // Сборка мусора в отдельном потоке
@@ -629,25 +627,24 @@ System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ send
             }
 
             // Запускаем запись в Excel в отдельном потоке, текущий поток будет ожидать завершения записи
-            //this->Invoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));
             DataForm::TriggerExcelExport();
 
             // Ожидаем завершения записи файла Excel с таймаутом
             if (exportCompletedEvent->WaitOne(60000)) { // 60 секунд таймаут
                 if (exportSuccessful) {
-                    MessageBox::Show("Экспорт успешно завершен!");
+                    //MessageBox::Show("Экспорт успешно завершен!");
                 }
                 else {
-                    MessageBox::Show("Ошибка при экспорте данных");
+                    //MessageBox::Show("Ошибка при экспорте данных");
                 }
             }
             else {
-                MessageBox::Show("Превышено время ожидания экспорта");
+                //MessageBox::Show("Превышено время ожидания экспорта");
             }
 
             // Закрываем форму
             e->Cancel = false;
-            this->Close();
+            //this->Close();
 
         }
     }
@@ -655,5 +652,19 @@ System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ send
         MessageBox::Show("Ошибка при попытке сохранения данных: " + ex->Message);
         // В случае ошибки разрешаем закрытие формы
         e->Cancel = false;
+    }
+    finally {
+    // Ищем текущую форму в карте
+        for (auto it = formData_Map.begin(); it != formData_Map.end(); ++it) {
+            // Извлекаем управляемый указатель из gcroot
+            ProjectServerW::DataForm^ formPtr = it->second;
+
+            // Теперь сравниваем указатели
+            if (formPtr == this) {
+                // Нашли текущую форму, удаляем её из карты
+                formData_Map.erase(it);
+                break;
+            }
+        }
     }
 }

@@ -275,7 +275,7 @@ public:
 
 
     ~ExcelHelper() {
-        Close();
+        //Close();
         if (isComInitialized) {
             CoUninitialize();
             isComInitialized = false;

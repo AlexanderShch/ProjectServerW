@@ -32,7 +32,6 @@ private:
 	SOCKET this_s;
 	WSAData wData;
     static DWORD WINAPI ClientHandler(LPVOID lpParam); // Объявление функции потока
-    static DWORD WINAPI ClientTextHandler(LPVOID lpParam); // Объявление функции потока
 };
 
 #endif // SSERVER_H
