@@ -195,9 +195,6 @@ public:
 
     void Close() {
         try {
-            // Отключаем события для предотвращения дополнительных вызовов
-            // (если используете события Excel)
-
             // Сначала закрываем книгу, ЗАТЕМ освобождаем объекты
             if (workbook != nullptr) {
                 try {
@@ -275,7 +272,6 @@ public:
 
 
     ~ExcelHelper() {
-        //Close();
         if (isComInitialized) {
             CoUninitialize();
             isComInitialized = false;

@@ -37,7 +37,6 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::TabPage^ tabPage1;
 	private: System::Windows::Forms::TabPage^ tabPage2;
 	private: System::Windows::Forms::Button^ buttonBrowse;
-	private: System::Windows::Forms::Label^ Label_Data;
 
 	private: System::Windows::Forms::TextBox^ textBoxExcelDirectory;
 	private: System::Windows::Forms::Label^ labelExcelDirectory;
@@ -46,6 +45,8 @@ namespace ProjectServerW {
 		     bool workBitDetected;            // Флаг для отслеживания активации бита "Work"
 			 bool pendingExcelExport;		  // Флаг ожидания освобождения кнопки записи Excel
 			 System::Windows::Forms::Timer^ exportTimer;	// Таймер для проверки освобождения кнопки
+	private: System::Windows::Forms::Label^ Label_Data;
+
 
 	private: System::Windows::Forms::DataGridView^ dataGridView;
 
@@ -66,6 +67,8 @@ namespace ProjectServerW {
 			// Имя файла будет сгенерировано позже, когда "Work" станет активным
 			excelFileName = nullptr;
 			workBitDetected = false;
+			// Инициализация порта клиента
+			clientPort = 0;
 
 			// Загружаем настройки сразу после инициализации компонентов
 			LoadSettings();
@@ -114,7 +117,6 @@ namespace ProjectServerW {
 			this->buttonBrowse = (gcnew System::Windows::Forms::Button());
 			this->textBoxExcelDirectory = (gcnew System::Windows::Forms::TextBox());
 			this->labelExcelDirectory = (gcnew System::Windows::Forms::Label());
-			Label_Data = (gcnew System::Windows::Forms::Label());
 			this->Label_Data = (gcnew System::Windows::Forms::Label());
 			this->menuStrip1->SuspendLayout();
 			this->tabControl1->SuspendLayout();
@@ -141,15 +143,6 @@ namespace ProjectServerW {
 			this->выходToolStripMenuItem->Text = L"Выход";
 			this->выходToolStripMenuItem->Click += gcnew System::EventHandler(this, &DataForm::выходToolStripMenuItem_Click);
 			// 
-			// Label_Data
-			// 
-			Label_Data->AutoSize = true;
-			Label_Data->Location = System::Drawing::Point(17, 81);
-			Label_Data->Name = L"Label_Data";
-			Label_Data->Size = System::Drawing::Size(157, 20);
-			Label_Data->TabIndex = 1;
-			Label_Data->Text = L"Данные от клиента";
-			// 
 			// buttonExcel
 			// 
 			this->buttonExcel->Location = System::Drawing::Point(1869, 16);
@@ -172,9 +165,9 @@ namespace ProjectServerW {
 			// 
 			// tabPage1
 			// 
+			this->tabPage1->Controls->Add(this->Label_Data);
 			this->tabPage1->Controls->Add(this->dataGridView);
 			this->tabPage1->Controls->Add(this->buttonExcel);
-			this->tabPage1->Controls->Add(Label_Data);
 			this->tabPage1->Location = System::Drawing::Point(4, 29);
 			this->tabPage1->Name = L"tabPage1";
 			this->tabPage1->Padding = System::Windows::Forms::Padding(3);
@@ -225,7 +218,7 @@ namespace ProjectServerW {
 			this->textBoxExcelDirectory->Name = L"textBoxExcelDirectory";
 			this->textBoxExcelDirectory->Size = System::Drawing::Size(460, 26);
 			this->textBoxExcelDirectory->TabIndex = 1;
-			this->textBoxExcelDirectory->Text = L"D:\\";
+			this->textBoxExcelDirectory->Text = L"D:\\SensorData\\";
 			// 
 			// labelExcelDirectory
 			// 
@@ -235,6 +228,15 @@ namespace ProjectServerW {
 			this->labelExcelDirectory->Size = System::Drawing::Size(222, 20);
 			this->labelExcelDirectory->TabIndex = 0;
 			this->labelExcelDirectory->Text = L"Размещение EXCEL файла:";
+			// 
+			// Label_Data
+			// 
+			this->Label_Data->AutoSize = true;
+			this->Label_Data->Location = System::Drawing::Point(15, 72);
+			this->Label_Data->Name = L"Label_Data";
+			this->Label_Data->Size = System::Drawing::Size(169, 20);
+			this->Label_Data->TabIndex = 7;
+			this->Label_Data->Text = L"Данные от клиента...";
 			// 
 			// DataForm
 			// 
@@ -263,6 +265,14 @@ namespace ProjectServerW {
 		System::Void выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e);
 		System::Void buttonEXCEL_Click(System::Object^ sender, System::EventArgs^ e);
 		System::Void buttonBrowse_Click(System::Object^ sender, System::EventArgs^ e);
+	private:
+		int clientPort; // Порт клиента
+
+	public:
+		property int ClientPort{
+			int get() { return clientPort; }
+			void set(int value) { clientPort = value; }
+		}
 	public:
 		void SetData_TextValue(String^ text) {
 			Label_Data->Text = text;
@@ -280,6 +290,9 @@ namespace ProjectServerW {
 			// Передаём член класса dataTable
 			ProjectServerW::DataForm::AddDataToTable(buffer, size, this->dataTable);
 		}
+		void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, System::Data::DataTable^ table);
+		void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size, int port);
+		void ProjectServerW::DataForm::AddDataToExcel();
 
 		static cli::array<cli::array<String^>^>^ GetBitFieldNames() {
 			static bool initialized = false;
@@ -293,16 +306,13 @@ namespace ProjectServerW {
 			return names;
 		}
 
-		void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, System::Data::DataTable^ table);
-		void ProjectServerW::DataForm::AddDataToExcel();
-		void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size);
-
 		void EnableButton();
 		void ShowSuccess();
 		void ShowError(String^ message);
 	private: 
 		void SaveSettings();
 		void LoadSettings();
+		void UpdateDirectoryTextBox(String^ path);
 		// Обработчик события закрытия формы
 		System::Void DataForm_FormClosing(System::Object^ sender, System::Windows::Forms::FormClosingEventArgs^ e);
 		

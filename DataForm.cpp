@@ -268,8 +268,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         // Если бит "Work" переходит из 0 в 1 (дефростер is ON)
         if (!workBitDetected && currentWorkBitState) {
             // Создаем имя файла на основе текущего времени
-            excelFileName = "WorkData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + ".xlsx";
-            //this->BeginInvoke(gcnew System::Action<String^>(this, &DataForm::UpdateFileNameLabel), excelFileName);
+            excelFileName = "WorkData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + "_Port" + clientPort.ToString() + ".xlsx";
         }
 
         // Если бит "Work" переходит из 1 в 0 (дефростер is OFF)
@@ -387,6 +386,32 @@ void ProjectServerW::DataForm::AddDataToExcel() {
             // Сохранение файла
             // Формируем полный путь к файлу
             String^ filePath = excelSavePath;
+            // Проверяем, существует ли указанный путь
+            if (String::IsNullOrEmpty(filePath) || !System::IO::Directory::Exists(filePath)) {
+                // Если путь не существует или пустой, создаем директорию в папке запуска программы
+                String^ appPath = System::IO::Path::GetDirectoryName(System::Windows::Forms::Application::ExecutablePath);
+                filePath = System::IO::Path::Combine(appPath, "SensorData");
+
+                // Создаем директорию, если она не существует
+                if (!System::IO::Directory::Exists(filePath)) {
+                    System::IO::Directory::CreateDirectory(filePath);
+                }
+
+                // Обновляем переменную excelSavePath для будущих сохранений
+                excelSavePath = filePath;
+
+                // Обновляем текстовое поле, если оно существует
+                if (textBoxExcelDirectory != nullptr && !textBoxExcelDirectory->IsDisposed) {
+                    if (textBoxExcelDirectory->InvokeRequired) {
+                        textBoxExcelDirectory->BeginInvoke(gcnew System::Action<String^>(this, &DataForm::UpdateDirectoryTextBox), filePath);
+                    }
+                    else {
+                        textBoxExcelDirectory->Text = filePath;
+                    }
+                }
+                // Сохраняем в настройках
+                DataForm::SaveSettings();
+            }
 
             // Добавляем разделитель в конец пути, если его нет
             if (!filePath->EndsWith("\\")) {
@@ -401,7 +426,7 @@ void ProjectServerW::DataForm::AddDataToExcel() {
             else {
                 // Используем стандартное имя с текущей датой и временем
                 DateTime now = DateTime::Now;
-                filePath += "SensorData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + ".xlsx";
+                filePath += "SensorData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + "_Port" + clientPort.ToString() + ".xlsx";
             }
 
             // Сохранение по выбранному пути
@@ -410,11 +435,6 @@ void ProjectServerW::DataForm::AddDataToExcel() {
             // Освободим память от copiedTable
             delete copiedTable;
             copiedTable = nullptr;
-            // Сигнализируем о завершении экспорта
-            exportSuccessful = true;
-            if (exportCompletedEvent != nullptr) {
-                exportCompletedEvent->Set();
-            }
         }
     }
     catch (System::Runtime::InteropServices::COMException^ comEx) {
@@ -440,20 +460,46 @@ void ProjectServerW::DataForm::AddDataToExcel() {
     finally {
         try {
             // Важно! Сначала включить кнопку - до освобождения COM-объектов
-            Invoke(gcnew MethodInvoker(this, &DataForm::EnableButton));
+            // Проверяем, не закрывается ли форма и существует ли она
+    // Проверяем состояние формы
+            bool canInvoke = false;
+            try {
+                canInvoke = !this->IsDisposed && this->IsHandleCreated && this->Visible;
+            }
+            catch (...) {
+                canInvoke = false;
+            }
 
-            // Затем небольшая пауза для обработки BeginInvoke
-            Thread::Sleep(50);
+            // Включаем кнопку только если можно безопасно вызвать Invoke
+            if (canInvoke) {
+                try {
+                    this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::EnableButton));
+                }
+                catch (...) {
+                    // Игнорируем любые исключения при вызове BeginInvoke
+                }
+            }
+            else {
+                // Если форма закрывается, просто пропускаем включение кнопки
+            }
 
             // Только после этого освобождаем Excel
             if (excel != nullptr) {
                 excel->Close();
                 delete excel;
                 excel = nullptr;
+
+                // Затем небольшая пауза для обработки
+                Thread::Sleep(50);
             }
 
             // Запускаем отложенную сборку мусора
             ThreadPool::QueueUserWorkItem(gcnew WaitCallback(DataForm::DelayedGarbageCollection));
+            // Сигнализируем о завершении экспорта
+            exportSuccessful = true;
+            if (exportCompletedEvent != nullptr) {
+                exportCompletedEvent->Set();
+            }
         }
         catch (...) {}
     }    
@@ -488,8 +534,11 @@ void DataForm::ShowError(String^ message) {
     MessageBox::Show(message);
 }
 
-void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size) {
-    // Этот метод уже выполняется в потоке формы благодаря Invoke
+void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size, int port) {
+    // Этот метод выполняется в потоке формы благодаря Invoke
+    // ВАЖНО! Методы, работающие с UI, должны выполняться в потоке, создавшем объект с UI!
+    // Сохраняем порт клиента в форму DataForm
+    this->clientPort = port;
 
     // Преобразуем управляемый массив байтов в неуправляемый буфер
     pin_ptr<Byte> pinnedBuffer = &buffer[0];
@@ -560,6 +609,13 @@ void ProjectServerW::DataForm::LoadSettings() {
     }
 }
 
+// Обновление текстового поля директории сохранения файлов EXCEL
+void ProjectServerW::DataForm::UpdateDirectoryTextBox(String^ path) {
+    if (textBoxExcelDirectory != nullptr && !textBoxExcelDirectory->IsDisposed) {
+        textBoxExcelDirectory->Text = path;
+    }
+}
+
 //*******************************************************************************************
 // Реализация метода инициализации названий битовых полей
 void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::array<String^>^>^>& namesRef) {
@@ -617,7 +673,7 @@ System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ send
             // Создаем имя файла, если оно еще не создано
             if (excelFileName == nullptr) {
                 DateTime now = DateTime::Now;
-                excelFileName = "CloseData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + ".xlsx";
+                excelFileName = "EmergencyData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + "_Port" + clientPort.ToString() + ".xlsx";
             }
 
             // Обновляем метку
@@ -630,21 +686,20 @@ System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ send
             DataForm::TriggerExcelExport();
 
             // Ожидаем завершения записи файла Excel с таймаутом
-            if (exportCompletedEvent->WaitOne(60000)) { // 60 секунд таймаут
+            if (exportCompletedEvent->WaitOne(5*60*1000)) { // 5 минут таймаут
                 if (exportSuccessful) {
-                    //MessageBox::Show("Экспорт успешно завершен!");
+                    MessageBox::Show("Экспорт успешно завершен!");
                 }
                 else {
-                    //MessageBox::Show("Ошибка при экспорте данных");
+                    MessageBox::Show("Ошибка при экспорте данных");
                 }
             }
             else {
-                //MessageBox::Show("Превышено время ожидания экспорта");
+                MessageBox::Show("Превышено время ожидания экспорта");
             }
 
             // Закрываем форму
             e->Cancel = false;
-            //this->Close();
 
         }
     }
