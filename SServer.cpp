@@ -225,6 +225,12 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 			// Найдём форму по идентификатору
 			DataForm^ form2 = DataForm::GetFormByGuid(guid);
 			if (form2 != nullptr && !form2->IsDisposed && form2->IsHandleCreated && !form2->Disposing) {
+				
+				// Передадим в форму сокет клиента этой формы
+				if (form2 != nullptr) {
+					form2->ClientSocket = clientSocket;
+				}
+				
 				if (clientPort < SclientPort) {
 					// Создаем копию данных для безопасной передачи в другой поток
 					cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(bytesReceived);
@@ -232,9 +238,8 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 
 					// Вызываем AddDataToTable через Invoke для выполнения в потоке формы
 					form2->Invoke(gcnew Action<cli::array <System::Byte>^, int, int>
-								   (form2, &DataForm::AddDataToTableThreadSafe),
-									dataBuffer, bytesReceived, clientPort);
-
+						(form2, &DataForm::AddDataToTableThreadSafe),
+						dataBuffer, bytesReceived, clientPort);
 					// Refresh вызывать отдельно уже не нужно - он будет вызван в AddDataToTableThreadSafe
 				} else {
 						// Форма закрыта, завершаем поток

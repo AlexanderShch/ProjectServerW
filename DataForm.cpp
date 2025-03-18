@@ -34,8 +34,42 @@ void ProjectServerW::DataForm::ParseBuffer(const char* buffer, size_t size) {
 
 System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e)
 {
-    ProjectServerW::DataForm::Close();
-    //System::Windows::Forms::Application::Exit();
+    // Найдем GUID текущей формы в карте formData_Map
+    std::wstring currentFormGuid;
+    bool formFound = false;
+
+    for (auto it = formData_Map.begin(); it != formData_Map.end(); ++it) {
+        // Извлекаем управляемый указатель из gcroot
+        ProjectServerW::DataForm^ formPtr = it->second;
+
+        // Теперь сравниваем указатели
+        if (formPtr == this) {
+            currentFormGuid = it->first;
+            formFound = true;
+            break;
+        }
+    }
+
+    try {
+        if (formFound) {
+            // Закрываем соединение с клиентом
+            // Находим форму по GUID
+            DataForm^ form = GetFormByGuid(currentFormGuid);
+
+            if (form != nullptr && form->ClientSocket != INVALID_SOCKET) {
+                // Закрываем сокет клиента
+                closesocket(form->ClientSocket);
+                form->ClientSocket = INVALID_SOCKET;
+            }
+        }
+    }
+    catch (Exception^ ex) {
+        MessageBox::Show("Ошибка при закрытии сокета: " + ex->Message);
+    }
+
+    // Найдём форму данных по идентификатору и закроем её
+    DataForm::CloseForm(currentFormGuid);
+
 	return System::Void();
 }
 
@@ -129,7 +163,18 @@ void ProjectServerW::DataForm::CloseForm(const std::wstring& guid) {
 DataForm^ ProjectServerW::DataForm::GetFormByGuid(const std::wstring& guid) {
     auto it = formData_Map.find(guid);
     if (it != formData_Map.end()) {
-        return it->second;
+        DataForm^ form = it->second;
+
+        // Проверяем, что форма существует и не закрыта
+        if (form != nullptr && !form->IsDisposed && !form->Disposing) {
+            return form;
+        }
+        else {
+            // Форма закрыта или недействительна, удаляем её из карты
+            formData_Map.erase(it);
+            return nullptr;
+        }
+
     }
     return nullptr;
 }
@@ -708,18 +753,40 @@ System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ send
         // В случае ошибки разрешаем закрытие формы
         e->Cancel = false;
     }
-    finally {
-    // Ищем текущую форму в карте
-        for (auto it = formData_Map.begin(); it != formData_Map.end(); ++it) {
-            // Извлекаем управляемый указатель из gcroot
-            ProjectServerW::DataForm^ formPtr = it->second;
+}
 
-            // Теперь сравниваем указатели
-            if (formPtr == this) {
-                // Нашли текущую форму, удаляем её из карты
-                formData_Map.erase(it);
-                break;
-            }
+// Обработчик события после закрытия формы
+System::Void DataForm::DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ e)
+{
+    // Удаляем форму из карты
+    for (auto it = formData_Map.begin(); it != formData_Map.end(); ++it) {
+        // Извлекаем управляемый указатель из gcroot
+        ProjectServerW::DataForm^ formPtr = it->second;
+
+        // Теперь сравниваем указатели
+        if (formPtr == this) {
+            // Нашли текущую форму, удаляем её из карты
+            formData_Map.erase(it);
+            break;
         }
+    }
+}
+
+// Обработчик уничтожения дескриптора окна
+System::Void DataForm::DataForm_HandleDestroyed(Object^ sender, EventArgs^ e)
+{
+    try {
+        // Отписываемся от всех событий
+        this->FormClosing -= gcnew FormClosingEventHandler(this, &DataForm::DataForm_FormClosing);
+        this->FormClosed -= gcnew FormClosedEventHandler(this, &DataForm::DataForm_FormClosed);
+        this->HandleDestroyed -= gcnew EventHandler(this, &DataForm::DataForm_HandleDestroyed);
+
+        // Принудительная сборка мусора для освобождения COM-ресурсов
+        GC::Collect();
+        GC::WaitForPendingFinalizers();
+        GC::Collect();
+    }
+    catch (...) {
+        // Игнорируем исключения в деструкторе
     }
 }

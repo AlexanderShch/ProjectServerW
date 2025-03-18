@@ -25,8 +25,15 @@ namespace ProjectServerW {
 	public ref class DataForm : public System::Windows::Forms::Form
 	{
 	private:
+		SOCKET clientSocket;  // Сокет клиента
+	public:
+		property SOCKET ClientSocket {
+			SOCKET get() { return clientSocket; }
+			void set(SOCKET value) { clientSocket = value; }
+		}
+
+	private:
 		System::Data::DataTable^ dataTable;  // Объявление таблицы как члена класса
-		//static int excelOperationCount = 0;	 // Переменная-счетчик для очистки кэша COM
 		Thread^ excelThread;				 // Объявим объект для работы с Excel в отдельном потоке
 		// Массив наименований битовых полей для каждого типа сенсора
 		// Индекс первого уровня - тип сенсора, второго уровня - номер бита
@@ -57,8 +64,10 @@ namespace ProjectServerW {
 			GetBitFieldNames();	// Инициализация имен битов (если еще не инициализированы)
 			InitializeDataTable();
 
-			// Подписка на событие закрытия формы
-			this->FormClosing += gcnew System::Windows::Forms::FormClosingEventHandler(this, &DataForm::DataForm_FormClosing);
+			// Подписка на события при закрытии формы
+			this->FormClosing += gcnew FormClosingEventHandler(this, &DataForm::DataForm_FormClosing);
+			this->FormClosed += gcnew FormClosedEventHandler(this, &DataForm::DataForm_FormClosed);
+			this->HandleDestroyed += gcnew EventHandler(this, &DataForm::DataForm_HandleDestroyed);
 			// Инициализация объекта для синхронизации
 			exportCompletedEvent = gcnew System::Threading::ManualResetEvent(false);
 
@@ -81,11 +90,37 @@ namespace ProjectServerW {
 		/// </summary>
 		~DataForm()
 		{
+			// Вызов финализатора через деструктор
+			this->!DataForm();
+
 			if (components)
 			{
 				delete components;
+				components = nullptr;
 			}
 		}
+
+		// Финализатор
+		DataForm::!DataForm()
+		{
+			try {
+				// Очищаем все неуправляемые ресурсы
+				if (clientSocket != INVALID_SOCKET) {
+					closesocket(clientSocket);
+					clientSocket = INVALID_SOCKET;
+				}
+
+				// Освобождаем COM-объекты
+				// Примечание: это должно выполняться в потоке STA
+				if (Thread::CurrentThread->GetApartmentState() == ApartmentState::STA) {
+					// Освобождаем COM-объекты
+				}
+			}
+			catch (...) {
+				// Игнорируем исключения в финализаторе
+			}
+		}
+
 	private: System::Windows::Forms::MenuStrip^ menuStrip1;
 	protected:
 	private: System::Windows::Forms::ToolStripMenuItem^ выходToolStripMenuItem;
@@ -309,6 +344,8 @@ namespace ProjectServerW {
 		void EnableButton();
 		void ShowSuccess();
 		void ShowError(String^ message);
+		System::Void DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ e);
+		System::Void DataForm_HandleDestroyed(Object^ sender, EventArgs^ e);
 	private: 
 		void SaveSettings();
 		void LoadSettings();
