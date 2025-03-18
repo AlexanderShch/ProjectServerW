@@ -44,11 +44,14 @@ public:
 
         HRESULT hra = CoGetApartmentType(&currentType, &currentQualifier);
 
-        // Проверим тип апартмента текущего потока, должен быть STA для EXCEL
+        // Проверим тип апартмента текущего потока, должен быть STA (APTTYPE_STA или APTTYPE_MAINSTA)для EXCEL
         if (SUCCEEDED(hra)) {
             DWORD desiredMode = COINIT_APARTMENTTHREADED;
 
-            bool isSTA = (currentType == APTTYPE_STA);
+            // Мы должны учитывать APTTYPE_MAINSTA при проверке на STA-совместимость. 
+            // Поскольку APTTYPE_MAINSTA (0x00000003) включает в себя флаг APTTYPE_STA (0x00000001), 
+            // правильнее использовать побитовую операцию для проверки:
+            bool isSTA = ((currentType & APTTYPE_STA) == APTTYPE_STA);
             bool wantsSTA = (desiredMode == COINIT_APARTMENTTHREADED);
 
             if (isSTA != wantsSTA) {

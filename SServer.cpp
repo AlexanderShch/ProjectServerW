@@ -1,5 +1,9 @@
 #include "SServer.h" // 
-#include <map>						// Для использования std::map - структуры, сохраняющей соответствие ID и ссылки на потоки
+#include <fstream>
+#include <iostream>
+#include <chrono>
+#include <ctime>
+#include <msclr/marshal_cppstd.h>
 
 // Добавьте эту строку для доступа к Marshal
 using namespace System::Runtime::InteropServices;
@@ -40,10 +44,12 @@ SServer::~SServer() {
         closesocket(this_s);
     }
     WSACleanup();
+	GlobalLogger::Shutdown();
 }
 
 void SServer::startServer() {
 	MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
+	GlobalLogger::Initialize();
 
 	if (WSAStartup(MAKEWORD(2, 2), &wData) == 0) {
 		form->SetWSA_TextValue("WSA Startup success");
@@ -78,6 +84,7 @@ void SServer::startServer() {
 		unsigned short port = ntohs(addr.sin_port);
 		System::String^ portString = port.ToString();
 		form->SetTextValue("Start listenin at port " + portString);
+		GlobalLogger::LogMessage(ConvertToStdString("Start listenin at port " + portString));
 	}
 	
 	if (form->InvokeRequired) {
@@ -142,9 +149,11 @@ void SServer::handle() {
 
             if (hThread == NULL) {
 				form->SetMessage_TextValue("Error: Failed to create thread");
+				GlobalLogger::LogMessage("Error: Failed to create thread");
 				closesocket(acceptS);
             } else {
 				form->SetMessage_TextValue("Information: New thread was created");
+				GlobalLogger::LogMessage("Information: New thread was created");
 				CloseHandle(hThread); // Закрытие дескриптора потока
             }
 		}
@@ -205,6 +214,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	catch (const std::exception& e) {	// Обработка исключения, выводим сообщение об ошибке
 		String^ errorMessage = gcnew String(e.what());
 		form->SetMessage_TextValue("Error: Couldn't create a form in a new thread " + errorMessage);
+		GlobalLogger::LogMessage(ConvertToStdString("Error: Couldn't create a form in a new thread " + errorMessage));
 		return 1;
 	}
 
@@ -237,7 +247,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 					Marshal::Copy(IntPtr(buffer), dataBuffer, 0, bytesReceived);
 
 					// Вызываем AddDataToTable через Invoke для выполнения в потоке формы
-					form2->Invoke(gcnew Action<cli::array <System::Byte>^, int, int>
+					form2->BeginInvoke(gcnew Action<cli::array <System::Byte>^, int, int>
 						(form2, &DataForm::AddDataToTableThreadSafe),
 						dataBuffer, bytesReceived, clientPort);
 					// Refresh вызывать отдельно уже не нужно - он будет вызван в AddDataToTableThreadSafe
@@ -255,14 +265,17 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	*/
 	if (bytesReceived == 0) {
 		form->SetMessage_TextValue("Attention: Connection closed by client");
+		GlobalLogger::LogMessage("Attention: Connection closed by client");
 	}
 	else if (bytesReceived == SOCKET_ERROR) {
 		int error = WSAGetLastError();
 		if (error == WSAETIMEDOUT) {
 			form->SetMessage_TextValue("Attention: Recv timed out");
+			GlobalLogger::LogMessage("Attention: Recv timed out");
 		}
 		else {
 			form->SetMessage_TextValue("Attention: Recv failed: " + error);
+			GlobalLogger::LogMessage(ConvertToStdString("Attention: Recv failed: " + error));
 		}
 	}
 
@@ -273,4 +286,20 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	ThreadStorage::StopThread(guid);
 
 	return 0;
+}
+
+std::string ConvertToStdString(System::String^ managedString) {
+
+	if (managedString == nullptr)
+		return std::string();
+
+	// Используем UTF8 кодировку для конвертации
+	cli::array<System::Byte>^ bytes = System::Text::Encoding::UTF8->GetBytes(managedString);
+	std::string result(bytes->Length, 0);
+
+	{
+		cli::pin_ptr<System::Byte> pinnedBytes = &bytes[0];
+		memcpy(&result[0], pinnedBytes, bytes->Length);
+	}
+	return result;
 }

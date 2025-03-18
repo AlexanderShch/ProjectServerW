@@ -65,6 +65,7 @@ System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System::Obje
     }
     catch (Exception^ ex) {
         MessageBox::Show("Ошибка при закрытии сокета: " + ex->Message);
+        GlobalLogger::LogMessage(ConvertToStdString("Ошибка при закрытии сокета: " + ex->Message));
     }
 
     // Найдём форму данных по идентификатору и закроем её
@@ -146,6 +147,7 @@ void ProjectServerW::DataForm::CloseForm(const std::wstring& guid) {
     // Находим форму
     ProjectServerW::DataForm^ form = ProjectServerW::DataForm::GetFormByGuid(guid);
     //MessageBox::Show("DataForm will be closed!");
+    GlobalLogger::LogMessage(ConvertToStdString("DataForm will be closed!"));
 
     if (form != nullptr) {
         // Проверяем, нужен ли Invoke
@@ -486,12 +488,14 @@ void ProjectServerW::DataForm::AddDataToExcel() {
         // Специальная обработка COM-исключений
         String^ errorMsg = "COM error: " + comEx->Message + " (Code: " +
             comEx->ErrorCode.ToString("X8") + ")";
-        MessageBox::Show(errorMsg);
+        //MessageBox::Show(errorMsg);
+        GlobalLogger::LogMessage(ConvertToStdString(errorMsg));
     }
     catch (Exception^ ex) {
         // В случае ошибки
         String^ errorMsg = "Excel error: " + ex->Message;
-        MessageBox::Show(errorMsg);
+        //MessageBox::Show(errorMsg);
+        GlobalLogger::LogMessage(ConvertToStdString(errorMsg));
         // Необходимо освободить ресурсы даже при ошибке
         try {
             if (excel != nullptr) {
@@ -556,6 +560,7 @@ void DataForm::DelayedGarbageCollection(Object^ state) {
     try {
         // Пауза перед сборкой мусора
         //MessageBox::Show("Excel file was recorded successfully!");
+        GlobalLogger::LogMessage(ConvertToStdString("Excel file was recorded successfully!"));
         Thread::Sleep(500);
 
         // Сборка мусора в отдельном потоке
@@ -568,15 +573,6 @@ void DataForm::DelayedGarbageCollection(Object^ state) {
 void DataForm::EnableButton()
 {
     buttonExcel->Enabled = true;
-}
-
-// Вспомогательные методы для UI-операций
-void DataForm::ShowSuccess() {
-    MessageBox::Show("Excel file was recorded successfully!");
-}
-
-void DataForm::ShowError(String^ message) {
-    MessageBox::Show(message);
 }
 
 void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size, int port) {
@@ -623,6 +619,7 @@ void ProjectServerW::DataForm::SaveSettings() {
     catch (Exception^ ex) {
         // Обработка ошибок
         MessageBox::Show("Не удалось сохранить настройки: " + ex->Message);
+        GlobalLogger::LogMessage(ConvertToStdString("Не удалось сохранить настройки: " + ex->Message));
     }
 }
 
@@ -651,6 +648,7 @@ void ProjectServerW::DataForm::LoadSettings() {
     catch (Exception^ ex) {
         // Обработка ошибок
         MessageBox::Show("Не удалось загрузить настройки: " + ex->Message);
+        GlobalLogger::LogMessage(ConvertToStdString("Не удалось загрузить настройки: " + ex->Message));
     }
 }
 
@@ -724,6 +722,7 @@ System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ send
             // Обновляем метку
             if (Label_Data != nullptr) {
                 Label_Data->Text = "Сохранение данных в Excel...";
+                GlobalLogger::LogMessage("Сохранение данных в Excel... " + ConvertToStdString(excelFileName));
                 Label_Data->Refresh();
             }
 
@@ -733,14 +732,17 @@ System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ send
             // Ожидаем завершения записи файла Excel с таймаутом
             if (exportCompletedEvent->WaitOne(5*60*1000)) { // 5 минут таймаут
                 if (exportSuccessful) {
-                    MessageBox::Show("Экспорт успешно завершен!");
+                    //MessageBox::Show("Экспорт успешно завершен!");
+                    GlobalLogger::LogMessage("Экспорт успешно завершен!");
                 }
                 else {
-                    MessageBox::Show("Ошибка при экспорте данных");
+                    //MessageBox::Show("Ошибка при экспорте данных");
+                    GlobalLogger::LogMessage("Ошибка при экспорте данных");
                 }
             }
             else {
-                MessageBox::Show("Превышено время ожидания экспорта");
+                //MessageBox::Show("Превышено время ожидания экспорта");
+                GlobalLogger::LogMessage("Превышено время ожидания экспорта");
             }
 
             // Закрываем форму
@@ -749,7 +751,8 @@ System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ send
         }
     }
     catch (Exception^ ex) {
-        MessageBox::Show("Ошибка при попытке сохранения данных: " + ex->Message);
+        //MessageBox::Show("Ошибка при попытке сохранения данных: " + ex->Message);
+        GlobalLogger::LogMessage("Ошибка при попытке сохранения данных: " + ConvertToStdString(ex->Message));
         // В случае ошибки разрешаем закрытие формы
         e->Cancel = false;
     }

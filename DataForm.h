@@ -342,8 +342,6 @@ namespace ProjectServerW {
 		}
 
 		void EnableButton();
-		void ShowSuccess();
-		void ShowError(String^ message);
 		System::Void DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ e);
 		System::Void DataForm_HandleDestroyed(Object^ sender, EventArgs^ e);
 	private: 
