@@ -68,9 +68,6 @@ System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System::Obje
         GlobalLogger::LogMessage(ConvertToStdString("Ошибка при закрытии сокета: " + ex->Message));
     }
 
-    // Найдём форму данных по идентификатору и закроем её
-    DataForm::CloseForm(currentFormGuid);
-
 	return System::Void();
 }
 
@@ -773,6 +770,8 @@ System::Void DataForm::DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ 
             break;
         }
     }
+    // Закрываем сокет клиента
+    closesocket(this->ClientSocket);
 }
 
 // Обработчик уничтожения дескриптора окна

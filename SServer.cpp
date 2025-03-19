@@ -234,7 +234,8 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 
 			// Найдём форму по идентификатору
 			DataForm^ form2 = DataForm::GetFormByGuid(guid);
-			if (form2 != nullptr && !form2->IsDisposed && form2->IsHandleCreated && !form2->Disposing) {
+			if (form2 != nullptr && !form2->IsDisposed && form2->IsHandleCreated && !form2->Disposing) 
+			{
 				
 				// Передадим в форму сокет клиента этой формы
 				if (form2 != nullptr) {
@@ -252,11 +253,14 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 						dataBuffer, bytesReceived, clientPort);
 					// Refresh вызывать отдельно уже не нужно - он будет вызван в AddDataToTableThreadSafe
 				} else {
-						// Форма закрыта, завершаем поток
-					return 0;
+					// здесь обработка для другого типа порта
 				}
 			}
-		}
+			else {
+				// Форма закрыта, завершаем поток
+				break;
+			} // конец if (form2 != nullptr...
+		} // if (DatCRC == dataCRC)...
 	}	// конец while
 	/*
 	Если функция recv возвращает 0, это означает, что соединение было закрыто клиентом.
