@@ -55,6 +55,13 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::Label^ Label_Data;
 
 
+
+
+
+
+
+
+
 	private: System::Windows::Forms::DataGridView^ dataGridView;
 
 	public:
@@ -147,12 +154,12 @@ namespace ProjectServerW {
 			this->buttonExcel = (gcnew System::Windows::Forms::Button());
 			this->tabControl1 = (gcnew System::Windows::Forms::TabControl());
 			this->tabPage1 = (gcnew System::Windows::Forms::TabPage());
+			this->Label_Data = (gcnew System::Windows::Forms::Label());
 			this->dataGridView = (gcnew System::Windows::Forms::DataGridView());
 			this->tabPage2 = (gcnew System::Windows::Forms::TabPage());
 			this->buttonBrowse = (gcnew System::Windows::Forms::Button());
 			this->textBoxExcelDirectory = (gcnew System::Windows::Forms::TextBox());
 			this->labelExcelDirectory = (gcnew System::Windows::Forms::Label());
-			this->Label_Data = (gcnew System::Windows::Forms::Label());
 			this->menuStrip1->SuspendLayout();
 			this->tabControl1->SuspendLayout();
 			this->tabPage1->SuspendLayout();
@@ -167,9 +174,10 @@ namespace ProjectServerW {
 			this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->выходToolStripMenuItem });
 			this->menuStrip1->Location = System::Drawing::Point(0, 0);
 			this->menuStrip1->Name = L"menuStrip1";
-			this->menuStrip1->Size = System::Drawing::Size(2216, 33);
+			this->menuStrip1->Size = System::Drawing::Size(1494, 33);
 			this->menuStrip1->TabIndex = 0;
 			this->menuStrip1->Text = L"menuStrip1";
+			this->menuStrip1->ItemClicked += gcnew System::Windows::Forms::ToolStripItemClickedEventHandler(this, &DataForm::menuStrip1_ItemClicked);
 			// 
 			// выходToolStripMenuItem
 			// 
@@ -180,7 +188,7 @@ namespace ProjectServerW {
 			// 
 			// buttonExcel
 			// 
-			this->buttonExcel->Location = System::Drawing::Point(1869, 16);
+			this->buttonExcel->Location = System::Drawing::Point(12, 6);
 			this->buttonExcel->Name = L"buttonExcel";
 			this->buttonExcel->Size = System::Drawing::Size(207, 42);
 			this->buttonExcel->TabIndex = 5;
@@ -195,34 +203,47 @@ namespace ProjectServerW {
 			this->tabControl1->Location = System::Drawing::Point(0, 36);
 			this->tabControl1->Name = L"tabControl1";
 			this->tabControl1->SelectedIndex = 0;
-			this->tabControl1->Size = System::Drawing::Size(2216, 527);
+			this->tabControl1->Size = System::Drawing::Size(1494, 527);
 			this->tabControl1->TabIndex = 6;
 			// 
 			// tabPage1
 			// 
+			this->tabPage1->AutoScroll = true;
 			this->tabPage1->Controls->Add(this->Label_Data);
 			this->tabPage1->Controls->Add(this->dataGridView);
 			this->tabPage1->Controls->Add(this->buttonExcel);
 			this->tabPage1->Location = System::Drawing::Point(4, 29);
 			this->tabPage1->Name = L"tabPage1";
 			this->tabPage1->Padding = System::Windows::Forms::Padding(3);
-			this->tabPage1->Size = System::Drawing::Size(2208, 494);
+			this->tabPage1->Size = System::Drawing::Size(1486, 494);
 			this->tabPage1->TabIndex = 0;
 			this->tabPage1->Text = L"Данные";
 			this->tabPage1->UseVisualStyleBackColor = true;
 			// 
+			// Label_Data
+			// 
+			this->Label_Data->AutoSize = true;
+			this->Label_Data->Location = System::Drawing::Point(8, 51);
+			this->Label_Data->Name = L"Label_Data";
+			this->Label_Data->Size = System::Drawing::Size(169, 20);
+			this->Label_Data->TabIndex = 7;
+			this->Label_Data->Text = L"Данные от клиента...";
+			// 
 			// dataGridView
 			// 
-			this->dataGridView->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::ColumnHeader;
-			this->dataGridView->AutoSizeRowsMode = System::Windows::Forms::DataGridViewAutoSizeRowsMode::AllCellsExceptHeaders;
+			this->dataGridView->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::AllCells;
+			this->dataGridView->AutoSizeRowsMode = System::Windows::Forms::DataGridViewAutoSizeRowsMode::AllCells;
 			this->dataGridView->ColumnHeadersHeightSizeMode = System::Windows::Forms::DataGridViewColumnHeadersHeightSizeMode::AutoSize;
-			this->dataGridView->Dock = System::Windows::Forms::DockStyle::Bottom;
-			this->dataGridView->Location = System::Drawing::Point(3, 117);
+			this->dataGridView->Location = System::Drawing::Point(12, 74);
 			this->dataGridView->Name = L"dataGridView";
-			this->dataGridView->RowHeadersWidth = 62;
+			this->dataGridView->RightToLeft = System::Windows::Forms::RightToLeft::No;
+			this->dataGridView->RowHeadersWidthSizeMode = System::Windows::Forms::DataGridViewRowHeadersWidthSizeMode::AutoSizeToDisplayedHeaders;
 			this->dataGridView->RowTemplate->Height = 28;
-			this->dataGridView->Size = System::Drawing::Size(2202, 374);
+			this->dataGridView->RowTemplate->Resizable = System::Windows::Forms::DataGridViewTriState::True;
+			this->dataGridView->ScrollBars = System::Windows::Forms::ScrollBars::Horizontal;
+			this->dataGridView->Size = System::Drawing::Size(1100, 400);
 			this->dataGridView->TabIndex = 6;
+			this->dataGridView->CellContentClick += gcnew System::Windows::Forms::DataGridViewCellEventHandler(this, &DataForm::dataGridView_CellContentClick);
 			// 
 			// tabPage2
 			// 
@@ -232,7 +253,7 @@ namespace ProjectServerW {
 			this->tabPage2->Location = System::Drawing::Point(4, 29);
 			this->tabPage2->Name = L"tabPage2";
 			this->tabPage2->Padding = System::Windows::Forms::Padding(3);
-			this->tabPage2->Size = System::Drawing::Size(2208, 494);
+			this->tabPage2->Size = System::Drawing::Size(1486, 494);
 			this->tabPage2->TabIndex = 1;
 			this->tabPage2->Text = L"Настройки";
 			this->tabPage2->UseVisualStyleBackColor = true;
@@ -253,7 +274,8 @@ namespace ProjectServerW {
 			this->textBoxExcelDirectory->Name = L"textBoxExcelDirectory";
 			this->textBoxExcelDirectory->Size = System::Drawing::Size(460, 26);
 			this->textBoxExcelDirectory->TabIndex = 1;
-			this->textBoxExcelDirectory->Text = L"D:\\SensorData\\";
+			this->textBoxExcelDirectory->Text = L"С:\\SensorData\\";
+			this->textBoxExcelDirectory->TextChanged += gcnew System::EventHandler(this, &DataForm::textBoxExcelDirectory_TextChanged);
 			// 
 			// labelExcelDirectory
 			// 
@@ -264,24 +286,18 @@ namespace ProjectServerW {
 			this->labelExcelDirectory->TabIndex = 0;
 			this->labelExcelDirectory->Text = L"Размещение EXCEL файла:";
 			// 
-			// Label_Data
-			// 
-			this->Label_Data->AutoSize = true;
-			this->Label_Data->Location = System::Drawing::Point(15, 72);
-			this->Label_Data->Name = L"Label_Data";
-			this->Label_Data->Size = System::Drawing::Size(169, 20);
-			this->Label_Data->TabIndex = 7;
-			this->Label_Data->Text = L"Данные от клиента...";
-			// 
 			// DataForm
 			// 
 			this->AutoScaleDimensions = System::Drawing::SizeF(9, 20);
 			this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
-			this->ClientSize = System::Drawing::Size(2216, 563);
+			this->AutoScroll = true;
+			this->AutoSizeMode = System::Windows::Forms::AutoSizeMode::GrowAndShrink;
+			this->ClientSize = System::Drawing::Size(1124, 575);
 			this->Controls->Add(this->tabControl1);
 			this->Controls->Add(this->menuStrip1);
 			this->MainMenuStrip = this->menuStrip1;
 			this->Name = L"DataForm";
+			this->RightToLeft = System::Windows::Forms::RightToLeft::No;
 			this->Text = L"Приём данных";
 			this->menuStrip1->ResumeLayout(false);
 			this->menuStrip1->PerformLayout();
@@ -396,7 +412,15 @@ namespace ProjectServerW {
 				Label_Data->Text = "Данные записываются в Excel...";
 			}
 		}
-	};
+	private: System::Void textBoxExcelDirectory_TextChanged(System::Object^ sender, System::EventArgs^ e) {
+	}
+private: System::Void dataGridView_CellContentClick(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e) {
+}
+private: System::Void menuStrip1_ItemClicked(System::Object^ sender, System::Windows::Forms::ToolStripItemClickedEventArgs^ e) {
+}
+private: System::Void записьВExcelToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e) {
+}
+};
 }
 
 // Неуправляемый класс для хранения потоков
