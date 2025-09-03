@@ -17,6 +17,7 @@ bool IsExcelInstalled() {
         return (type != nullptr);
     }
     catch (...) {
+        MessageBox::Show("Error: EXCEL не установлен!");
         return false;
     }
 }

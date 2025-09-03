@@ -1,6 +1,5 @@
 #include "MyForm.h"
 #include "SServer.h"
-#include <thread>
 
 using namespace ProjectServerW;		// название проекта
 SServer server;
@@ -30,8 +29,3 @@ System::Void ProjectServerW::MyForm::button_Listen_Click(System::Object^ sender,
 	serverThread.detach(); // Отсоединяем поток сервера, чтобы он работал независимо
 }
 
-System::Void ProjectServerW::MyForm::MyForm_Load(System::Object^ sender, System::EventArgs^ e)
-{
-	// Запускаем сервер после полной загрузки формы
-	button_Listen_Click(nullptr, nullptr);
-}

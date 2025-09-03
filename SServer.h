@@ -14,6 +14,11 @@
 #include <sstream>			// Р”Р»СЏ std::stringstream
 #include <thread>
 
+// Объявления для работы с Unicode и форматированием
+namespace Unicode {
+    int snprintfFloat(char* buffer, size_t size, const char* format, float value);
+}
+
 #include "MyForm.h"
 #include "DataForm.h"
 
@@ -22,6 +27,9 @@ using namespace System;
 using namespace System::IO;
 using namespace System::Threading;
 using namespace System::Windows::Forms;
+
+// Буфер для форматирования значений
+extern char ValueCoreT1SmallBuffer[256];
 
 class SServer
 {

@@ -4,14 +4,15 @@
 #include <chrono>
 #include <ctime>
 #include <msclr/marshal_cppstd.h>
+#include <cstdio>
 
-// Р”РѕР±Р°РІСЊС‚Рµ СЌС‚Сѓ СЃС‚СЂРѕРєСѓ РґР»СЏ РґРѕСЃС‚СѓРїР° Рє Marshal
+// Добавьте эту строку для доступа к Marshal
 using namespace System::Runtime::InteropServices;
 
 using namespace System::Windows::Forms;
 using namespace ProjectServerW;
 
-std::map<std::wstring, std::thread> formThreads;  // РҐСЂР°РЅРµРЅРёРµ РїРѕС‚РѕРєРѕРІ С„РѕСЂРј
+std::map<std::wstring, std::thread> formThreads;  // Хранение потоков форм
 
 /*CRC16-CITT tables*/
 const static uint16_t crc16_table[] =
@@ -34,11 +35,11 @@ const static uint16_t crc16_table[] =
   0x4400, 0x84c1, 0x8581, 0x4540, 0x8701, 0x47c0, 0x4680, 0x8641,0x8201, 0x42c0, 0x4380, 0x8341, 0x4100, 0x81c1, 0x8081, 0x4040,
 };
 
-// РћРїСЂРµРґРµР»РµРЅРёРµ РєРѕРЅСЃС‚СЂСѓРєС‚РѕСЂР° РєР»Р°СЃСЃР° SServer
+// Определение конструктора класса SServer
 SServer::SServer() : port(0), this_s(INVALID_SOCKET) {
 }
 
-// РћРїСЂРµРґРµР»РµРЅРёРµ РґРµСЃС‚СЂСѓРєС‚РѕСЂР° РєР»Р°СЃСЃР° SServer
+// Определение деструктора класса SServer
 SServer::~SServer() {
     if (this_s != INVALID_SOCKET) {
         closesocket(this_s);
@@ -80,7 +81,7 @@ void SServer::startServer() {
     }
 
 	if (listen(this_s, SOMAXCONN) != SOCKET_ERROR) 	{
-		// РЈСЃС‚Р°РЅРѕРІРёС‚Рµ С‚РµРєСЃС‚ РІ textBox_ListPort
+		// Установите текст в textBox_ListPort
 		unsigned short port = ntohs(addr.sin_port);
 		System::String^ portString = port.ToString();
 		form->SetTextValue("Start listenin at port " + portString);
@@ -106,7 +107,7 @@ void SServer::closeServer() {
 	form->SetTextValue(" ");
 }
 
-// РџСЂРµРѕР±СЂР°Р·РѕРІР°РЅРёРµ IP-Р°РґСЂРµСЃР° РІ СЃС‚СЂРѕРєСѓ
+// Преобразование IP-адреса в строку
 String^ GetIPString(const SOCKADDR_IN& addr_c) {
 	String^ ipString = String::Format("{0}.{1}.{2}.{3}",
 		addr_c.sin_addr.S_un.S_un_b.s_b1,
@@ -114,7 +115,7 @@ String^ GetIPString(const SOCKADDR_IN& addr_c) {
 		addr_c.sin_addr.S_un.S_un_b.s_b3,
 		addr_c.sin_addr.S_un.S_un_b.s_b4);
 
-	// Р”РѕР±Р°РІР»СЏРµРј РїРѕСЂС‚
+	// Добавляем порт
 	int port = ntohs(addr_c.sin_port);
 	String^ fullAddress = String::Format("{0}:{1}", ipString, port);
 
@@ -126,7 +127,7 @@ void SServer::handle() {
 	{
 		SOCKET acceptS;
 		SOCKADDR_IN addr_c{};
-		// РѕС‚РєСЂРѕРµРј С„РѕСЂРјСѓ MyForm РґР»СЏ РІС‹РІРѕРґР° СЃРѕРѕР±С‰РµРЅРёР№ Рѕ РєР»РёРµРЅС‚Рµ Рё РѕС€РёР±РѕРє
+		// откроем форму MyForm для вывода сообщений о клиенте и ошибок
 		MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
 
 		int addrlen = sizeof(addr_c);
@@ -135,17 +136,17 @@ void SServer::handle() {
 			String^ address = GetIPString(addr_c);
 			form->SetClientAddr_TextValue(address);
 
-            // РЎРѕР·РґР°РЅРёРµ РЅРѕРІРѕРіРѕ РїРѕС‚РѕРєР° РґР»СЏ РѕР±СЂР°Р±РѕС‚РєРё РєР»РёРµРЅС‚Р°
+            // Создание нового потока для обработки клиента
 			DWORD threadId;
 			HANDLE hThread;
 
 			hThread = CreateThread(
-				NULL,                   // Р”РµСЃРєСЂРёРїС‚РѕСЂ Р±РµР·РѕРїР°СЃРЅРѕСЃС‚Рё
-				0,                      // РќР°С‡Р°Р»СЊРЅС‹Р№ СЂР°Р·РјРµСЂ СЃС‚РµРєР°
-				ClientHandler,          // Р¤СѓРЅРєС†РёСЏ РїРѕС‚РѕРєР°
-				(LPVOID)acceptS,		// РџР°СЂР°РјРµС‚СЂ С„СѓРЅРєС†РёРё РїРѕС‚РѕРєР°
-				0,                      // Р¤Р»Р°РіРё СЃРѕР·РґР°РЅРёСЏ
-				&threadId);             // РРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ РїРѕС‚РѕРєР°
+				NULL,                   // Дескриптор безопасности
+				0,                      // Начальный размер стека
+				ClientHandler,          // Функция потока
+				(LPVOID)acceptS,		// Параметр функции потока
+				0,                      // Флаги создания
+				&threadId);             // Идентификатор потока
 
             if (hThread == NULL) {
 				form->SetMessage_TextValue("Error: Failed to create thread");
@@ -154,14 +155,14 @@ void SServer::handle() {
             } else {
 				form->SetMessage_TextValue("Information: New thread was created");
 				GlobalLogger::LogMessage("Information: New thread was created");
-				CloseHandle(hThread); // Р—Р°РєСЂС‹С‚РёРµ РґРµСЃРєСЂРёРїС‚РѕСЂР° РїРѕС‚РѕРєР°
+				CloseHandle(hThread); // Закрытие дескриптора потока
             }
 		}
 		Sleep(200);
 	}
 }
 
-// РўР°Р±Р»РёС‡РЅРѕРµ РѕРїСЂРµРґРµР»РµРЅРёРµ CRC
+// Табличное определение CRC
 static uint16_t MB_GetCRC(char* buf, uint16_t len)
 {
 	uint16_t crc_16 = 0xffff;
@@ -176,96 +177,100 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	SOCKADDR_IN clientAddr = {};
 	int addrLen = sizeof(clientAddr);
 	int clientPort = 0;
-	int SclientPort = 900000; // РџРѕСЂС‚ Sclient
+	int SclientPort = 900000; // Порт Sclient
 
 	SOCKET clientSocket = (SOCKET)lpParam;
     char buffer[512];
     int bytesReceived;
-	// РѕС‚РєСЂРѕРµРј С„РѕСЂРјСѓ MyForm РґР»СЏ Р·Р°РїРёСЃРё СЃРѕРѕР±С‰РµРЅРёР№ РѕР± РѕС€РёР±РєР°С…
+	// откроем форму MyForm для записи сообщений об ошибках
 	MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
 
-	// РџРѕР»СѓС‡Р°РµРј РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ РєР»РёРµРЅС‚Рµ
+	// Получаем информацию о клиенте
 	if (getpeername(clientSocket, (SOCKADDR*)&clientAddr, &addrLen) != SOCKET_ERROR) {
-		// РџСЂРµРѕР±СЂР°Р·СѓРµРј РїРѕСЂС‚ РёР· СЃРµС‚РµРІРѕРіРѕ РІ Р»РѕРєР°Р»СЊРЅС‹Р№ С„РѕСЂРјР°С‚
+		// Преобразуем порт из сетевого в локальный формат
 		clientPort = ntohs(clientAddr.sin_port);
 	}
-	// РћС‚РєСЂС‹РІР°РµРј С„РѕСЂРјСѓ DataForm РґР»СЏ РґРµРјРѕРЅСЃС‚СЂР°С†РёРё РїСЂРёРЅСЏС‚С‹С… РґР°РЅРЅС‹С… РІ РѕС‚РґРµР»СЊРЅРѕРј РїРѕС‚РѕРєРµ
-	// РРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ С„РѕСЂРјС‹ РІРѕР·РІСЂР°С‰Р°РµРј РѕР±СЂР°С‚РЅРѕ С‡РµСЂРµР· РѕС‡РµСЂРµРґСЊ СЃРѕРѕР±С‰РµРЅРёР№
+	// Открываем форму DataForm для демонстрации принятых данных в отдельном потоке
+	// Идентификатор формы возвращаем обратно через очередь сообщений
 	std::wstring guid;
 	std::queue<std::wstring> messageQueue;
 	std::mutex mtx;
 	std::condition_variable cv;
 		
-	try {	// РѕС‚РєСЂС‹РІР°РµРј С„РѕСЂРјСѓ DataForm РІ РЅРѕРІРѕРј РїРѕС‚РѕРєРµ, РїРµСЂРµРґР°С‘Рј РІ РїРѕС‚РѕРє СЃСЃС‹Р»РєРё РЅР° РѕС‡РµСЂРµРґСЊ СЃРѕРѕР±С‰РµРЅРёР№, РјСЊСЋС‚РµРєСЃ Рё СѓСЃР»РѕРІРЅСѓСЋ РїРµСЂРµРјРµРЅРЅСѓСЋ
+	try {	// открываем форму DataForm в новом потоке, передаём в поток ссылки на очередь сообщений, мьютекс и условную переменную
 		std::thread formThread([&messageQueue, &mtx, &cv]() {
 			ProjectServerW::DataForm::CreateAndShowDataFormInThread(messageQueue, mtx, cv);
 			});
-		// РџРѕР»СѓС‡РµРЅРёРµ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂР° С„РѕСЂРјС‹ РґР°РЅРЅС‹С… - guid
-		// РѕР±Р»Р°СЃС‚СЊ РІРёРґРёРјРѕСЃС‚Рё РЅСѓР¶РЅР° РґР»СЏ РјСЊСЋС‚РµРєСЃР°, РїСЂРё РІС‹С…РѕРґРµ РёР· РѕР±Р»Р°СЃС‚Рё РІРёРґРёРјРѕСЃС‚Рё РјСЊСЋС‚РµРєСЃ СЂР°Р·Р±Р»РѕРєРёСЂСѓРµС‚СЃСЏ
+		// Получение идентификатора формы данных - guid
+		// область видимости нужна для мьютекса, при выходе из области видимости мьютекс разблокируется
 		{
 			std::unique_lock<std::mutex> lock(mtx);
 			cv.wait(lock, [&messageQueue] { return !messageQueue.empty(); });
 			guid = messageQueue.front();
 			messageQueue.pop();
 		}
-		// РЎРѕС…СЂР°РЅСЏРµРј РїРѕС‚РѕРє С„РѕСЂРјС‹ РґР°РЅРЅС‹С… РІ С…СЂР°РЅРёР»РёС‰Рµ СЃ GUID С„РѕСЂРјС‹ РІ РєР°С‡РµСЃС‚РІРµ РєР»СЋС‡Р°
+		// Сохраняем поток формы данных в хранилище с GUID формы в качестве ключа
 		ThreadStorage::StoreThread(guid, formThread);
 	}
-	catch (const std::exception& e) {	// РћР±СЂР°Р±РѕС‚РєР° РёСЃРєР»СЋС‡РµРЅРёСЏ, РІС‹РІРѕРґРёРј СЃРѕРѕР±С‰РµРЅРёРµ РѕР± РѕС€РёР±РєРµ
+	catch (const std::exception& e) {	// Обработка исключения, выводим сообщение об ошибке
 		String^ errorMessage = gcnew String(e.what());
 		form->SetMessage_TextValue("Error: Couldn't create a form in a new thread " + errorMessage);
 		GlobalLogger::LogMessage(ConvertToStdString("Error: Couldn't create a form in a new thread " + errorMessage));
 		return 1;
 	}
 
-	int timeout = 600*1000;	// РўР°Р№Рј-Р°СѓС‚ РІ РјРёР»Р»РёСЃРµРєСѓРЅРґР°С… (1000 РјСЃ = 1 СЃРµРєСѓРЅРґР°), РµСЃР»Рё СЃРѕРѕР±С‰РµРЅРёСЏ РЅРµС‚, С‚Рѕ СЃРѕРµРґРёРЅРµРЅРёРµ СЂР°Р·СЂС‹РІР°РµС‚СЃСЏ
+	int timeout = 600*1000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
 
-	// РЈСЃС‚Р°РЅРѕРІРєР° С‚Р°Р№Рј-Р°СѓС‚Р° РґР»СЏ РѕРїРµСЂР°С†РёР№ С‡С‚РµРЅРёСЏ (recv)
+	// Установка тайм-аута для операций чтения (recv)
 	setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
 
-	// Р‘РµСЃРєРѕРЅРµС‡РЅС‹Р№ С†РёРєР» СЃС‡РёС‚С‹РІР°РЅРёСЏ РґР°РЅРЅС‹С…
+	// Бесконечный цикл считывания данных
+	
 	while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
-		uint16_t dataCRC = MB_GetCRC(buffer, 40);
+		// Номер первого байта в структуре обмена данными, выделенный для CRC
+		uint8_t LengthOfPackage = 48;
+		// Вычислим CRC16 для первых 46 байт
+		uint16_t dataCRC = MB_GetCRC(buffer, LengthOfPackage - 2);
 		uint16_t DatCRC;
-		memcpy(&DatCRC, &buffer[40], 2);
+		memcpy(&DatCRC, &buffer[LengthOfPackage - 2], 2);
 
 		if (DatCRC == dataCRC) {
 			send(clientSocket, buffer, bytesReceived, 0);
 
-			// РќР°Р№РґС‘Рј С„РѕСЂРјСѓ РїРѕ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂСѓ
+			// Найдём форму по идентификатору
 			DataForm^ form2 = DataForm::GetFormByGuid(guid);
 			if (form2 != nullptr && !form2->IsDisposed && form2->IsHandleCreated && !form2->Disposing) 
 			{
 				
-				// РџРµСЂРµРґР°РґРёРј РІ С„РѕСЂРјСѓ СЃРѕРєРµС‚ РєР»РёРµРЅС‚Р° СЌС‚РѕР№ С„РѕСЂРјС‹
+				// Передадим в форму сокет клиента этой формы
 				if (form2 != nullptr) {
 					form2->ClientSocket = clientSocket;
 				}
 				
 				if (clientPort < SclientPort) {
-					// РЎРѕР·РґР°РµРј РєРѕРїРёСЋ РґР°РЅРЅС‹С… РґР»СЏ Р±РµР·РѕРїР°СЃРЅРѕР№ РїРµСЂРµРґР°С‡Рё РІ РґСЂСѓРіРѕР№ РїРѕС‚РѕРє
+					// Создаем копию данных для безопасной передачи в другой поток
 					cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(bytesReceived);
 					Marshal::Copy(IntPtr(buffer), dataBuffer, 0, bytesReceived);
 
-					// Р’С‹Р·С‹РІР°РµРј AddDataToTable С‡РµСЂРµР· Invoke РґР»СЏ РІС‹РїРѕР»РЅРµРЅРёСЏ РІ РїРѕС‚РѕРєРµ С„РѕСЂРјС‹
+					// Вызываем AddDataToTable через Invoke для выполнения в потоке формы
 					form2->BeginInvoke(gcnew Action<cli::array <System::Byte>^, int, int>
 						(form2, &DataForm::AddDataToTableThreadSafe),
 						dataBuffer, bytesReceived, clientPort);
-					// Refresh РІС‹Р·С‹РІР°С‚СЊ РѕС‚РґРµР»СЊРЅРѕ СѓР¶Рµ РЅРµ РЅСѓР¶РЅРѕ - РѕРЅ Р±СѓРґРµС‚ РІС‹Р·РІР°РЅ РІ AddDataToTableThreadSafe
+					// Refresh вызывать отдельно уже не нужно - он будет вызван в AddDataToTableThreadSafe
 				} else {
-					// Р·РґРµСЃСЊ РѕР±СЂР°Р±РѕС‚РєР° РґР»СЏ РґСЂСѓРіРѕРіРѕ С‚РёРїР° РїРѕСЂС‚Р°
+					// здесь обработка для другого типа порта
 				}
 			}
 			else {
-				// Р¤РѕСЂРјР° Р·Р°РєСЂС‹С‚Р°, Р·Р°РІРµСЂС€Р°РµРј РїРѕС‚РѕРє
+				// Форма закрыта, завершаем поток
 				break;
-			} // РєРѕРЅРµС† if (form2 != nullptr...
+			} // конец if (form2 != nullptr...
 		} // if (DatCRC == dataCRC)...
-	}	// РєРѕРЅРµС† while
+	}	// конец while
 	/*
-	Р•СЃР»Рё С„СѓРЅРєС†РёСЏ recv РІРѕР·РІСЂР°С‰Р°РµС‚ 0, СЌС‚Рѕ РѕР·РЅР°С‡Р°РµС‚, С‡С‚Рѕ СЃРѕРµРґРёРЅРµРЅРёРµ Р±С‹Р»Рѕ Р·Р°РєСЂС‹С‚Рѕ РєР»РёРµРЅС‚РѕРј.
-	Р•СЃР»Рё С„СѓРЅРєС†РёСЏ recv РІРѕР·РІСЂР°С‰Р°РµС‚ SOCKET_ERROR, РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ РєРѕРґ РѕС€РёР±РєРё СЃ РїРѕРјРѕС‰СЊСЋ С„СѓРЅРєС†РёРё WSAGetLastError.
-	Р•СЃР»Рё РєРѕРґ РѕС€РёР±РєРё СЂР°РІРµРЅ WSAETIMEDOUT, СЌС‚Рѕ РѕР·РЅР°С‡Р°РµС‚, С‡С‚Рѕ РѕРїРµСЂР°С†РёСЏ С‡С‚РµРЅРёСЏ Р·Р°РІРµСЂС€РёР»Р°СЃСЊ РїРѕ С‚Р°Р№Рј-Р°СѓС‚Сѓ.
+	Если функция recv возвращает 0, это означает, что соединение было закрыто клиентом.
+	Если функция recv возвращает SOCKET_ERROR, проверяется код ошибки с помощью функции WSAGetLastError.
+	Если код ошибки равен WSAETIMEDOUT, это означает, что операция чтения завершилась по тайм-ауту.
 	*/
 	if (bytesReceived == 0) {
 		form->SetMessage_TextValue("Attention: Connection closed by client");
@@ -284,9 +289,9 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	}
 
 	closesocket(clientSocket);
-	// РќР°Р№РґС‘Рј С„РѕСЂРјСѓ РґР°РЅРЅС‹С… РїРѕ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂСѓ Рё Р·Р°РєСЂРѕРµРј РµС‘
+	// Найдём форму данных по идентификатору и закроем её
 	DataForm::CloseForm(guid);
-	// Р—Р°РєСЂС‹С‚РёРµ РїРѕС‚РѕРєР° С„РѕСЂРјС‹ РґР°РЅРЅС‹С… РїРѕ guid С„РѕСЂРјС‹
+	// Закрытие потока формы данных по guid формы
 	ThreadStorage::StopThread(guid);
 
 	return 0;
@@ -297,7 +302,7 @@ std::string ConvertToStdString(System::String^ managedString) {
 	if (managedString == nullptr)
 		return std::string();
 
-	// РСЃРїРѕР»СЊР·СѓРµРј UTF8 РєРѕРґРёСЂРѕРІРєСѓ РґР»СЏ РєРѕРЅРІРµСЂС‚Р°С†РёРё
+	// Используем UTF8 кодировку для конвертации
 	cli::array<System::Byte>^ bytes = System::Text::Encoding::UTF8->GetBytes(managedString);
 	std::string result(bytes->Length, 0);
 
@@ -306,4 +311,11 @@ std::string ConvertToStdString(System::String^ managedString) {
 		memcpy(&result[0], pinnedBytes, bytes->Length);
 	}
 	return result;
+}
+
+// ?????????? ??????? Unicode::snprintfFloat
+namespace Unicode {
+    int snprintfFloat(char* buffer, size_t size, const char* format, float value) {
+        return snprintf(buffer, size, format, value);
+    }
 }

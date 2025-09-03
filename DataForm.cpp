@@ -237,8 +237,8 @@ void ProjectServerW::DataForm::InitializeDataTable() {
     {
         dataTable->Columns->Add("Typ" + i, uint8_t::typeid);
         dataTable->Columns->Add("Act" + i, uint8_t::typeid);
-        dataTable->Columns->Add("T" + i, uint16_t::typeid);
-        dataTable->Columns->Add("H" + i, uint16_t::typeid);
+        dataTable->Columns->Add("T" + i, float::typeid);
+        dataTable->Columns->Add("H" + i, float::typeid);
     }
 
     // Обработка сигналов с устройства ввода-вывода
@@ -287,8 +287,8 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     {
         row["Typ" + i] = data.SensorType[i];
         row["Act" + i] = data.Active[i];
-        row["T" + i] = data.T[i];
-        row["H" + i] = data.H[i];
+        row["T" + i] = data.T[i] / 10.0;
+        row["H" + i] = data.H[i] / 10.0;
     }
  
     cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();
@@ -353,7 +353,7 @@ void ProjectServerW::DataForm::AddDataToExcel() {
     try {
         // DataTable не является потокобезопасной структурой, в Excel будем перегонять копию
         System::Data::DataTable^ copiedTable = dataTable->Copy();
-        // Последняя строка может быть не запонена полностью, её удалим
+        // Последняя строка может быть не заполнена полностью, её удалим
         if (copiedTable->Rows->Count > 0) {
             copiedTable->Rows->RemoveAt(copiedTable->Rows->Count - 1);
         }
@@ -404,8 +404,8 @@ void ProjectServerW::DataForm::AddDataToExcel() {
                 {
                     ws->Cells[row, 4 + 4*i] = Convert::ToUInt16(dr["Typ" + i]);
                     ws->Cells[row, 5 + 4*i] = Convert::ToUInt16(dr["Act" + i]);
-                    ws->Cells[row, 6 + 4*i] = Math::Round(Convert::ToSingle(dr["T" + i]) / 10.0, 1);
-                    ws->Cells[row, 7 + 4*i] = Math::Round(Convert::ToSingle(dr["H" + i]) / 10.0, 1);
+                    ws->Cells[row, 6 + 4*i] = dr["T" + i];
+                    ws->Cells[row, 7 + 4*i] = dr["H" + i];
                 }
 
                 ColomnNumber = 6 + 4 * (SQ - 1);
@@ -663,16 +663,17 @@ void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::ar
 
     // Инициализация массива состояния устройств дефростера
     namesRef[0] = gcnew cli::array<String^>(16) {
-        "Vent0", "Vent1", "Vent2", "Vent3", // Работа циркуляционного вентилятора 1..4
         "Heat0", "Heat1", "Heat2", "Heat3", // Работа нагревателя  (ТЭНа) 1..4
-        "OutA",     // Работа вытяжного вентилятора
+        "Vent0", "Vent1", "Vent2", "Vent3", // Работа циркуляционного вентилятора 1..4
         "InjW",     // Работа водяных форсунок
+        "UP",       // Сигнал «Двигать ворота вверх»
+        "DOWN",     // Сигнал «Двигать ворота вниз»
+        "STOP",     // Сигнал «Остановить ворота»
+        "Clse",     // Сигнал «Ворота закрыты»
+        "Open",     // Сигнал «Ворота открыты»
         "Work",     // Лампа РАБОТА 
         "Alrm",     // Лампа АВАРИЯ 
-        "Open",     // Сигнал «Ворота открыты»
-        "Clse",     // Сигнал «Ворота закрыты»
-        "StUP",     // Сигнал «Промежуточное положение ворот при движении вверх»
-        "StDN"      // Сигнал «Промежуточное положение ворот при движении вниз»
+        
     };
 
     // Инициализация массива cигналов управления устройствами дефростера

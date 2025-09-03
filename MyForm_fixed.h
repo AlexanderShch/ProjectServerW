@@ -10,7 +10,7 @@ namespace ProjectServerW {
 	using namespace System::Drawing;
 
 	/// <summary>
-	/// Сводка для MyForm
+	/// Форма для MyForm
 	/// </summary>
 	public ref class MyForm : public System::Windows::Forms::Form
 	{
@@ -19,16 +19,13 @@ namespace ProjectServerW {
 		{
 			InitializeComponent();
 			//
-			//TODO: добавьте код конструктора
+			//TODO: Добавить код для инициализации
 			//
-
-			// Подписываемся на событие Load формы для автоматического запуска сервера
-			this->Load += gcnew System::EventHandler(this, &MyForm::MyForm_Load);
 		}
 
 	protected:
 		/// <summary>
-		/// Освободить все используемые ресурсы.
+		/// Освободить ресурсы для очистки компонентов.
 		/// </summary>
 		~MyForm()
 		{
@@ -55,13 +52,13 @@ namespace ProjectServerW {
 
 	private:
 		/// <summary>
-		/// Обязательная переменная конструктора.
+		/// Обязательная переменная диспетчера компонентов.
 		/// </summary>
 		System::ComponentModel::Container ^components;
 
 #pragma region Windows Form Designer generated code
 		/// <summary>
-		/// Требуемый метод для поддержки конструктора — не изменяйте 
+		/// Требуемый метод для поддержки диспетчера компонентов — не изменяйте 
 		/// содержимое этого метода с помощью редактора кода.
 		/// </summary>
 		void InitializeComponent(void)
@@ -117,7 +114,7 @@ namespace ProjectServerW {
 			this->label_N_port->Name = L"label_N_port";
 			this->label_N_port->Size = System::Drawing::Size(110, 29);
 			this->label_N_port->TabIndex = 3;
-			this->label_N_port->Text = L"№ порта";
+			this->label_N_port->Text = L"В порту";
 			// 
 			// SocketState
 			// 
@@ -172,7 +169,7 @@ namespace ProjectServerW {
 			this->labelMessage->Name = L"labelMessage";
 			this->labelMessage->Size = System::Drawing::Size(150, 29);
 			this->labelMessage->TabIndex = 8;
-			this->labelMessage->Text = L"Сообщение";
+			this->labelMessage->Text = L"Сообщения";
 			// 
 			// MyForm
 			// 
@@ -189,7 +186,7 @@ namespace ProjectServerW {
 			this->Controls->Add(this->menuStrip1);
 			this->MainMenuStrip = this->menuStrip1;
 			this->Name = L"MyForm";
-			this->Text = L"Сервер по приёму данных от микроконтроллера";
+			this->Text = L"Сервер на сокете сервер на микроконтроллере";
 			this->menuStrip1->ResumeLayout(false);
 			this->menuStrip1->PerformLayout();
 			this->ResumeLayout(false);
@@ -199,8 +196,7 @@ namespace ProjectServerW {
 #pragma endregion
 	private: System::Void выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void button_Listen_Click(System::Object^ sender, System::EventArgs^ e);
-	private: System::Void MyForm_Load(System::Object^ sender, System::EventArgs^ e);
-	public:
+	public:	   
 		void SetTextValue(String^ text) {
 			if (this != nullptr && this->InvokeRequired) {
 				this->Invoke(gcnew Action<String^>(this, &MyForm::SetTextValue), text);
@@ -251,3 +247,4 @@ namespace ProjectServerW {
 		}
 	};
 }
+

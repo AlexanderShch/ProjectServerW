@@ -7,7 +7,7 @@
 #include <queue>
 #include <vcclr.h>					// Для использования gcroot
 
-#define SQ 6				// sensors quantity for measures (0-4) + sets of T (5, 6) + MB_IO
+#define SQ 7				// датчики TH дефростера (0-2) + датчики продукта (3, 4) + T корпуса (5) + MB_IO (6)
 
 namespace ProjectServerW {
 
