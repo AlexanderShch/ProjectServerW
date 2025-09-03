@@ -16,8 +16,8 @@ typedef struct   // object data for Server type из STM32
     uint8_t SensorQuantity;		// Количество сенсоров
     uint8_t SensorType[SQ];		// Тип сенсора
     uint8_t Active[SQ];			// Активность сенсора
-    uint16_t T[SQ];				// Значение 1 сенсора (температура)
-    uint16_t H[SQ];				// Значение 2 сенсора (влажность)
+    short T[SQ];				// Значение 1 сенсора (температура)
+    short H[SQ];				// Значение 2 сенсора (влажность)
     uint16_t CRC_SUM;			// Контрольное значение
 } MSGQUEUE_OBJ_t;
 
@@ -237,8 +237,8 @@ void ProjectServerW::DataForm::InitializeDataTable() {
     {
         dataTable->Columns->Add("Typ" + i, uint8_t::typeid);
         dataTable->Columns->Add("Act" + i, uint8_t::typeid);
-        dataTable->Columns->Add("T" + i, float::typeid);
-        dataTable->Columns->Add("H" + i, float::typeid);
+        dataTable->Columns->Add("T" + i, short::typeid);
+        dataTable->Columns->Add("H" + i, short::typeid);
     }
 
     // Обработка сигналов с устройства ввода-вывода

@@ -40,7 +40,7 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::MenuStrip^ menuStrip1;
 	protected:
 	private: System::Windows::Forms::ToolStripMenuItem^ âûõîäToolStripMenuItem;
-	private: System::Windows::Forms::Button^ button_Listen;
+
 
 	private: System::Windows::Forms::Label^ label_N_port;
 	private: System::Windows::Forms::Label^ SocketState;
@@ -68,7 +68,6 @@ namespace ProjectServerW {
 		{
 			this->menuStrip1 = (gcnew System::Windows::Forms::MenuStrip());
 			this->âûõîäToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
-			this->button_Listen = (gcnew System::Windows::Forms::Button());
 			this->label_N_port = (gcnew System::Windows::Forms::Label());
 			this->SocketState = (gcnew System::Windows::Forms::Label());
 			this->SocketBind = (gcnew System::Windows::Forms::Label());
@@ -85,28 +84,16 @@ namespace ProjectServerW {
 			this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->âûõîäToolStripMenuItem });
 			this->menuStrip1->Location = System::Drawing::Point(0, 0);
 			this->menuStrip1->Name = L"menuStrip1";
-			this->menuStrip1->Size = System::Drawing::Size(786, 36);
+			this->menuStrip1->Size = System::Drawing::Size(786, 33);
 			this->menuStrip1->TabIndex = 0;
 			this->menuStrip1->Text = L"menuStrip1";
 			// 
 			// âûõîäToolStripMenuItem
 			// 
 			this->âûõîäToolStripMenuItem->Name = L"âûõîäToolStripMenuItem";
-			this->âûõîäToolStripMenuItem->Size = System::Drawing::Size(80, 32);
+			this->âûõîäToolStripMenuItem->Size = System::Drawing::Size(80, 29);
 			this->âûõîäToolStripMenuItem->Text = L"Âûõîä";
 			this->âûõîäToolStripMenuItem->Click += gcnew System::EventHandler(this, &MyForm::âûõîäToolStripMenuItem_Click);
-			// 
-			// button_Listen
-			// 
-			this->button_Listen->Font = (gcnew System::Drawing::Font(L"Microsoft Sans Serif", 12, System::Drawing::FontStyle::Regular, System::Drawing::GraphicsUnit::Point,
-				static_cast<System::Byte>(204)));
-			this->button_Listen->Location = System::Drawing::Point(31, 89);
-			this->button_Listen->Name = L"button_Listen";
-			this->button_Listen->Size = System::Drawing::Size(204, 53);
-			this->button_Listen->TabIndex = 1;
-			this->button_Listen->Text = L"Ñëóøàòü";
-			this->button_Listen->UseVisualStyleBackColor = true;
-			this->button_Listen->Click += gcnew System::EventHandler(this, &MyForm::button_Listen_Click);
 			// 
 			// label_N_port
 			// 
@@ -185,7 +172,6 @@ namespace ProjectServerW {
 			this->Controls->Add(this->SocketBind);
 			this->Controls->Add(this->SocketState);
 			this->Controls->Add(this->label_N_port);
-			this->Controls->Add(this->button_Listen);
 			this->Controls->Add(this->menuStrip1);
 			this->MainMenuStrip = this->menuStrip1;
 			this->Name = L"MyForm";
