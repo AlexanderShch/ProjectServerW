@@ -2,6 +2,7 @@
 #include "Chart.h"
 #include <objbase.h>                // Для CoCreateGuid - генерация уникального идентификатора
 #include <string>
+#include <vcclr.h>  // Для gcnew
 
 // Добавьте эту строку для доступа к Process
 using namespace System::Diagnostics;
@@ -290,7 +291,15 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         row["T" + i] = data.T[i] / 10.0;
         row["H" + i] = data.H[i] / 10.0;
     }
- 
+    // Обновляем значения температуры в элементах интерфейса
+    cli::array<double>^ temperatures = gcnew cli::array<double>(5);
+    temperatures[0] = data.T[0] / 10.0;  // T_def_left
+    temperatures[1] = data.T[1] / 10.0;  // T_def_right
+    temperatures[2] = data.T[2] / 10.0;  // T_def_center
+    temperatures[3] = data.T[3] / 10.0;  // T_product_left
+    temperatures[4] = data.T[4] / 10.0;  // T_product_right
+    UpdateAllTemperatureValues(temperatures);
+
     cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();
 
     // Находим индекс бита "Work" в массиве bitNames[0]

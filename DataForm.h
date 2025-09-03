@@ -53,6 +53,15 @@ namespace ProjectServerW {
 			 bool pendingExcelExport;		  // Флаг ожидания освобождения кнопки записи Excel
 			 System::Windows::Forms::Timer^ exportTimer;	// Таймер для проверки освобождения кнопки
 	private: System::Windows::Forms::Label^ Label_Data;
+	private: System::Windows::Forms::Label^ LabelDefroster;
+	private: System::Windows::Forms::Label^ T_def_left;
+	private: System::Windows::Forms::Label^ T_def_right;
+	private: System::Windows::Forms::Label^ T_def_center;
+	private: System::Windows::Forms::Label^ T_product_right;
+	private: System::Windows::Forms::Label^ T_product_left;
+	private: System::Windows::Forms::Label^ LabelProduct;
+
+
 
 
 
@@ -154,6 +163,13 @@ namespace ProjectServerW {
 			this->buttonExcel = (gcnew System::Windows::Forms::Button());
 			this->tabControl1 = (gcnew System::Windows::Forms::TabControl());
 			this->tabPage1 = (gcnew System::Windows::Forms::TabPage());
+			this->T_product_right = (gcnew System::Windows::Forms::Label());
+			this->T_product_left = (gcnew System::Windows::Forms::Label());
+			this->LabelProduct = (gcnew System::Windows::Forms::Label());
+			this->T_def_right = (gcnew System::Windows::Forms::Label());
+			this->T_def_center = (gcnew System::Windows::Forms::Label());
+			this->T_def_left = (gcnew System::Windows::Forms::Label());
+			this->LabelDefroster = (gcnew System::Windows::Forms::Label());
 			this->Label_Data = (gcnew System::Windows::Forms::Label());
 			this->dataGridView = (gcnew System::Windows::Forms::DataGridView());
 			this->tabPage2 = (gcnew System::Windows::Forms::TabPage());
@@ -209,6 +225,13 @@ namespace ProjectServerW {
 			// tabPage1
 			// 
 			this->tabPage1->AutoScroll = true;
+			this->tabPage1->Controls->Add(this->T_product_right);
+			this->tabPage1->Controls->Add(this->T_product_left);
+			this->tabPage1->Controls->Add(this->LabelProduct);
+			this->tabPage1->Controls->Add(this->T_def_right);
+			this->tabPage1->Controls->Add(this->T_def_center);
+			this->tabPage1->Controls->Add(this->T_def_left);
+			this->tabPage1->Controls->Add(this->LabelDefroster);
 			this->tabPage1->Controls->Add(this->Label_Data);
 			this->tabPage1->Controls->Add(this->dataGridView);
 			this->tabPage1->Controls->Add(this->buttonExcel);
@@ -219,6 +242,76 @@ namespace ProjectServerW {
 			this->tabPage1->TabIndex = 0;
 			this->tabPage1->Text = L"Данные";
 			this->tabPage1->UseVisualStyleBackColor = true;
+			// 
+			// T_product_right
+			// 
+			this->T_product_right->AutoSize = true;
+			this->T_product_right->Location = System::Drawing::Point(858, 17);
+			this->T_product_right->Name = L"T_product_right";
+			this->T_product_right->Size = System::Drawing::Size(23, 20);
+			this->T_product_right->TabIndex = 13;
+			this->T_product_right->Text = L"- -";
+			this->T_product_right->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
+			// 
+			// T_product_left
+			// 
+			this->T_product_left->AutoSize = true;
+			this->T_product_left->Location = System::Drawing::Point(787, 17);
+			this->T_product_left->Name = L"T_product_left";
+			this->T_product_left->Size = System::Drawing::Size(23, 20);
+			this->T_product_left->TabIndex = 13;
+			this->T_product_left->Text = L"- -";
+			this->T_product_left->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
+			// 
+			// LabelProduct
+			// 
+			this->LabelProduct->AutoSize = true;
+			this->LabelProduct->Location = System::Drawing::Point(667, 17);
+			this->LabelProduct->Name = L"LabelProduct";
+			this->LabelProduct->Size = System::Drawing::Size(93, 20);
+			this->LabelProduct->TabIndex = 12;
+			this->LabelProduct->Text = L"Т продукта";
+			// 
+			// T_def_right
+			// 
+			this->T_def_right->AutoSize = true;
+			this->T_def_right->Location = System::Drawing::Point(551, 17);
+			this->T_def_right->Name = L"T_def_right";
+			this->T_def_right->Size = System::Drawing::Size(23, 20);
+			this->T_def_right->TabIndex = 11;
+			this->T_def_right->Text = L"- -";
+			this->T_def_right->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
+			// 
+			// T_def_center
+			// 
+			this->T_def_center->AutoSize = true;
+			this->T_def_center->Location = System::Drawing::Point(469, 17);
+			this->T_def_center->Name = L"T_def_center";
+			this->T_def_center->Size = System::Drawing::Size(23, 20);
+			this->T_def_center->TabIndex = 10;
+			this->T_def_center->Text = L"- -";
+			this->T_def_center->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
+			// 
+			// T_def_left
+			// 
+			this->T_def_left->AutoSize = true;
+			this->T_def_left->Location = System::Drawing::Point(389, 17);
+			this->T_def_left->Name = L"T_def_left";
+			this->T_def_left->Size = System::Drawing::Size(23, 20);
+			this->T_def_left->TabIndex = 9;
+			this->T_def_left->Text = L"- -";
+			this->T_def_left->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
+			this->T_def_left->Click += gcnew System::EventHandler(this, &DataForm::label1_Click_1);
+			// 
+			// LabelDefroster
+			// 
+			this->LabelDefroster->AutoSize = true;
+			this->LabelDefroster->Location = System::Drawing::Point(248, 17);
+			this->LabelDefroster->Name = L"LabelDefroster";
+			this->LabelDefroster->Size = System::Drawing::Size(119, 20);
+			this->LabelDefroster->TabIndex = 8;
+			this->LabelDefroster->Text = L"Т дефростера";
+			this->LabelDefroster->Click += gcnew System::EventHandler(this, &DataForm::label1_Click);
 			// 
 			// Label_Data
 			// 
@@ -328,6 +421,32 @@ namespace ProjectServerW {
 		void SetData_TextValue(String^ text) {
 			Label_Data->Text = text;
 		};
+		void SetT_def_left_Value(String^ text) {
+			T_def_left->Text = text;
+		};
+		void SetT_def_right_Value(String^ text) {
+			T_def_right->Text = text;
+		};
+		void SetT_def_center_Value(String^ text) {
+			T_def_center->Text = text;
+		};
+		void SetT_product_left_Value(String^ text) {
+			T_product_left->Text = text;
+		};
+		void SetT_product_right_Value(String^ text) {
+			T_product_right->Text = text;
+		};
+		// Метод для обновления всех значений температуры
+		void UpdateAllTemperatureValues(cli::array<double>^ temperatures) {
+			if (temperatures->Length >= 5) {
+				SetT_def_left_Value(temperatures[0].ToString("F1") + "°C");
+				SetT_def_right_Value(temperatures[1].ToString("F1") + "°C");
+				SetT_def_center_Value(temperatures[2].ToString("F1") + "°C");
+				SetT_product_left_Value(temperatures[4].ToString("F1") + "°C");
+				SetT_product_right_Value(temperatures[3].ToString("F1") + "°C");
+			}
+		};
+
 		static void CreateAndShowDataFormInThread(std::queue<std::wstring>& messageQueue,
 			std::mutex& mtx,
 			std::condition_variable& cv);
@@ -419,6 +538,10 @@ private: System::Void dataGridView_CellContentClick(System::Object^ sender, Syst
 private: System::Void menuStrip1_ItemClicked(System::Object^ sender, System::Windows::Forms::ToolStripItemClickedEventArgs^ e) {
 }
 private: System::Void записьВExcelToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e) {
+}
+private: System::Void label1_Click(System::Object^ sender, System::EventArgs^ e) {
+}
+private: System::Void label1_Click_1(System::Object^ sender, System::EventArgs^ e) {
 }
 };
 }
