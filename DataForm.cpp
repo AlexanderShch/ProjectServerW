@@ -238,8 +238,8 @@ void ProjectServerW::DataForm::InitializeDataTable() {
     {
         dataTable->Columns->Add("Typ" + i, uint8_t::typeid);
         dataTable->Columns->Add("Act" + i, uint8_t::typeid);
-        dataTable->Columns->Add("T" + i, short::typeid);
-        dataTable->Columns->Add("H" + i, short::typeid);
+        dataTable->Columns->Add("T" + i, float::typeid);
+        dataTable->Columns->Add("H" + i, float::typeid);
     }
 
     // Обработка сигналов с устройства ввода-вывода
