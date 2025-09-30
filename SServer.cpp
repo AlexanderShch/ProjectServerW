@@ -154,7 +154,7 @@ void SServer::handle() {
 				closesocket(acceptS);
             } else {
 				form->SetMessage_TextValue("Information: New thread was created");
-				GlobalLogger::LogMessage("Information: New thread was created");
+				GlobalLogger::LogMessage(ConvertToStdString("Information: New thread was created, port " + ClientPort));
 				CloseHandle(hThread); // Закрытие дескриптора потока
             }
 		}
@@ -211,11 +211,12 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		}
 		// Сохраняем поток формы данных в хранилище с GUID формы в качестве ключа
 		ThreadStorage::StoreThread(guid, formThread);
+		GlobalLogger::LogMessage(ConvertToStdString("Information: The DataForm has been opened successfully!"));
 	}
 	catch (const std::exception& e) {	// Обработка исключения, выводим сообщение об ошибке
 		String^ errorMessage = gcnew String(e.what());
 		form->SetMessage_TextValue("Error: Couldn't create a form in a new thread " + errorMessage);
-		GlobalLogger::LogMessage(ConvertToStdString("Error: Couldn't create a form in a new thread " + errorMessage));
+		GlobalLogger::LogMessage(ConvertToStdString("Error: Couldn't create a DataForm in a new thread " + errorMessage));
 		return 1;
 	}
 
@@ -227,7 +228,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	// Бесконечный цикл считывания данных
 	
 	while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
-		// Номер первого байта в структуре обмена данными, выделенный для CRC
+		// Длина посылки вместе с CRC
 		uint8_t LengthOfPackage = 48;
 		// Вычислим CRC16 для первых 46 байт
 		uint16_t dataCRC = MB_GetCRC(buffer, LengthOfPackage - 2);
@@ -235,6 +236,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		memcpy(&DatCRC, &buffer[LengthOfPackage - 2], 2);
 
 		if (DatCRC == dataCRC) {
+			// Отправляем зеркальную посылку клиенту
 			send(clientSocket, buffer, bytesReceived, 0);
 
 			// Найдём форму по идентификатору

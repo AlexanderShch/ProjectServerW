@@ -18,6 +18,7 @@ bool IsExcelInstalled() {
     }
     catch (...) {
         MessageBox::Show("Error: EXCEL не установлен!");
+        GlobalLogger::LogMessage("Error: EXCEL не установлен!");
         return false;
     }
 }

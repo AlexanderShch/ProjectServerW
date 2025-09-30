@@ -61,6 +61,7 @@ System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System::Obje
                 // Закрываем сокет клиента
                 closesocket(form->ClientSocket);
                 form->ClientSocket = INVALID_SOCKET;
+                GlobalLogger::LogMessage("Information: Закрыто соединение с клиентом по кнопке Выход");
             }
         }
     }
@@ -83,7 +84,7 @@ System::Void ProjectServerW::DataForm::buttonEXCEL_Click(System::Object^ sender,
     // Даем потоку завершиться правильно, блокирует завершение программы до своего завершения
     excelThread->IsBackground = false; 
     excelThread->Start();
-
+    GlobalLogger::LogMessage("Information: Запись в EXCEL по нажатию на кнопку");
 }
 
 System::Void ProjectServerW::DataForm::buttonBrowse_Click(System::Object^ sender, System::EventArgs^ e)
@@ -112,7 +113,7 @@ System::Void ProjectServerW::DataForm::buttonBrowse_Click(System::Object^ sender
 
     }
 }
-
+       
 void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wstring>& messageQueue,
                                                              std::mutex& mtx, 
                                                              std::condition_variable& cv) {
@@ -145,7 +146,7 @@ void ProjectServerW::DataForm::CloseForm(const std::wstring& guid) {
     // Находим форму
     ProjectServerW::DataForm^ form = ProjectServerW::DataForm::GetFormByGuid(guid);
     //MessageBox::Show("DataForm will be closed!");
-    GlobalLogger::LogMessage(ConvertToStdString("DataForm will be closed!"));
+    GlobalLogger::LogMessage("DataForm will be closed!");
 
     if (form != nullptr) {
         // Проверяем, нужен ли Invoke
@@ -261,6 +262,7 @@ void ProjectServerW::DataForm::InitializeDataTable() {
     }
 
     dataGridView->DataSource = dataTable;
+    GlobalLogger::LogMessage("Information: Таблица данных создана");
 }
 
 // 2. Добавление данных
@@ -322,12 +324,18 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         if (!workBitDetected && currentWorkBitState) {
             // Создаем имя файла на основе текущего времени
             excelFileName = "WorkData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + "_Port" + clientPort.ToString() + ".xlsx";
+            GlobalLogger::LogMessage(ConvertToStdString("Information: СТАРТ фиксации данных, создано имя файла " + excelFileName));
+            // Меняем состояние кнопок СТАРТ и СТОП
+            buttonSTOPstate_TRUE();
         }
 
         // Если бит "Work" переходит из 1 в 0 (дефростер is OFF)
         if (workBitDetected && !currentWorkBitState) {
             // Запускаем запись в Excel в отдельном асинхронном потоке
             this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));
+            GlobalLogger::LogMessage(ConvertToStdString("Information: СТОП фиксации данных, запись в файл " + excelFileName));
+            // Меняем состояние кнопок СТАРТ и СТОП
+            buttonSTARTstate_TRUE();
         }
 
         // Обновляем состояние флага
@@ -352,6 +360,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         table->Rows->Add(row);
     }
 }
+
 
 // 3. Сохраняем таблицу в EXCEL
 void ProjectServerW::DataForm::AddDataToExcel() {
@@ -484,6 +493,7 @@ void ProjectServerW::DataForm::AddDataToExcel() {
 
             // Сохранение по выбранному пути
             excel->SaveAs(filePath);
+            GlobalLogger::LogMessage(ConvertToStdString("Information: EXCEL save to " + excelFileName));
 
             // Освободим память от copiedTable
             delete copiedTable;
@@ -501,7 +511,7 @@ void ProjectServerW::DataForm::AddDataToExcel() {
         // В случае ошибки
         String^ errorMsg = "Excel error: " + ex->Message;
         //MessageBox::Show(errorMsg);
-        GlobalLogger::LogMessage(ConvertToStdString(errorMsg));
+        GlobalLogger::LogMessage(ConvertToStdString("Excel error: Не могу создать файл..." + ex->Message));
         // Необходимо освободить ресурсы даже при ошибке
         try {
             if (excel != nullptr) {
@@ -546,6 +556,7 @@ void ProjectServerW::DataForm::AddDataToExcel() {
 
                 // Затем небольшая пауза для обработки
                 Thread::Sleep(50);
+                GlobalLogger::LogMessage("Information: Закрываю EXCEL...");
             }
 
             // Запускаем отложенную сборку мусора
@@ -737,19 +748,19 @@ System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ send
             DataForm::TriggerExcelExport();
 
             // Ожидаем завершения записи файла Excel с таймаутом
-            if (exportCompletedEvent->WaitOne(5*60*1000)) { // 5 минут таймаут
+            if (exportCompletedEvent->WaitOne(60*60*1000)) { // 60 минут выделено на запись файла
                 if (exportSuccessful) {
                     //MessageBox::Show("Экспорт успешно завершен!");
-                    GlobalLogger::LogMessage("Экспорт успешно завершен!");
+                    GlobalLogger::LogMessage("Information: Запись в EXCEL успешно завершена!");
                 }
                 else {
                     //MessageBox::Show("Ошибка при экспорте данных");
-                    GlobalLogger::LogMessage("Ошибка при экспорте данных");
+                    GlobalLogger::LogMessage("Error: Ошибка при записи данных в EXCEL");
                 }
             }
             else {
                 //MessageBox::Show("Превышено время ожидания экспорта");
-                GlobalLogger::LogMessage("Превышено время ожидания экспорта");
+                GlobalLogger::LogMessage("Error: Превышено время ожидания записи в EXCEL");
             }
 
             // Закрываем форму
@@ -801,4 +812,113 @@ System::Void DataForm::DataForm_HandleDestroyed(Object^ sender, EventArgs^ e)
     catch (...) {
         // Игнорируем исключения в деструкторе
     }
+}
+// Метод для отправки команды START клиенту
+void ProjectServerW::DataForm::SendStartCommand() {
+    try {
+        // Проверяем, что сокет клиента валиден
+        if (clientSocket == INVALID_SOCKET) {
+            MessageBox::Show("Нет активного соединения с клиентом!");
+            GlobalLogger::LogMessage("Error: Не могу отправить команду СТАРТ, нет активного соединения с клиентом!");
+            return;
+        }
+
+        // Формируем команду "START"
+        const char* startCommand = "START";
+        int commandLength = strlen(startCommand);
+
+        // Отправляем команду клиенту
+        int bytesSent = send(clientSocket, startCommand, commandLength, 0);
+
+        if (bytesSent == SOCKET_ERROR) {
+            int error = WSAGetLastError();
+            String^ errorMsg = "Ошибка отправки команды START: " + error.ToString();
+            MessageBox::Show(errorMsg);
+            GlobalLogger::LogMessage("Error: Ошибка отправки команды START: " + ConvertToStdString(errorMsg));
+        }
+        else if (bytesSent == commandLength) {
+            // Команда успешно отправлена
+            Label_Data->Text = "Команда START отправлена клиенту";
+            GlobalLogger::LogMessage("Information: Команда START отправлена клиенту");
+
+            // Можно также изменить состояние кнопки
+            buttonSTOPstate_TRUE();
+        }
+        else {
+            // Отправлено меньше байт, чем ожидалось
+            String^ errorMsg = "Отправлено только " + bytesSent.ToString() + " из " + commandLength.ToString() + " байт";
+            MessageBox::Show(errorMsg);
+            GlobalLogger::LogMessage("Error: Частичная отправка команды START: " + ConvertToStdString(errorMsg));
+        }
+    }
+    catch (Exception^ ex) {
+        String^ errorMsg = "Исключение при отправке команды START: " + ex->Message;
+        MessageBox::Show(errorMsg);
+        GlobalLogger::LogMessage("Error: Исключение при отправке команды START: " + ConvertToStdString(errorMsg));
+    }
+}
+
+// Метод для отправки команды STOP клиенту
+void ProjectServerW::DataForm::SendStopCommand() {
+    try {
+        // Проверяем, что сокет клиента валиден
+        if (clientSocket == INVALID_SOCKET) {
+            MessageBox::Show("Нет активного соединения с клиентом!");
+            GlobalLogger::LogMessage("Error: Не могу отправить команду СТОП, нет активного соединения с клиентом!");
+            return;
+        }
+
+        // Формируем команду "STOP"
+        const char* stopCommand = "STOP";
+        int commandLength = strlen(stopCommand);
+
+        // Отправляем команду клиенту
+        int bytesSent = send(clientSocket, stopCommand, commandLength, 0);
+
+        if (bytesSent == SOCKET_ERROR) {
+            int error = WSAGetLastError();
+            String^ errorMsg = "Ошибка отправки команды STOP: " + error.ToString();
+            MessageBox::Show(errorMsg);
+            GlobalLogger::LogMessage("Ошибка отправки команды STOP: " + ConvertToStdString(errorMsg));
+        }
+        else if (bytesSent == commandLength) {
+            // Команда успешно отправлена
+            Label_Data->Text = "Команда STOP отправлена клиенту";
+            GlobalLogger::LogMessage("Команда STOP отправлена клиенту");
+
+            // Можно также изменить состояние кнопки
+            buttonSTARTstate_TRUE();
+        }
+        else {
+            // Отправлено меньше байт, чем ожидалось
+            String^ errorMsg = "Отправлено только " + bytesSent.ToString() + " из " + commandLength.ToString() + " байт";
+            MessageBox::Show(errorMsg);
+            GlobalLogger::LogMessage("Частичная отправка команды STOP: " + ConvertToStdString(errorMsg));
+        }
+    }
+    catch (Exception^ ex) {
+        String^ errorMsg = "Исключение при отправке команды STOP: " + ex->Message;
+        MessageBox::Show(errorMsg);
+        GlobalLogger::LogMessage("Исключение при отправке команды STOP: " + ConvertToStdString(errorMsg));
+    }
+}
+
+void ProjectServerW::DataForm::buttonSTARTstate_TRUE()
+{
+    buttonSTART->Enabled = true;
+    labelSTART->BackColor = System::Drawing::Color::Snow;
+    labelSTART->Text = "0";
+    buttonSTOP->Enabled = false;
+    labelSTOP->BackColor = System::Drawing::Color::OrangeRed;
+    labelSTOP->Text = "1";
+}
+
+void ProjectServerW::DataForm::buttonSTOPstate_TRUE()
+{
+    buttonSTART->Enabled = false;
+    labelSTART->BackColor = System::Drawing::Color::Lime;
+    labelSTART->Text = "1";
+    buttonSTOP->Enabled = true;
+    labelSTOP->BackColor = System::Drawing::Color::Snow;
+    labelSTOP->Text = "0";
 }

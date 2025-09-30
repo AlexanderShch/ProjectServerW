@@ -60,6 +60,14 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::Label^ T_product_right;
 	private: System::Windows::Forms::Label^ T_product_left;
 	private: System::Windows::Forms::Label^ LabelProduct;
+	private: System::Windows::Forms::Button^ buttonSTOP;
+
+	private: System::Windows::Forms::Button^ buttonSTART;
+	private: System::Windows::Forms::Label^ labelSTOP;
+
+
+	private: System::Windows::Forms::Label^ labelSTART;
+
 
 
 
@@ -173,6 +181,10 @@ namespace ProjectServerW {
 			this->Label_Data = (gcnew System::Windows::Forms::Label());
 			this->dataGridView = (gcnew System::Windows::Forms::DataGridView());
 			this->tabPage2 = (gcnew System::Windows::Forms::TabPage());
+			this->labelSTOP = (gcnew System::Windows::Forms::Label());
+			this->labelSTART = (gcnew System::Windows::Forms::Label());
+			this->buttonSTOP = (gcnew System::Windows::Forms::Button());
+			this->buttonSTART = (gcnew System::Windows::Forms::Button());
 			this->buttonBrowse = (gcnew System::Windows::Forms::Button());
 			this->textBoxExcelDirectory = (gcnew System::Windows::Forms::TextBox());
 			this->labelExcelDirectory = (gcnew System::Windows::Forms::Label());
@@ -301,7 +313,6 @@ namespace ProjectServerW {
 			this->T_def_left->TabIndex = 9;
 			this->T_def_left->Text = L"- -";
 			this->T_def_left->TextAlign = System::Drawing::ContentAlignment::MiddleCenter;
-			this->T_def_left->Click += gcnew System::EventHandler(this, &DataForm::label1_Click_1);
 			// 
 			// LabelDefroster
 			// 
@@ -311,7 +322,6 @@ namespace ProjectServerW {
 			this->LabelDefroster->Size = System::Drawing::Size(119, 20);
 			this->LabelDefroster->TabIndex = 8;
 			this->LabelDefroster->Text = L"Т дефростера";
-			this->LabelDefroster->Click += gcnew System::EventHandler(this, &DataForm::label1_Click);
 			// 
 			// Label_Data
 			// 
@@ -334,12 +344,16 @@ namespace ProjectServerW {
 			this->dataGridView->RowTemplate->Height = 28;
 			this->dataGridView->RowTemplate->Resizable = System::Windows::Forms::DataGridViewTriState::True;
 			this->dataGridView->ScrollBars = System::Windows::Forms::ScrollBars::Horizontal;
-			this->dataGridView->Size = System::Drawing::Size(1100, 400);
+			this->dataGridView->Size = System::Drawing::Size(1276, 400);
 			this->dataGridView->TabIndex = 6;
 			this->dataGridView->CellContentClick += gcnew System::Windows::Forms::DataGridViewCellEventHandler(this, &DataForm::dataGridView_CellContentClick);
 			// 
 			// tabPage2
 			// 
+			this->tabPage2->Controls->Add(this->labelSTOP);
+			this->tabPage2->Controls->Add(this->labelSTART);
+			this->tabPage2->Controls->Add(this->buttonSTOP);
+			this->tabPage2->Controls->Add(this->buttonSTART);
 			this->tabPage2->Controls->Add(this->buttonBrowse);
 			this->tabPage2->Controls->Add(this->textBoxExcelDirectory);
 			this->tabPage2->Controls->Add(this->labelExcelDirectory);
@@ -350,6 +364,46 @@ namespace ProjectServerW {
 			this->tabPage2->TabIndex = 1;
 			this->tabPage2->Text = L"Настройки";
 			this->tabPage2->UseVisualStyleBackColor = true;
+			// 
+			// labelSTOP
+			// 
+			this->labelSTOP->AutoSize = true;
+			this->labelSTOP->BackColor = System::Drawing::Color::Snow;
+			this->labelSTOP->Location = System::Drawing::Point(346, 167);
+			this->labelSTOP->Name = L"labelSTOP";
+			this->labelSTOP->Size = System::Drawing::Size(18, 20);
+			this->labelSTOP->TabIndex = 6;
+			this->labelSTOP->Text = L"0";
+			// 
+			// labelSTART
+			// 
+			this->labelSTART->AutoSize = true;
+			this->labelSTART->BackColor = System::Drawing::Color::Snow;
+			this->labelSTART->Location = System::Drawing::Point(721, 167);
+			this->labelSTART->Name = L"labelSTART";
+			this->labelSTART->Size = System::Drawing::Size(18, 20);
+			this->labelSTART->TabIndex = 5;
+			this->labelSTART->Text = L"0";
+			// 
+			// buttonSTOP
+			// 
+			this->buttonSTOP->Location = System::Drawing::Point(285, 200);
+			this->buttonSTOP->Name = L"buttonSTOP";
+			this->buttonSTOP->Size = System::Drawing::Size(140, 76);
+			this->buttonSTOP->TabIndex = 4;
+			this->buttonSTOP->Text = L"СТОП";
+			this->buttonSTOP->UseVisualStyleBackColor = true;
+			this->buttonSTOP->Click += gcnew System::EventHandler(this, &DataForm::buttonSTOP_Click);
+			// 
+			// buttonSTART
+			// 
+			this->buttonSTART->Location = System::Drawing::Point(657, 200);
+			this->buttonSTART->Name = L"buttonSTART";
+			this->buttonSTART->Size = System::Drawing::Size(140, 77);
+			this->buttonSTART->TabIndex = 3;
+			this->buttonSTART->Text = L"ПУСК";
+			this->buttonSTART->UseVisualStyleBackColor = true;
+			this->buttonSTART->Click += gcnew System::EventHandler(this, &DataForm::buttonSTART_Click);
 			// 
 			// buttonBrowse
 			// 
@@ -385,7 +439,7 @@ namespace ProjectServerW {
 			this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
 			this->AutoScroll = true;
 			this->AutoSizeMode = System::Windows::Forms::AutoSizeMode::GrowAndShrink;
-			this->ClientSize = System::Drawing::Size(1124, 575);
+			this->ClientSize = System::Drawing::Size(1317, 575);
 			this->Controls->Add(this->tabControl1);
 			this->Controls->Add(this->menuStrip1);
 			this->MainMenuStrip = this->menuStrip1;
@@ -477,6 +531,10 @@ namespace ProjectServerW {
 		}
 
 		void EnableButton();
+		void SendStartCommand(); // Метод для отправки команды START клиенту
+		void SendStopCommand(); // Метод для отправки команды STOP клиенту
+		void buttonSTARTstate_TRUE();	// Метод для изменения статуса кнопок Старт и Стоп
+		void buttonSTOPstate_TRUE();	// Метод для изменения статуса кнопок Старт и Стоп
 		System::Void DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ e);
 		System::Void DataForm_HandleDestroyed(Object^ sender, EventArgs^ e);
 	private: 
@@ -539,9 +597,17 @@ private: System::Void menuStrip1_ItemClicked(System::Object^ sender, System::Win
 }
 private: System::Void записьВExcelToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e) {
 }
-private: System::Void label1_Click(System::Object^ sender, System::EventArgs^ e) {
+//private: System::Void label1_Click(System::Object^ sender, System::EventArgs^ e) {
+//}
+//private: System::Void label1_Click_1(System::Object^ sender, System::EventArgs^ e) {
+//}
+private: System::Void buttonSTART_Click(System::Object^ sender, System::EventArgs^ e) {
+	// Формируем команду "START" для отправки клиенту
+	SendStartCommand();
 }
-private: System::Void label1_Click_1(System::Object^ sender, System::EventArgs^ e) {
+private: System::Void buttonSTOP_Click(System::Object^ sender, System::EventArgs^ e) {
+	// Формируем команду "STOP" для отправки клиенту
+	SendStopCommand();
 }
 };
 }
