@@ -39,6 +39,8 @@ namespace ProjectServerW {
 		// Индекс первого уровня - тип сенсора, второго уровня - номер бита
 		ManualResetEvent^ exportCompletedEvent;
 		bool exportSuccessful;
+		cli::array<String^>^ sensorNames;					// Объявим массив с именами сенсоров
+		cli::array<System::Drawing::Color>^ sensorColors;	// Объявим массив с цветом линии сенсора на графике
 
 	private: System::Windows::Forms::TabControl^ tabControl1;
 	private: System::Windows::Forms::TabPage^ tabPage1;
@@ -87,6 +89,26 @@ namespace ProjectServerW {
 			InitializeComponent();
 			GetBitFieldNames();	// Инициализация имен битов (если еще не инициализированы)
 			InitializeDataTable();
+
+			// Имена датчиков температуры для столбцов T0..T(SQ-2)
+			sensorNames = gcnew cli::array<String^>(SQ - 1) {
+				"T дефр.Левый",
+				"T дефр.Правый",
+				"T дефр.Центр",
+				"T прод.Пр",
+				"T прод.Лев",
+				"T корп"
+			};
+
+			// Цвета кривых для соответствующих датчиков
+			sensorColors = gcnew cli::array<System::Drawing::Color>(SQ - 1) {
+					System::Drawing::Color::Green,
+					System::Drawing::Color::Red,
+					System::Drawing::Color::Orange,
+					System::Drawing::Color::DarkGreen,
+					System::Drawing::Color::Purple,
+					System::Drawing::Color::Brown
+			};
 
 			// Подписка на события при закрытии формы
 			this->FormClosing += gcnew FormClosingEventHandler(this, &DataForm::DataForm_FormClosing);

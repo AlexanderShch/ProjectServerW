@@ -387,8 +387,15 @@ void ProjectServerW::DataForm::AddDataToExcel() {
             {
                 ws->Cells[1, 4 + 4*i] = "Typ" + i;
                 ws->Cells[1, 5 + 4*i] = "Act" + i;
-                ws->Cells[1, 6 + 4*i] = "T" + i;
-                ws->Cells[1, 7 + 4*i] = "H" + i;
+                // Добавляем имя датчика в заголовок T-столбца, если оно задано
+                if (sensorNames != nullptr && i < sensorNames->Length && sensorNames[i] != nullptr && sensorNames[i]->Length > 0) {
+                    ws->Cells[1, 6 + 4 * i] = "T" + i + " " + sensorNames[i];
+                    ws->Cells[1, 7 + 4 * i] = "H" + i + " " + sensorNames[i];
+                }
+                else {
+                    ws->Cells[1, 6 + 4 * i] = "T" + i;
+                    ws->Cells[1, 7 + 4 * i] = "H" + i;
+                }
             }
             // Обработка сигналов с устройства ввода-вывода
             ws->Cells[1, 4 + 4 * (SQ - 1)] = "Typ" + (SQ - 1);
@@ -443,6 +450,74 @@ void ProjectServerW::DataForm::AddDataToExcel() {
                 }
 
                 row++;
+            }
+            // Добавление листа с графиком температур
+            try {
+                int lastRow = row - 1;
+                if (lastRow >= 2) {
+                    // Получаем рабочую книгу из рабочего листа
+                    Microsoft::Office::Interop::Excel::Workbook^ wb = safe_cast<Microsoft::Office::Interop::Excel::Workbook^>(ws->Parent);
+                    System::Object^ missing = System::Type::Missing;
+
+                    // Создаём новый лист для диаграммы
+                    Microsoft::Office::Interop::Excel::Worksheet^ chartSheet = safe_cast<Microsoft::Office::Interop::Excel::Worksheet^>(wb->Worksheets->Add(missing, ws, 1, Microsoft::Office::Interop::Excel::XlSheetType::xlWorksheet));
+                    chartSheet->Name = "Chart";
+
+                    // Размещаем объект диаграммы
+                    Microsoft::Office::Interop::Excel::ChartObjects^ chartObjects = safe_cast<Microsoft::Office::Interop::Excel::ChartObjects^>(chartSheet->ChartObjects(missing));
+                    Microsoft::Office::Interop::Excel::ChartObject^ chartObject = chartObjects->Add(20, 20, 900, 500);
+                    Microsoft::Office::Interop::Excel::Chart^ chart = chartObject->Chart;
+                    chart->ChartType = Microsoft::Office::Interop::Excel::XlChartType::xlLine;
+
+                    // Диапазон X (время) из первого листа: колонка 1 (RealTime)
+                    Microsoft::Office::Interop::Excel::Range^ xRange = ws->Range[ws->Cells[2, 1], ws->Cells[lastRow, 1]];
+
+                    // Добавляем серии T0..T(SQ-2)
+                    Microsoft::Office::Interop::Excel::SeriesCollection^ seriesCollection = safe_cast<Microsoft::Office::Interop::Excel::SeriesCollection^>(chart->SeriesCollection(missing));
+                    for (uint8_t i = 0; i < (SQ - 1); i++)
+                    {
+                        int seriesCol = 6 + 4 * i; // Колонка T{i}
+                        Microsoft::Office::Interop::Excel::Range^ yRange = ws->Range[ws->Cells[2, seriesCol], ws->Cells[lastRow, seriesCol]];
+                        Microsoft::Office::Interop::Excel::Series^ s = seriesCollection->NewSeries();
+                        s->XValues = xRange;
+                        s->Values = yRange;
+                        if (sensorNames != nullptr && i < sensorNames->Length && sensorNames[i] != nullptr && sensorNames[i]->Length > 0) {
+                            s->Name = "T" + Convert::ToString(i) + " " + sensorNames[i];
+                        }
+                        else {
+                            s->Name = "T" + Convert::ToString(i);
+                        }
+                        // Применяем цвет к серии, если задан
+                        if (sensorColors != nullptr && i < sensorColors->Length) {
+                            System::Drawing::Color c = sensorColors[i];
+                            int oleColor = System::Drawing::ColorTranslator::ToOle(c);
+                            // Color у линии в Chart.Series.Format.Line.ForeColor / или Border.Color
+                            try {
+                                s->Border->Color = oleColor;
+                            }
+                            catch (...) {}
+                            try {
+                                s->Format->Line->ForeColor->RGB = oleColor;
+                            }
+                            catch (...) {}
+                        }
+                    }
+
+                    // Заголовки осей
+                    chart->HasTitle = true;
+                    chart->ChartTitle->Text = "Температуры";
+                    Microsoft::Office::Interop::Excel::Axis^ categoryAxis = safe_cast<Microsoft::Office::Interop::Excel::Axis^>(
+                        chart->Axes(Microsoft::Office::Interop::Excel::XlAxisType::xlCategory, Microsoft::Office::Interop::Excel::XlAxisGroup::xlPrimary));
+                    categoryAxis->HasTitle = true;
+                    categoryAxis->AxisTitle->Text = "RealTime";
+                    Microsoft::Office::Interop::Excel::Axis^ valueAxis = safe_cast<Microsoft::Office::Interop::Excel::Axis^>(
+                        chart->Axes(Microsoft::Office::Interop::Excel::XlAxisType::xlValue, Microsoft::Office::Interop::Excel::XlAxisGroup::xlPrimary));
+                    valueAxis->HasTitle = true;
+                    valueAxis->AxisTitle->Text = "T, °C";
+                }
+            }
+            catch (Exception^) {
+                // Пропускаем создание графика при ошибке, чтобы не сорвать сохранение файла
             }
 
             // Сохранение файла
