@@ -63,23 +63,9 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::Label^ T_product_left;
 	private: System::Windows::Forms::Label^ LabelProduct;
 	private: System::Windows::Forms::Button^ buttonSTOP;
-
 	private: System::Windows::Forms::Button^ buttonSTART;
 	private: System::Windows::Forms::Label^ labelSTOP;
-
-
 	private: System::Windows::Forms::Label^ labelSTART;
-
-
-
-
-
-
-
-
-
-
-
 
 	private: System::Windows::Forms::DataGridView^ dataGridView;
 
@@ -170,8 +156,6 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::MenuStrip^ menuStrip1;
 	protected:
 	private: System::Windows::Forms::ToolStripMenuItem^ выходToolStripMenuItem;
-
-
 
 	private: System::Windows::Forms::Button^ buttonExcel;
 
@@ -487,6 +471,9 @@ namespace ProjectServerW {
 		System::Void buttonBrowse_Click(System::Object^ sender, System::EventArgs^ e);
 	private:
 		int clientPort; // Порт клиента
+	private:			// Таймер для отложенной записи EXCEL
+		System::Windows::Forms::Timer^ delayedExcelTimer;
+		void OnDelayedExcelTimerTick(Object^ sender, EventArgs^ e);
 
 	public:
 		property int ClientPort{
@@ -594,7 +581,7 @@ namespace ProjectServerW {
 			}
 		}
 
-		// Обработчик события таймера
+		// Обработчик события таймера нажатия кнопки экспорта в Excel
 		void CheckExcelButtonStatus(Object^ sender, EventArgs^ e) {
 			// Проверяем, доступна ли кнопка
 			if (buttonExcel->Enabled && pendingExcelExport) {

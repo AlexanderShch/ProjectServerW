@@ -245,6 +245,7 @@ public:
 #ifdef _DEBUG
             System::Diagnostics::Debug::WriteLine("Close error: " + ex->Message);
 #endif
+            GlobalLogger::LogMessage("Close EXCEL error: " + ConvertToStdString(ex->Message));
         }
         finally {
             isInitialized = false;  // Отмечаем, что объект закрыт

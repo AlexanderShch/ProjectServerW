@@ -1,4 +1,5 @@
 #pragma once
+#include "version.h"
 
 namespace ProjectServerW {
 
@@ -48,6 +49,7 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::Label^ WSAstartup;
 	private: System::Windows::Forms::Label^ ClientAddr;
 	private: System::Windows::Forms::Label^ labelMessage;
+	private: System::Windows::Forms::Label^ labelVersion;
 
 
 
@@ -166,6 +168,16 @@ namespace ProjectServerW {
 			this->AutoScaleDimensions = System::Drawing::SizeF(9, 20);
 			this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
 			this->ClientSize = System::Drawing::Size(786, 442);
+			// Инициализация метки версии
+			this->labelVersion = (gcnew System::Windows::Forms::Label());
+			this->labelVersion->AutoSize = true;
+			this->labelVersion->Location = System::Drawing::Point(this->ClientSize.Width - 100, this->ClientSize.Height - 30);
+			this->labelVersion->Name = L"labelVersion";
+			this->labelVersion->Size = System::Drawing::Size(80, 20);
+			this->labelVersion->Text = L"v" VERSION_STR;
+			this->labelVersion->Anchor = static_cast<System::Windows::Forms::AnchorStyles>(System::Windows::Forms::AnchorStyles::Bottom | System::Windows::Forms::AnchorStyles::Right);
+
+			this->Controls->Add(this->labelVersion);
 			this->Controls->Add(this->labelMessage);
 			this->Controls->Add(this->ClientAddr);
 			this->Controls->Add(this->WSAstartup);

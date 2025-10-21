@@ -305,7 +305,10 @@ std::string ConvertToStdString(System::String^ managedString) {
 		return std::string();
 
 	// Используем UTF8 кодировку для конвертации
-	cli::array<System::Byte>^ bytes = System::Text::Encoding::UTF8->GetBytes(managedString);
+//	cli::array<System::Byte>^ bytes = System::Text::Encoding::UTF8->GetBytes(managedString);
+	// Используем 1251 кодировку для конвертации
+	cli::array<System::Byte>^ bytes = System::Text::Encoding::GetEncoding(1251)->GetBytes(managedString);
+
 	std::string result(bytes->Length, 0);
 
 	{
@@ -315,7 +318,7 @@ std::string ConvertToStdString(System::String^ managedString) {
 	return result;
 }
 
-// ?????????? ??????? Unicode::snprintfFloat
+// Unicode::snprintfFloat
 namespace Unicode {
     int snprintfFloat(char* buffer, size_t size, const char* format, float value) {
         return snprintf(buffer, size, format, value);

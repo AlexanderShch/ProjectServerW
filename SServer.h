@@ -4,15 +4,16 @@
 #pragma once
 #pragma comment(lib, "Ws2_32.lib")
 
-#include <winsock2.h>       // Р”РѕР»Р¶РµРЅ Р±С‹С‚СЊ РїРµСЂРІС‹Рј!
-#include <ws2tcpip.h>       // РџРѕСЃР»Рµ winsock2.h
-#include <windows.h>        // Windows.h РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РїРѕСЃР»Рµ winsock2.h Р”Р»СЏ CreateThread
+#include <winsock2.h>       // Должен быть первым!
+#include <ws2tcpip.h>       // После winsock2.h
+#include <windows.h>        // Windows.h должен быть после winsock2.h Для CreateThread
 
-#include <ctime>			// Р”Р»СЏ std::time
-#include <iomanip>			// Р”Р»СЏ std::put_time
+#include <ctime>			// Для std::time
+#include <iomanip>			// Для std::put_time
 #include <iostream>
-#include <sstream>			// Р”Р»СЏ std::stringstream
+#include <sstream>			// Для std::stringstream
 #include <thread>
+#include <msclr\marshal_cppstd.h>  // Для работы с кодировками
 
 // Объявления для работы с Unicode и форматированием
 namespace Unicode {
@@ -34,16 +35,16 @@ extern char ValueCoreT1SmallBuffer[256];
 class SServer
 {
 public:
-	SServer();			// РћР±СЉСЏРІР»РµРЅРёРµ РєРѕРЅСЃС‚СЂСѓРєС‚РѕСЂР°
-	~SServer();			// РћР±СЉСЏРІР»РµРЅРёРµ РґРµСЃС‚СЂСѓРєС‚РѕСЂР°
-	void startServer(); // РћР±СЉСЏРІР»РµРЅРёРµ С„СѓРЅРєС†РёРё
-	void closeServer();
+    SServer();			// Объявление конструктора
+    ~SServer();			// Объявление деструктора
+    void startServer(); // Объявление функции
+    void closeServer();
 	void handle();
     int port;
 private:
 	SOCKET this_s;
 	WSAData wData;
-    static DWORD WINAPI ClientHandler(LPVOID lpParam); // РћР±СЉСЏРІР»РµРЅРёРµ С„СѓРЅРєС†РёРё РїРѕС‚РѕРєР°
+    static DWORD WINAPI ClientHandler(LPVOID lpParam); // Объявление функции потока
 };
 
 ref class GlobalLogger abstract sealed { // abstract sealed = static class
@@ -52,7 +53,7 @@ private:
     static Object^ lockObject;
     static bool isInitialized;
 
-    // РЎС‚Р°С‚РёС‡РµСЃРєРёР№ РєРѕРЅСЃС‚СЂСѓРєС‚РѕСЂ РґР»СЏ РёРЅРёС†РёР°Р»РёР·Р°С†РёРё РїРѕР»РµР№
+    // Статический конструктор для инициализации полей
     static GlobalLogger() {
         writer = nullptr;
         lockObject = gcnew Object();

@@ -331,8 +331,14 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
 
         // Если бит "Work" переходит из 1 в 0 (дефростер is OFF)
         if (workBitDetected && !currentWorkBitState) {
-            // Запускаем запись в Excel в отдельном асинхронном потоке
-            this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));
+            // Создаем и запускаем таймер на 5 минут для отложенной записи
+            if (delayedExcelTimer == nullptr) {
+                delayedExcelTimer = gcnew System::Windows::Forms::Timer();
+                delayedExcelTimer->Interval = 5 * 60 * 1000; // 5 минут в миллисекундах
+                delayedExcelTimer->Tick += gcnew EventHandler(this, &DataForm::OnDelayedExcelTimerTick);
+            }
+            delayedExcelTimer->Start();
+
             GlobalLogger::LogMessage(ConvertToStdString("Information: СТОП фиксации данных, запись в файл " + excelFileName));
             // Меняем состояние кнопок СТАРТ и СТОП
             buttonSTARTstate_TRUE();
@@ -887,6 +893,13 @@ System::Void DataForm::DataForm_HandleDestroyed(Object^ sender, EventArgs^ e)
     catch (...) {
         // Игнорируем исключения в деструкторе
     }
+
+    // Очищаем таймер
+    if (delayedExcelTimer != nullptr) {
+        delayedExcelTimer->Stop();
+        delete delayedExcelTimer;
+        delayedExcelTimer = nullptr;
+    }
 }
 // Метод для отправки команды START клиенту
 void ProjectServerW::DataForm::SendStartCommand() {
@@ -900,10 +913,10 @@ void ProjectServerW::DataForm::SendStartCommand() {
 
         // Формируем команду "START"
         const char* startCommand = "START";
-        int commandLength = strlen(startCommand);
+        const size_t commandLength = strlen(startCommand);
 
         // Отправляем команду клиенту
-        int bytesSent = send(clientSocket, startCommand, commandLength, 0);
+        const int bytesSent = send(clientSocket, startCommand, static_cast<int>(commandLength), 0);
 
         if (bytesSent == SOCKET_ERROR) {
             int error = WSAGetLastError();
@@ -945,10 +958,10 @@ void ProjectServerW::DataForm::SendStopCommand() {
 
         // Формируем команду "STOP"
         const char* stopCommand = "STOP";
-        int commandLength = strlen(stopCommand);
+        const size_t commandLength = strlen(stopCommand);
 
         // Отправляем команду клиенту
-        int bytesSent = send(clientSocket, stopCommand, commandLength, 0);
+        const int bytesSent = send(clientSocket, stopCommand, static_cast<int> (commandLength), 0);
 
         if (bytesSent == SOCKET_ERROR) {
             int error = WSAGetLastError();
@@ -996,4 +1009,20 @@ void ProjectServerW::DataForm::buttonSTOPstate_TRUE()
     buttonSTOP->Enabled = true;
     labelSTOP->BackColor = System::Drawing::Color::Snow;
     labelSTOP->Text = "0";
+}
+
+// Обработчик события таймера для отложенной записи в Excel
+void ProjectServerW::DataForm::OnDelayedExcelTimerTick(Object^ sender, EventArgs^ e) {
+    // Останавливаем таймер
+    delayedExcelTimer->Stop();
+
+    // Выводим сообщение в лог
+    GlobalLogger::LogMessage(ConvertToStdString("Information: СТОП фиксации данных, запись в файл " + excelFileName));
+
+    // Меняем состояние кнопок СТАРТ и СТОП
+    buttonSTARTstate_TRUE();
+
+    // Выполняем запись в Excel
+    this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));
+    GlobalLogger::LogMessage(ConvertToStdString("Information: Выполняется отложенная запись в файл " + excelFileName));
 }
