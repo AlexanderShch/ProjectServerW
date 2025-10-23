@@ -17,6 +17,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 System::Void ProjectServerW::MyForm::выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e)
 {
+	// Сначала закрываем сервер
+	server.closeServer();
+	// Даем время потокам завершиться
+	System::Threading::Thread::Sleep(500);
+	// Теперь закрываем приложение
 	Application::Exit();
 	return System::Void();
 }

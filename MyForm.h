@@ -201,50 +201,50 @@ namespace ProjectServerW {
 	private: System::Void MyForm_Load(System::Object^ sender, System::EventArgs^ e);
 	public:
 		void SetTextValue(String^ text) {
-			if (this != nullptr && this->InvokeRequired) {
+			if (this != nullptr && !this->IsDisposed && this->InvokeRequired) {
 				this->Invoke(gcnew System::Action<String^>(this, &MyForm::SetTextValue), text);
 			}
-			else if (this != nullptr && label_N_port != nullptr) {
+			else if (this != nullptr && !this->IsDisposed && label_N_port != nullptr) {
 				label_N_port->Text = text;
 			}
 		};
 		void SetSocketState_TextValue(String^ text) {
-			if (this != nullptr && this->InvokeRequired) {
+			if (this != nullptr && !this->IsDisposed && this->InvokeRequired) {
 				this->Invoke(gcnew System::Action<String^>(this, &MyForm::SetSocketState_TextValue), text);
 			}
-			else if (this != nullptr && SocketState != nullptr) {
+			else if (this != nullptr && !this->IsDisposed && SocketState != nullptr) {
 				SocketState->Text = text;
 			}
 		};
 		void SetSocketBind_TextValue(String^ text) {
-			if (this != nullptr && this->InvokeRequired) {
+			if (this != nullptr && !this->IsDisposed && this->InvokeRequired) {
 				this->Invoke(gcnew System::Action<String^>(this, &MyForm::SetSocketBind_TextValue), text);
 			}
-			else if (this != nullptr && SocketBind != nullptr) {
+			else if (this != nullptr && !this->IsDisposed && SocketBind != nullptr) {
 				SocketBind->Text = text;
 			}
 		};
 		void SetWSA_TextValue(String^ text) {
-			if (this != nullptr && this->InvokeRequired) {
+			if (this != nullptr && !this->IsDisposed && this->InvokeRequired) {
 				this->Invoke(gcnew System::Action<String^>(this, &MyForm::SetWSA_TextValue), text);
 			}
-			else if (this != nullptr && WSAstartup != nullptr) {
+			else if (this != nullptr && !this->IsDisposed && WSAstartup != nullptr) {
 				WSAstartup->Text = text;
 			}
 		}
 		void SetClientAddr_TextValue(String^ text) {
-			if (this != nullptr && this->InvokeRequired) {
+			if (this != nullptr && !this->IsDisposed && this->InvokeRequired) {
 				this->Invoke(gcnew System::Action<String^>(this, &MyForm::SetClientAddr_TextValue), text);
 			}
-			else if (this != nullptr && WSAstartup != nullptr) {
+			else if (this != nullptr && !this->IsDisposed && WSAstartup != nullptr) {
 				ClientAddr->Text = text;
 			}
 		}
 		void SetMessage_TextValue(String^ text) {
-			if (this != nullptr && this->InvokeRequired) {
+			if (this != nullptr && !this->IsDisposed && this->InvokeRequired) {
 				this->Invoke(gcnew System::Action<String^>(this, &MyForm::SetMessage_TextValue), text);
 			}
-			else if (this != nullptr && WSAstartup != nullptr) {
+			else if (this != nullptr && !this->IsDisposed && labelMessage != nullptr) {
 				labelMessage->Text = text;
 			}
 		}

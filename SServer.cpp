@@ -101,10 +101,12 @@ void SServer::closeServer() {
 	MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
 	closesocket(this_s);
 	WSACleanup();
-	form->SetWSA_TextValue("Server was stopped");
-	form->SetSocketState_TextValue(" ");
-	form->SetSocketBind_TextValue(" ");
-	form->SetTextValue(" ");
+	if (form != nullptr && !form->IsDisposed) {
+		form->SetWSA_TextValue("Server was stopped");
+		form->SetSocketState_TextValue(" ");
+		form->SetSocketBind_TextValue(" ");
+		form->SetTextValue(" ");
+	}
 }
 
 // Преобразование IP-адреса в строку
@@ -130,11 +132,18 @@ void SServer::handle() {
 		// откроем форму MyForm для вывода сообщений о клиенте и ошибок
 		MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
 
+		// Проверяем, существует ли форма
+		if (form == nullptr || form->IsDisposed) {
+			break; // Выходим из цикла, если форма закрыта
+		}
+
 		int addrlen = sizeof(addr_c);
 		if ((acceptS = accept(this_s, (struct sockaddr*)&addr_c, &addrlen)) != INVALID_SOCKET) {
 			int ClientPort = ntohs(addr_c.sin_port);
 			String^ address = GetIPString(addr_c);
-			form->SetClientAddr_TextValue(address);
+			if (form != nullptr && !form->IsDisposed) {
+				form->SetClientAddr_TextValue(address);
+			}
 
             // Создание нового потока для обработки клиента
 			DWORD threadId;
@@ -149,12 +158,16 @@ void SServer::handle() {
 				&threadId);             // Идентификатор потока
 
             if (hThread == NULL) {
-				form->SetMessage_TextValue("Error: Failed to create thread");
+				if (form != nullptr && !form->IsDisposed) {
+					form->SetMessage_TextValue("Error: Failed to create thread");
+				}
 				GlobalLogger::LogMessage("Error: Failed to create thread");
 				closesocket(acceptS);
-            } else {
-				form->SetMessage_TextValue("Information: New thread was created");
-				GlobalLogger::LogMessage(ConvertToStdString("Information: New thread was created, port " + ClientPort));
+			} else {
+				if (form != nullptr && !form->IsDisposed) {
+					form->SetMessage_TextValue("Information: New thread was created");
+					GlobalLogger::LogMessage(ConvertToStdString("Information: New thread was created, port " + ClientPort));
+				}
 				CloseHandle(hThread); // Закрытие дескриптора потока
             }
 		}
@@ -215,19 +228,51 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	}
 	catch (const std::exception& e) {	// Обработка исключения, выводим сообщение об ошибке
 		String^ errorMessage = gcnew String(e.what());
-		form->SetMessage_TextValue("Error: Couldn't create a form in a new thread " + errorMessage);
-		GlobalLogger::LogMessage(ConvertToStdString("Error: Couldn't create a DataForm in a new thread " + errorMessage));
+		if (form != nullptr && !form->IsDisposed) {
+			form->SetMessage_TextValue("Error: Couldn't create a form in a new thread " + errorMessage);
+			GlobalLogger::LogMessage(ConvertToStdString("Error: Couldn't create a DataForm in a new thread " + errorMessage));
+		}
 		return 1;
 	}
 
-	int timeout = 600*1000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
+	int timeout = 30*60*1000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
 
 	// Установка тайм-аута для операций чтения (recv)
 	setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
 
 	// Бесконечный цикл считывания данных
-	
-	while ((bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0)) > 0) {
+	while (true) {
+		bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0);
+		/* ОБРАБОТКА ОШИБОК
+		Если функция recv возвращает 0, это означает, что соединение было закрыто клиентом.
+		Если функция recv возвращает SOCKET_ERROR, проверяется код ошибки с помощью функции WSAGetLastError.
+		Если код ошибки равен WSAETIMEDOUT, это означает, что операция чтения завершилась по тайм-ауту.
+		*/
+		if (bytesReceived == SOCKET_ERROR) {
+			int error = WSAGetLastError();
+			if (error == WSAETIMEDOUT) {
+				if (form != nullptr && !form->IsDisposed) {
+					form->SetMessage_TextValue("Attention: Recv timed out");
+					GlobalLogger::LogMessage("Attention: Recv timed out");
+				}
+			}
+			else {
+				if (form != nullptr && !form->IsDisposed) {
+					form->SetMessage_TextValue("Attention: Recv failed: " + error);
+					GlobalLogger::LogMessage(ConvertToStdString("Attention: Recv failed: " + error));
+				}
+			}
+			break;	// Выходим из цикла
+		}
+		if (bytesReceived == 0) {
+			if (form != nullptr && !form->IsDisposed) {
+				form->SetMessage_TextValue("Attention: Connection closed by client");
+				GlobalLogger::LogMessage("Attention: Connection closed by client");
+			}
+			break;	// Выходим из цикла
+		};
+
+		// ОБРАБОТКА ДАННЫХ
 		// Длина посылки вместе с CRC
 		uint8_t LengthOfPackage = 48;
 		// Вычислим CRC16 для первых 46 байт
@@ -264,32 +309,13 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				}
 			}
 			else {
-				// Форма закрыта, завершаем поток
+				// Форма отсутствует, завершаем поток
 				break;
 			} // конец if (form2 != nullptr...
 		} // if (DatCRC == dataCRC)...
 	}	// конец while
-	/*
-	Если функция recv возвращает 0, это означает, что соединение было закрыто клиентом.
-	Если функция recv возвращает SOCKET_ERROR, проверяется код ошибки с помощью функции WSAGetLastError.
-	Если код ошибки равен WSAETIMEDOUT, это означает, что операция чтения завершилась по тайм-ауту.
-	*/
-	if (bytesReceived == 0) {
-		form->SetMessage_TextValue("Attention: Connection closed by client");
-		GlobalLogger::LogMessage("Attention: Connection closed by client");
-	}
-	else if (bytesReceived == SOCKET_ERROR) {
-		int error = WSAGetLastError();
-		if (error == WSAETIMEDOUT) {
-			form->SetMessage_TextValue("Attention: Recv timed out");
-			GlobalLogger::LogMessage("Attention: Recv timed out");
-		}
-		else {
-			form->SetMessage_TextValue("Attention: Recv failed: " + error);
-			GlobalLogger::LogMessage(ConvertToStdString("Attention: Recv failed: " + error));
-		}
-	}
 
+	// Цикл приёма данных прерван по ошибке приёма, закрываем форрму приёма данных
 	closesocket(clientSocket);
 	// Найдём форму данных по идентификатору и закроем её
 	DataForm::CloseForm(guid);
