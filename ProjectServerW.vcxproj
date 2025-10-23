@@ -153,6 +153,7 @@
     </ClInclude>
     <ClInclude Include="resource.h" />
     <ClInclude Include="SServer.h" />
+    <ClInclude Include="version.h" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="DataForm.resx">

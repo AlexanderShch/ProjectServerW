@@ -505,8 +505,8 @@ namespace ProjectServerW {
 				SetT_def_left_Value(temperatures[0].ToString("F1") + "°C");
 				SetT_def_right_Value(temperatures[1].ToString("F1") + "°C");
 				SetT_def_center_Value(temperatures[2].ToString("F1") + "°C");
-				SetT_product_left_Value(temperatures[4].ToString("F1") + "°C");
-				SetT_product_right_Value(temperatures[3].ToString("F1") + "°C");
+				SetT_product_left_Value(temperatures[3].ToString("F1") + "°C");
+				SetT_product_right_Value(temperatures[4].ToString("F1") + "°C");
 			}
 		};
 

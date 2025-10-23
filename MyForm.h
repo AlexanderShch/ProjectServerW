@@ -55,6 +55,7 @@ namespace ProjectServerW {
 
 
 
+
 	private:
 		/// <summary>
 		/// Îáÿçàòåëüíàÿ ïåðåìåííàÿ êîíñòðóêòîðà.
@@ -76,6 +77,7 @@ namespace ProjectServerW {
 			this->WSAstartup = (gcnew System::Windows::Forms::Label());
 			this->ClientAddr = (gcnew System::Windows::Forms::Label());
 			this->labelMessage = (gcnew System::Windows::Forms::Label());
+			this->labelVersion = (gcnew System::Windows::Forms::Label());
 			this->menuStrip1->SuspendLayout();
 			this->SuspendLayout();
 			// 
@@ -93,7 +95,7 @@ namespace ProjectServerW {
 			// âûõîäToolStripMenuItem
 			// 
 			this->âûõîäToolStripMenuItem->Name = L"âûõîäToolStripMenuItem";
-			this->âûõîäToolStripMenuItem->Size = System::Drawing::Size(80, 29);
+			this->âûõîäToolStripMenuItem->Size = System::Drawing::Size(80, 30);
 			this->âûõîäToolStripMenuItem->Text = L"Âûõîä";
 			this->âûõîäToolStripMenuItem->Click += gcnew System::EventHandler(this, &MyForm::âûõîäToolStripMenuItem_Click);
 			// 
@@ -163,20 +165,19 @@ namespace ProjectServerW {
 			this->labelMessage->TabIndex = 8;
 			this->labelMessage->Text = L"Ñîîáùåíèå";
 			// 
+			// labelVersion
+			// 
+			this->labelVersion->Location = System::Drawing::Point(674, 410);
+			this->labelVersion->Name = L"labelVersion";
+			this->labelVersion->Size = System::Drawing::Size(100, 23);
+			this->labelVersion->TabIndex = 10;
+			this->labelVersion->Text = String::Concat(L"v ", VERSION_STR);
+			// 
 			// MyForm
 			// 
 			this->AutoScaleDimensions = System::Drawing::SizeF(9, 20);
 			this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
 			this->ClientSize = System::Drawing::Size(786, 442);
-			// Èíèöèàëèçàöèÿ ìåòêè âåðñèè
-			this->labelVersion = (gcnew System::Windows::Forms::Label());
-			this->labelVersion->AutoSize = true;
-			this->labelVersion->Location = System::Drawing::Point(this->ClientSize.Width - 100, this->ClientSize.Height - 30);
-			this->labelVersion->Name = L"labelVersion";
-			this->labelVersion->Size = System::Drawing::Size(80, 20);
-			this->labelVersion->Text = L"v" VERSION_STR;
-			this->labelVersion->Anchor = static_cast<System::Windows::Forms::AnchorStyles>(System::Windows::Forms::AnchorStyles::Bottom | System::Windows::Forms::AnchorStyles::Right);
-
 			this->Controls->Add(this->labelVersion);
 			this->Controls->Add(this->labelMessage);
 			this->Controls->Add(this->ClientAddr);
@@ -201,7 +202,7 @@ namespace ProjectServerW {
 	public:
 		void SetTextValue(String^ text) {
 			if (this != nullptr && this->InvokeRequired) {
-				this->Invoke(gcnew Action<String^>(this, &MyForm::SetTextValue), text);
+				this->Invoke(gcnew System::Action<String^>(this, &MyForm::SetTextValue), text);
 			}
 			else if (this != nullptr && label_N_port != nullptr) {
 				label_N_port->Text = text;
@@ -209,7 +210,7 @@ namespace ProjectServerW {
 		};
 		void SetSocketState_TextValue(String^ text) {
 			if (this != nullptr && this->InvokeRequired) {
-				this->Invoke(gcnew Action<String^>(this, &MyForm::SetSocketState_TextValue), text);
+				this->Invoke(gcnew System::Action<String^>(this, &MyForm::SetSocketState_TextValue), text);
 			}
 			else if (this != nullptr && SocketState != nullptr) {
 				SocketState->Text = text;
@@ -217,7 +218,7 @@ namespace ProjectServerW {
 		};
 		void SetSocketBind_TextValue(String^ text) {
 			if (this != nullptr && this->InvokeRequired) {
-				this->Invoke(gcnew Action<String^>(this, &MyForm::SetSocketBind_TextValue), text);
+				this->Invoke(gcnew System::Action<String^>(this, &MyForm::SetSocketBind_TextValue), text);
 			}
 			else if (this != nullptr && SocketBind != nullptr) {
 				SocketBind->Text = text;
@@ -225,7 +226,7 @@ namespace ProjectServerW {
 		};
 		void SetWSA_TextValue(String^ text) {
 			if (this != nullptr && this->InvokeRequired) {
-				this->Invoke(gcnew Action<String^>(this, &MyForm::SetWSA_TextValue), text);
+				this->Invoke(gcnew System::Action<String^>(this, &MyForm::SetWSA_TextValue), text);
 			}
 			else if (this != nullptr && WSAstartup != nullptr) {
 				WSAstartup->Text = text;
@@ -233,7 +234,7 @@ namespace ProjectServerW {
 		}
 		void SetClientAddr_TextValue(String^ text) {
 			if (this != nullptr && this->InvokeRequired) {
-				this->Invoke(gcnew Action<String^>(this, &MyForm::SetClientAddr_TextValue), text);
+				this->Invoke(gcnew System::Action<String^>(this, &MyForm::SetClientAddr_TextValue), text);
 			}
 			else if (this != nullptr && WSAstartup != nullptr) {
 				ClientAddr->Text = text;
@@ -241,7 +242,7 @@ namespace ProjectServerW {
 		}
 		void SetMessage_TextValue(String^ text) {
 			if (this != nullptr && this->InvokeRequired) {
-				this->Invoke(gcnew Action<String^>(this, &MyForm::SetMessage_TextValue), text);
+				this->Invoke(gcnew System::Action<String^>(this, &MyForm::SetMessage_TextValue), text);
 			}
 			else if (this != nullptr && WSAstartup != nullptr) {
 				labelMessage->Text = text;
