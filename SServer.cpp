@@ -203,6 +203,29 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		// Преобразуем порт из сетевого в локальный формат
 		clientPort = ntohs(clientAddr.sin_port);
 	}
+
+	// Получаем IP-адрес клиента
+	String^ clientIPAddress = String::Format("{0}.{1}.{2}.{3}",
+		clientAddr.sin_addr.S_un.S_un_b.s_b1,
+		clientAddr.sin_addr.S_un.S_un_b.s_b2,
+		clientAddr.sin_addr.S_un.S_un_b.s_b3,
+		clientAddr.sin_addr.S_un.S_un_b.s_b4);
+
+	// Проверяем, есть ли уже активное соединение от этого IP
+	std::wstring existingGuid = ProjectServerW::DataForm::FindFormByClientIP(clientIPAddress);
+	if (!existingGuid.empty()) {
+		// Уже есть активное соединение от этого IP
+		String^ warningMsg = "Внимание: Уже существует активное соединение от клиента " + clientIPAddress +
+			". Новое соединение не будет создано.";
+		if (form != nullptr && !form->IsDisposed) {
+			form->SetMessage_TextValue(warningMsg);
+			GlobalLogger::LogMessage(ConvertToStdString(warningMsg));
+		}
+		// Закрываем новое соединение
+		closesocket(clientSocket);
+		return 1;
+	}
+
 	// Открываем форму DataForm для демонстрации принятых данных в отдельном потоке
 	// Идентификатор формы возвращаем обратно через очередь сообщений
 	std::wstring guid;
@@ -243,6 +266,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	// Бесконечный цикл считывания данных
 	while (true) {
 		bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0);
+
 		/* ОБРАБОТКА ОШИБОК
 		Если функция recv возвращает 0, это означает, что соединение было закрыто клиентом.
 		Если функция recv возвращает SOCKET_ERROR, проверяется код ошибки с помощью функции WSAGetLastError.
@@ -289,9 +313,10 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 			if (form2 != nullptr && !form2->IsDisposed && form2->IsHandleCreated && !form2->Disposing) 
 			{
 				
-				// Передадим в форму сокет клиента этой формы
+				// Передадим в форму сокет клиента этой формы и IP-адрес
 				if (form2 != nullptr) {
 					form2->ClientSocket = clientSocket;
+					form2->ClientIP = clientIPAddress;
 				}
 				
 				if (clientPort < SclientPort) {

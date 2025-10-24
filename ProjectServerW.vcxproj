@@ -142,6 +142,7 @@
     <ClCompile Include="DataForm.cpp" />
     <ClCompile Include="Chart.cpp" />
     <ClCompile Include="SServer.cpp" />
+    <ClCompile Include="Commands.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Chart.h" />
@@ -154,6 +155,7 @@
     <ClInclude Include="resource.h" />
     <ClInclude Include="SServer.h" />
     <ClInclude Include="version.h" />
+    <ClInclude Include="Commands.h" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="DataForm.resx">

@@ -1,5 +1,6 @@
 #include "DataForm.h"
 #include "Chart.h"
+#include "Commands.h"               // Для работы с командами управления
 #include <objbase.h>                // Для CoCreateGuid - генерация уникального идентификатора
 #include <string>
 #include <vcclr.h>  // Для gcnew
@@ -180,6 +181,25 @@ DataForm^ ProjectServerW::DataForm::GetFormByGuid(const std::wstring& guid) {
     return nullptr;
 }
 
+// Метод для поиска формы по IP-адресу клиента
+std::wstring ProjectServerW::DataForm::FindFormByClientIP(String^ clientIP) {
+    // Проходим по всем формам в карте
+    for (auto it = formData_Map.begin(); it != formData_Map.end(); ++it) {
+        DataForm^ form = it->second;
+        
+        // Проверяем, что форма существует и не закрыта
+        if (form != nullptr && !form->IsDisposed && !form->Disposing) {
+            // Сравниваем IP-адреса
+            if (form->ClientIP != nullptr && form->ClientIP->Equals(clientIP)) {
+                // Нашли форму с таким же IP
+                return it->first; // Возвращаем GUID
+            }
+        }
+    }
+    // Не нашли форму с таким IP
+    return std::wstring();
+}
+
 // Записываем пару guid и поток в map
 void ThreadStorage::StoreThread(const std::wstring& guid, std::thread& thread) {
     std::lock_guard<std::mutex> lock(GetMutex());
@@ -322,26 +342,55 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
 
         // Если бит "Work" переходит из 0 в 1 (дефростер is ON)
         if (!workBitDetected && currentWorkBitState) {
-            // Создаем имя файла на основе текущего времени
-            excelFileName = "WorkData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + "_Port" + clientPort.ToString() + ".xlsx";
+            // Сохраняем время начала сбора данных
+            dataCollectionStartTime = now;
+            // Создаем имя файла на основе времени начала (окончание добавится позже при записи в Excel)
+            excelFileName = "WorkData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + "_Port" + clientPort.ToString();
             GlobalLogger::LogMessage(ConvertToStdString("Information: СТАРТ фиксации данных, создано имя файла " + excelFileName));
             // Меняем состояние кнопок СТАРТ и СТОП
             buttonSTOPstate_TRUE();
+            // Сбрасываем таймер отслеживания нуля, если он был активен
+            workBitZeroTimerActive = false;
+            if (delayedExcelTimer != nullptr && delayedExcelTimer->Enabled) {
+                delayedExcelTimer->Stop();
+            }
         }
 
         // Если бит "Work" переходит из 1 в 0 (дефростер is OFF)
         if (workBitDetected && !currentWorkBitState) {
-            // Создаем и запускаем таймер на 5 минут для отложенной записи
+            // Начинаем отслеживать время, когда бит стал нулём
+            workBitZeroStartTime = now;
+            workBitZeroTimerActive = true;
+            
+            // Создаем и запускаем таймер для проверки состояния каждую секунду
             if (delayedExcelTimer == nullptr) {
                 delayedExcelTimer = gcnew System::Windows::Forms::Timer();
-                delayedExcelTimer->Interval = 5 * 60 * 1000; // 5 минут в миллисекундах
+                delayedExcelTimer->Interval = 1000; // Проверяем каждую секунду
                 delayedExcelTimer->Tick += gcnew EventHandler(this, &DataForm::OnDelayedExcelTimerTick);
             }
             delayedExcelTimer->Start();
+            
+            GlobalLogger::LogMessage(ConvertToStdString("Information: Бит Work стал нулём, начато отслеживание времени..."));
+        }
 
-            GlobalLogger::LogMessage(ConvertToStdString("Information: СТОП фиксации данных, запись в файл " + excelFileName));
-            // Меняем состояние кнопок СТАРТ и СТОП
-            buttonSTARTstate_TRUE();
+        // Если бит "Work" остаётся в нуле и таймер активен, проверяем, прошла ли минута
+        if (!currentWorkBitState && workBitZeroTimerActive) {
+            TimeSpan elapsed = now.Subtract(workBitZeroStartTime);
+            if (elapsed.TotalSeconds >= 60) {
+                // Прошло не менее 1 минуты непрерывного нахождения в нуле
+                workBitZeroTimerActive = false;
+                delayedExcelTimer->Stop();
+                
+                // Сохраняем время окончания сбора данных
+                dataCollectionEndTime = now;
+                
+                GlobalLogger::LogMessage(ConvertToStdString("Information: СТОП фиксации данных, запись в файл " + excelFileName));
+                // Меняем состояние кнопок СТАРТ и СТОП
+                buttonSTARTstate_TRUE();
+                
+                // Выполняем запись в Excel
+                this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));
+            }
         }
 
         // Обновляем состояние флага
@@ -563,8 +612,19 @@ void ProjectServerW::DataForm::AddDataToExcel() {
 
             // Добавляем имя файла с текущей датой и временем
             if (excelFileName != nullptr) {
-                // Используем имя файла, созданное при обнаружении бита "Work"
-                filePath += excelFileName;
+                // Добавляем время окончания к имени файла
+                String^ finalFileName = excelFileName;
+                
+                // Если есть время окончания, добавляем его к имени файла
+                if (dataCollectionEndTime != DateTime::MinValue) {
+                    finalFileName += "_End_" + dataCollectionEndTime.ToString("HH-mm-ss");
+                }
+                
+                // Добавляем расширение .xlsx
+                finalFileName += ".xlsx";
+                
+                // Используем имя файла с временем начала и окончания
+                filePath += finalFileName;
             }
             else {
                 // Используем стандартное имя с текущей датой и временем
@@ -901,93 +961,94 @@ System::Void DataForm::DataForm_HandleDestroyed(Object^ sender, EventArgs^ e)
         delayedExcelTimer = nullptr;
     }
 }
-// Метод для отправки команды START клиенту
-void ProjectServerW::DataForm::SendStartCommand() {
+// Перегруженный метод - автоматическое определение имени команды
+bool ProjectServerW::DataForm::SendCommand(const Command& cmd) {
+    // Получаем имя команды автоматически
+    const char* cmdName = GetCommandName(cmd);
+    String^ commandName = gcnew String(cmdName);
+    
+    // Вызываем основной метод
+    return SendCommand(cmd, commandName);
+}
+
+// Универсальный метод для отправки команды клиенту с явным именем
+bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandName) {
     try {
         // Проверяем, что сокет клиента валиден
         if (clientSocket == INVALID_SOCKET) {
             MessageBox::Show("Нет активного соединения с клиентом!");
-            GlobalLogger::LogMessage("Error: Не могу отправить команду СТАРТ, нет активного соединения с клиентом!");
-            return;
+            GlobalLogger::LogMessage("Error: Не могу отправить команду " + ConvertToStdString(commandName) + 
+                                   ", нет активного соединения с клиентом!");
+            return false;
         }
 
-        // Формируем команду "START"
-        const char* startCommand = "START";
-        const size_t commandLength = strlen(startCommand);
+        // Формируем буфер команды
+        uint8_t buffer[MAX_COMMAND_SIZE];
+        size_t commandLength = BuildCommandBuffer(cmd, buffer, sizeof(buffer));
+
+        if (commandLength == 0) {
+            String^ errorMsg = "Ошибка формирования команды " + commandName;
+            MessageBox::Show(errorMsg);
+            GlobalLogger::LogMessage("Error: " + ConvertToStdString(errorMsg));
+            return false;
+        }
 
         // Отправляем команду клиенту
-        const int bytesSent = send(clientSocket, startCommand, static_cast<int>(commandLength), 0);
+        const int bytesSent = send(clientSocket, reinterpret_cast<const char*>(buffer), 
+                                  static_cast<int>(commandLength), 0);
 
         if (bytesSent == SOCKET_ERROR) {
             int error = WSAGetLastError();
-            String^ errorMsg = "Ошибка отправки команды START: " + error.ToString();
+            String^ errorMsg = "Ошибка отправки команды " + commandName + ": " + error.ToString();
             MessageBox::Show(errorMsg);
-            GlobalLogger::LogMessage("Error: Ошибка отправки команды START: " + ConvertToStdString(errorMsg));
+            GlobalLogger::LogMessage("Error: " + ConvertToStdString(errorMsg));
+            return false;
         }
         else if (bytesSent == commandLength) {
             // Команда успешно отправлена
-            Label_Data->Text = "Команда START отправлена клиенту";
-            GlobalLogger::LogMessage("Information: Команда START отправлена клиенту");
-
-            // Можно также изменить состояние кнопки
-            buttonSTOPstate_TRUE();
+            Label_Data->Text = "Команда " + commandName + " отправлена клиенту";
+            GlobalLogger::LogMessage("Information: Команда " + ConvertToStdString(commandName) + 
+                                   " отправлена клиенту");
+            return true;
         }
         else {
             // Отправлено меньше байт, чем ожидалось
-            String^ errorMsg = "Отправлено только " + bytesSent.ToString() + " из " + commandLength.ToString() + " байт";
+            String^ errorMsg = "Отправлено только " + bytesSent.ToString() + " из " + 
+                             commandLength.ToString() + " байт для команды " + commandName;
             MessageBox::Show(errorMsg);
-            GlobalLogger::LogMessage("Error: Частичная отправка команды START: " + ConvertToStdString(errorMsg));
+            GlobalLogger::LogMessage("Error: Частичная отправка команды " + 
+                                   ConvertToStdString(commandName) + ": " + 
+                                   ConvertToStdString(errorMsg));
+            return false;
         }
     }
     catch (Exception^ ex) {
-        String^ errorMsg = "Исключение при отправке команды START: " + ex->Message;
+        String^ errorMsg = "Исключение при отправке команды " + commandName + ": " + ex->Message;
         MessageBox::Show(errorMsg);
-        GlobalLogger::LogMessage("Error: Исключение при отправке команды START: " + ConvertToStdString(errorMsg));
+        GlobalLogger::LogMessage("Error: " + ConvertToStdString(errorMsg));
+        return false;
+    }
+}
+
+// Метод для отправки команды START клиенту
+void ProjectServerW::DataForm::SendStartCommand() {
+    // Создаем и отправляем команду START (имя определится автоматически)
+    Command cmd = CreateControlCommand(CmdProgControl::START);
+    
+    if (SendCommand(cmd)) {
+        // Команда успешно отправлена, изменяем состояние кнопок
+        buttonSTOPstate_TRUE();
     }
 }
 
 // Метод для отправки команды STOP клиенту
 void ProjectServerW::DataForm::SendStopCommand() {
-    try {
-        // Проверяем, что сокет клиента валиден
-        if (clientSocket == INVALID_SOCKET) {
-            MessageBox::Show("Нет активного соединения с клиентом!");
-            GlobalLogger::LogMessage("Error: Не могу отправить команду СТОП, нет активного соединения с клиентом!");
-            return;
-        }
-
-        // Формируем команду "STOP"
-        const char* stopCommand = "STOP";
-        const size_t commandLength = strlen(stopCommand);
-
-        // Отправляем команду клиенту
-        const int bytesSent = send(clientSocket, stopCommand, static_cast<int> (commandLength), 0);
-
-        if (bytesSent == SOCKET_ERROR) {
-            int error = WSAGetLastError();
-            String^ errorMsg = "Ошибка отправки команды STOP: " + error.ToString();
-            MessageBox::Show(errorMsg);
-            GlobalLogger::LogMessage("Ошибка отправки команды STOP: " + ConvertToStdString(errorMsg));
-        }
-        else if (bytesSent == commandLength) {
-            // Команда успешно отправлена
-            Label_Data->Text = "Команда STOP отправлена клиенту";
-            GlobalLogger::LogMessage("Команда STOP отправлена клиенту");
-
-            // Можно также изменить состояние кнопки
-            buttonSTARTstate_TRUE();
-        }
-        else {
-            // Отправлено меньше байт, чем ожидалось
-            String^ errorMsg = "Отправлено только " + bytesSent.ToString() + " из " + commandLength.ToString() + " байт";
-            MessageBox::Show(errorMsg);
-            GlobalLogger::LogMessage("Частичная отправка команды STOP: " + ConvertToStdString(errorMsg));
-        }
-    }
-    catch (Exception^ ex) {
-        String^ errorMsg = "Исключение при отправке команды STOP: " + ex->Message;
-        MessageBox::Show(errorMsg);
-        GlobalLogger::LogMessage("Исключение при отправке команды STOP: " + ConvertToStdString(errorMsg));
+    // Создаем и отправляем команду STOP (имя определится автоматически)
+    Command cmd = CreateControlCommand(CmdProgControl::STOP);
+    
+    if (SendCommand(cmd)) {
+        // Команда успешно отправлена, изменяем состояние кнопок
+        buttonSTARTstate_TRUE();
     }
 }
 
@@ -1013,16 +1074,29 @@ void ProjectServerW::DataForm::buttonSTOPstate_TRUE()
 
 // Обработчик события таймера для отложенной записи в Excel
 void ProjectServerW::DataForm::OnDelayedExcelTimerTick(Object^ sender, EventArgs^ e) {
-    // Останавливаем таймер
-    delayedExcelTimer->Stop();
+    // Проверяем, активен ли таймер отслеживания нуля
+    if (!workBitZeroTimerActive) {
+        delayedExcelTimer->Stop();
+        return;
+    }
 
-    // Выводим сообщение в лог
-    GlobalLogger::LogMessage(ConvertToStdString("Information: СТОП фиксации данных, запись в файл " + excelFileName));
-
-    // Меняем состояние кнопок СТАРТ и СТОП
-    buttonSTARTstate_TRUE();
-
-    // Выполняем запись в Excel
-    this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));
-    GlobalLogger::LogMessage(ConvertToStdString("Information: Выполняется отложенная запись в файл " + excelFileName));
+    // Вычисляем прошедшее время с момента установки бита Work в ноль
+    DateTime now = DateTime::Now;
+    TimeSpan elapsed = now.Subtract(workBitZeroStartTime);
+    
+    if (elapsed.TotalSeconds >= 60) {
+        // Прошло не менее 1 минуты непрерывного нахождения в нуле
+        workBitZeroTimerActive = false;
+        delayedExcelTimer->Stop();
+        
+        // Сохраняем время окончания сбора данных
+        dataCollectionEndTime = now;
+        
+        GlobalLogger::LogMessage(ConvertToStdString("Information: СТОП фиксации данных (по таймеру), запись в файл " + excelFileName));
+        // Меняем состояние кнопок СТАРТ и СТОП
+        buttonSTARTstate_TRUE();
+        
+        // Выполняем запись в Excel
+        this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));
+    }
 }

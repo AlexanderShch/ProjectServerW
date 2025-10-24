@@ -9,6 +9,9 @@
 
 #define SQ 7				// датчики TH дефростера (0-2) + датчики продукта (3, 4) + T корпуса (5) + MB_IO (6)
 
+// Forward declaration для избежания циклических зависимостей
+struct Command;
+
 namespace ProjectServerW {
 
 	using namespace System;
@@ -51,9 +54,13 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::Label^ labelExcelDirectory;
 	private: System::String^ excelSavePath;  // Для хранения пути
 		     System::String^ excelFileName;   // Для хранения имени файла, связанного с битом "Work"
-		     bool workBitDetected;            // Флаг для отслеживания активации бита "Work"
+			 DateTime dataCollectionStartTime; // Время начала сбора данных
+			 DateTime dataCollectionEndTime;   // Время окончания сбора данных
+			 bool workBitDetected;            // Флаг для отслеживания активации бита "Work"
 			 bool pendingExcelExport;		  // Флаг ожидания освобождения кнопки записи Excel
 			 System::Windows::Forms::Timer^ exportTimer;	// Таймер для проверки освобождения кнопки
+			 DateTime workBitZeroStartTime;   // время перехода бита Work в состояние ноль
+			 bool workBitZeroTimerActive;     // флаг "запущен таймер отслеживания активности таймера бита Work в нуле"
 	private: System::Windows::Forms::Label^ Label_Data;
 	private: System::Windows::Forms::Label^ LabelDefroster;
 	private: System::Windows::Forms::Label^ T_def_left;
@@ -108,6 +115,7 @@ namespace ProjectServerW {
 			// Имя файла будет сгенерировано позже, когда "Work" станет активным
 			excelFileName = nullptr;
 			workBitDetected = false;
+			workBitZeroTimerActive = false;
 			// Инициализация порта клиента
 			clientPort = 0;
 
@@ -471,6 +479,7 @@ namespace ProjectServerW {
 		System::Void buttonBrowse_Click(System::Object^ sender, System::EventArgs^ e);
 	private:
 		int clientPort; // Порт клиента
+		String^ clientIP;   // IP-адрес клиента
 	private:			// Таймер для отложенной записи EXCEL
 		System::Windows::Forms::Timer^ delayedExcelTimer;
 		void OnDelayedExcelTimerTick(Object^ sender, EventArgs^ e);
@@ -479,6 +488,10 @@ namespace ProjectServerW {
 		property int ClientPort{
 			int get() { return clientPort; }
 			void set(int value) { clientPort = value; }
+		}
+		property String^ ClientIP{
+			String ^ get() { return clientIP; }
+			void set(String ^ value) { clientIP = value; }
 		}
 	public:
 		void SetData_TextValue(String^ text) {
@@ -515,6 +528,7 @@ namespace ProjectServerW {
 			std::condition_variable& cv);
 		static void CloseForm(const std::wstring& guid);
 		static DataForm^ GetFormByGuid(const std::wstring& guid);
+		static std::wstring FindFormByClientIP(String^ clientIP); // найти форму по IP-адресу клиента
 		static void DelayedGarbageCollection(Object^ state);
 		static void ParseBuffer(const char* buffer, size_t size);
 
@@ -540,6 +554,8 @@ namespace ProjectServerW {
 		}
 
 		void EnableButton();
+		bool SendCommand(const struct Command& cmd); // Универсальный метод отправки команды (имя определяется автоматически)
+		bool SendCommand(const struct Command& cmd, System::String^ commandName); // Универсальный метод отправки команды с явным именем
 		void SendStartCommand(); // Метод для отправки команды START клиенту
 		void SendStopCommand(); // Метод для отправки команды STOP клиенту
 		void buttonSTARTstate_TRUE();	// Метод для изменения статуса кнопок Старт и Стоп
