@@ -12,7 +12,9 @@ using namespace Microsoft::Office::Interop::Excel;
 
 std::map<std::wstring, gcroot<DataForm^>> formData_Map; // Определение переменной formData_Map
 
-//
+// Структура телеметрии от контроллера (упакованная, без выравнивания байтов)
+// Контроллер использует __attribute__((packed)), здесь используем #pragma pack(1)
+#pragma pack(push, 1)
 typedef struct   // object data for Server type из STM32
 {
     uint16_t Time;				// Количество секунд с момента включения
@@ -23,6 +25,7 @@ typedef struct   // object data for Server type из STM32
     short H[SQ];				// Значение 2 сенсора (влажность)
     uint16_t CRC_SUM;			// Контрольное значение
 } MSGQUEUE_OBJ_t;
+#pragma pack(pop)
 
 // Преобразование данных из буфера в структуру типа MSGQUEUE_OBJ_t из STM32
 void ProjectServerW::DataForm::ParseBuffer(const char* buffer, size_t size) {
