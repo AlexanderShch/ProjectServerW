@@ -11,6 +11,7 @@ using namespace ProjectServerW; // Добавлено пространство имен
 using namespace Microsoft::Office::Interop::Excel;
 
 std::map<std::wstring, gcroot<DataForm^>> formData_Map; // Определение переменной formData_Map
+
 //
 typedef struct   // object data for Server type из STM32
 {
@@ -1032,24 +1033,235 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
 
 // Метод для отправки команды START клиенту
 void ProjectServerW::DataForm::SendStartCommand() {
-    // Создаем и отправляем команду START (имя определится автоматически)
+    // Создаем команду START
     Command cmd = CreateControlCommand(CmdProgControl::START);
+    CommandResponse response;
     
-    if (SendCommand(cmd)) {
-        // Команда успешно отправлена, изменяем состояние кнопок
+    // Отправляем команду и ждем ответ
+    if (SendCommandAndWaitResponse(cmd, response)) {
+        // Команда успешно выполнена на контроллере
         buttonSTOPstate_TRUE();
+        GlobalLogger::LogMessage("Information: Команда START успешно выполнена контроллером");
+    } else {
+        // Ошибка выполнения команды
+        GlobalLogger::LogMessage("Error: Команда START не выполнена контроллером");
     }
 }
 
 // Метод для отправки команды STOP клиенту
 void ProjectServerW::DataForm::SendStopCommand() {
-    // Создаем и отправляем команду STOP (имя определится автоматически)
+    // Создаем команду STOP
     Command cmd = CreateControlCommand(CmdProgControl::STOP);
+    CommandResponse response;
     
-    if (SendCommand(cmd)) {
-        // Команда успешно отправлена, изменяем состояние кнопок
+    // Отправляем команду и ждем ответ
+    if (SendCommandAndWaitResponse(cmd, response)) {
+        // Команда успешно выполнена на контроллере
         buttonSTARTstate_TRUE();
+        GlobalLogger::LogMessage("Information: Команда STOP успешно выполнена контроллером");
+    } else {
+        // Ошибка выполнения команды
+        GlobalLogger::LogMessage("Error: Команда STOP не выполнена контроллером");
     }
+}
+
+// ============================
+// Методы для обработки ответов от контроллера
+// ============================
+
+// Добавление ответа в очередь (вызывается из SServer)
+void ProjectServerW::DataForm::EnqueueResponse(cli::array<System::Byte>^ response) {
+    try {
+        responseQueue->Enqueue(response);
+        responseAvailable->Release(); // Сигнализируем о доступности ответа
+        
+        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+            "Response enqueued: Type=0x{0:X2}, Size={1} bytes", 
+            response[0], response->Length)));
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error enqueueing response: " + ex->Message));
+    }
+}
+
+// Прием ответа от контроллера
+bool ProjectServerW::DataForm::ReceiveResponse(CommandResponse& response, int timeoutMs) {
+    try {
+        // Проверяем, что сокет клиента открыт
+        if (clientSocket == INVALID_SOCKET) {
+            GlobalLogger::LogMessage("Error: Client socket is invalid for receiving response");
+            return false;
+        }
+
+        // ===== ОЖИДАНИЕ ОТВЕТА ИЗ ОЧЕРЕДИ =====
+        // Ждем появления ответа в очереди с таймаутом
+        if (!responseAvailable->WaitOne(timeoutMs)) {
+            String^ msg = "Timeout: No response received from controller";
+            GlobalLogger::LogMessage(ConvertToStdString(msg));
+            return false;
+        }
+
+        // Получаем ответ из очереди
+        cli::array<System::Byte>^ responseBuffer;
+        if (!responseQueue->TryDequeue(responseBuffer)) {
+            String^ msg = "Error: Failed to dequeue response";
+            GlobalLogger::LogMessage(ConvertToStdString(msg));
+            return false;
+        }
+
+        // Копируем данные в неуправляемый буфер
+        uint8_t buffer[64];
+        pin_ptr<System::Byte> pinnedBuffer = &responseBuffer[0];
+        memcpy(buffer, pinnedBuffer, responseBuffer->Length);
+
+        // Разбираем полученный ответ
+        if (!ParseResponseBuffer(buffer, responseBuffer->Length, response)) {
+            String^ msg = "Error: Failed to parse response from controller";
+            GlobalLogger::LogMessage(ConvertToStdString(msg));
+            return false;
+        }
+
+        // Логируем успешное получение ответа
+        String^ logMsg = String::Format(
+            "Response processed: Type=0x{0:X2}, Code=0x{1:X2}, Status={2}, DataLen={3}",
+            response.commandType, response.commandCode, 
+            gcnew String(GetStatusName(response.status)), response.dataLength);
+        GlobalLogger::LogMessage(ConvertToStdString(logMsg));
+
+        return true;
+
+    } catch (Exception^ ex) {
+        String^ errorMsg = "Exception in ReceiveResponse: " + ex->Message;
+        GlobalLogger::LogMessage(ConvertToStdString(errorMsg));
+        return false;
+    }
+}
+
+// Перегрузка ReceiveResponse с таймаутом по умолчанию
+bool ProjectServerW::DataForm::ReceiveResponse(CommandResponse& response) {
+    return ReceiveResponse(response, 1000); // Таймаут по умолчанию 1000 мс
+}
+
+// Обработка полученного ответа
+void ProjectServerW::DataForm::ProcessResponse(const CommandResponse& response) {
+    try {
+        // Получаем имя команды и статус
+        const char* statusName = GetStatusName(response.status);
+        
+        // Формируем сообщение о результате выполнения команды
+        String^ message;
+        
+        if (response.status == CmdStatus::OK) {
+            message = String::Format(
+                "? Команда Type=0x{0:X2}, Code=0x{1:X2} успешно выполнена",
+                response.commandType, response.commandCode);
+
+            // Если есть данные в ответе (для команд REQUEST)
+            if (response.dataLength > 0) {
+                // Обрабатываем данные в зависимости от типа команды
+                if (response.commandType == CmdType::REQUEST) {
+                    switch (response.commandCode) {
+                        case CmdRequest::GET_STATUS: {
+                            // Получаем статус (2 байта)
+                            if (response.dataLength >= 2) {
+                                uint16_t status;
+                                memcpy(&status, response.data, 2);
+                                message += String::Format("\nСтатус устройства: 0x{0:X4}", status);
+                            }
+                            break;
+                        }
+                        case CmdRequest::GET_VERSION: {
+                            // Получаем версию (строка)
+                            String^ version = gcnew String(
+                                reinterpret_cast<const char*>(response.data), 
+                                0, response.dataLength, System::Text::Encoding::ASCII);
+                            message += "\nВерсия прошивки: " + version;
+                            break;
+                        }
+                        case CmdRequest::GET_DATA: {
+                            // Получаем данные конфигурации
+                            if (response.dataLength >= 1) {
+                                message += String::Format("\nРежим работы: {0}", 
+                                    response.data[0] == 0 ? "Автоматический" : "Ручной");
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            GlobalLogger::LogMessage(ConvertToStdString(message));
+            
+        } else {
+            // Обработка ошибок
+            message = String::Format(
+                "? Ошибка выполнения команды Type=0x{0:X2}, Code=0x{1:X2}\nСтатус: {2}",
+                response.commandType, response.commandCode, gcnew String(statusName));
+            
+            MessageBox::Show(message, "Ошибка выполнения команды", 
+                           MessageBoxButtons::OK, MessageBoxIcon::Error);
+            GlobalLogger::LogMessage(ConvertToStdString(message));
+        }
+
+    } catch (Exception^ ex) {
+        String^ errorMsg = "Exception in ProcessResponse: " + ex->Message;
+        MessageBox::Show(errorMsg);
+        GlobalLogger::LogMessage(ConvertToStdString(errorMsg));
+    }
+}
+
+// Отправка команды и ожидание ответа
+bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
+    const Command& cmd, CommandResponse& response, System::String^ commandName) {
+    
+    try {
+        // Отправляем команду
+        bool sendResult;
+        if (commandName != nullptr) {
+            sendResult = SendCommand(cmd, commandName);
+        } else {
+            sendResult = SendCommand(cmd);
+        }
+
+        if (!sendResult) {
+            GlobalLogger::LogMessage("Error: Failed to send command");
+            return false;
+        }
+
+        // Ждем ответ от контроллера
+        if (!ReceiveResponse(response, 2000)) { // Таймаут 2 секунды
+            GlobalLogger::LogMessage("Error: No response received from controller");
+            return false;
+        }
+
+        // Проверяем, что ответ соответствует отправленной команде
+        if (response.commandType != cmd.commandType || 
+            response.commandCode != cmd.commandCode) {
+            String^ errorMsg = String::Format(
+                "Error: Response mismatch. Sent Type=0x{0:X2}, Code=0x{1:X2}; Received Type=0x{2:X2}, Code=0x{3:X2}",
+                cmd.commandType, cmd.commandCode, response.commandType, response.commandCode);
+            MessageBox::Show(errorMsg);
+            GlobalLogger::LogMessage(ConvertToStdString(errorMsg));
+            return false;
+        }
+
+        // Обрабатываем полученный ответ
+        ProcessResponse(response);
+
+        return (response.status == CmdStatus::OK);
+
+    } catch (Exception^ ex) {
+        String^ errorMsg = "Exception in SendCommandAndWaitResponse: " + ex->Message;
+        MessageBox::Show(errorMsg);
+        GlobalLogger::LogMessage(ConvertToStdString(errorMsg));
+        return false;
+    }
+}
+
+// Перегрузка SendCommandAndWaitResponse без указания имени команды
+bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
+    const Command& cmd, CommandResponse& response) {
+    return SendCommandAndWaitResponse(cmd, response, nullptr);
 }
 
 void ProjectServerW::DataForm::buttonSTARTstate_TRUE()

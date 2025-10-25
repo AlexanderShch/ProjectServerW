@@ -33,7 +33,7 @@ uint16_t CalculateCommandCRC(const uint8_t* buffer, size_t length) {
 // Формирование буфера команды с CRC
 size_t BuildCommandBuffer(const Command& cmd, uint8_t* buffer, size_t bufferSize) {
     // Проверяем размер буфера
-    size_t requiredSize = 3 + cmd.dataLength + 2; // тип + код + длина + данные + CRC
+    size_t requiredSize = 3 + static_cast<size_t>(cmd.dataLength) + 2; // тип + код + длина + данные + CRC
     if (bufferSize < requiredSize) {
         return 0; // Недостаточно места в буфере
     }
@@ -97,4 +97,91 @@ const char* GetCommandName(const Command& cmd) {
     }
 
     return "UNKNOWN_COMMAND";
+}
+
+// ============================
+// Функции для обработки ответов от контроллера
+// ============================
+
+// Проверка CRC ответа
+bool ValidateResponseCRC(const uint8_t* buffer, size_t length) {
+    if (length < 6) { // Минимальный размер ответа: Type + Code + Status + DataLen + CRC
+        return false;
+    }
+
+    // Вычисляем CRC для всех данных кроме последних 2 байт (самого CRC)
+    uint16_t calculatedCRC = CalculateCommandCRC(buffer, length - 2);
+
+    // Извлекаем полученный CRC (последние 2 байта)
+    uint16_t receivedCRC;
+    memcpy(&receivedCRC, &buffer[length - 2], 2);
+
+    return (calculatedCRC == receivedCRC);
+}
+
+// Разбор буфера ответа в структуру CommandResponse
+bool ParseResponseBuffer(const uint8_t* buffer, size_t bufferSize, CommandResponse& response) {
+    // Проверяем минимальный размер буфера
+    if (bufferSize < 6) { // Type + Code + Status + DataLen + CRC(2)
+        return false;
+    }
+
+    // Извлекаем поля заголовка
+    size_t offset = 0;
+    response.commandType = buffer[offset++];
+    response.commandCode = buffer[offset++];
+    response.status = buffer[offset++];
+    response.dataLength = buffer[offset++];
+
+    // Проверяем, соответствует ли длина данных размеру буфера
+    size_t expectedSize = 4 + static_cast<size_t>(response.dataLength) + 2; // Type + Code + Status + DataLen + Data + CRC
+    if (bufferSize < expectedSize) {
+        return false;
+    }
+
+    // Копируем данные ответа
+    if (response.dataLength > 0) {
+        if (response.dataLength > sizeof(response.data)) {
+            return false; // Данные не помещаются в структуру
+        }
+        memcpy(response.data, &buffer[offset], response.dataLength);
+        offset += response.dataLength;
+    }
+
+    // Извлекаем CRC
+    memcpy(&response.crc, &buffer[offset], 2);
+
+    // Проверяем CRC
+    if (!ValidateResponseCRC(buffer, bufferSize)) {
+        return false;
+    }
+
+    return true;
+}
+
+// Получение строкового описания статуса
+const char* GetStatusName(uint8_t status) {
+    switch (status) {
+    case 0x00: return "OK";
+    case 0x01: return "CRC_ERROR";
+    case 0x02: return "INVALID_TYPE";
+    case 0x03: return "INVALID_CODE";
+    case 0x04: return "INVALID_LENGTH";
+    case 0x05: return "EXECUTION_ERROR";
+    case 0x06: return "TIMEOUT";
+    case 0xFF: return "UNKNOWN_ERROR";
+    default: return "UNDEFINED_STATUS";
+    }
+}
+
+// Проверка, требует ли команда ответа
+bool CommandRequiresResponse(const Command& cmd) {
+    // Все команды типа REQUEST всегда требуют ответа с данными
+    if (cmd.commandType == CmdType::REQUEST) {
+        return true;
+    }
+
+    // Остальные команды могут требовать только подтверждения
+    // В зависимости от конфигурации системы
+    return true; // По умолчанию считаем, что все команды требуют ответа
 }

@@ -11,6 +11,7 @@
 
 // Forward declaration для избежания циклических зависимостей
 struct Command;
+struct CommandResponse;
 
 namespace ProjectServerW {
 
@@ -29,7 +30,18 @@ namespace ProjectServerW {
 	{
 	private:
 		SOCKET clientSocket;  // Сокет клиента
-	public:
+		
+	// Очередь для ответов от контроллера (статические для доступа из SServer)
+	static System::Collections::Concurrent::ConcurrentQueue<cli::array<System::Byte>^>^ responseQueue;
+	static System::Threading::Semaphore^ responseAvailable;
+	
+	// Статический конструктор для инициализации статических управляемых членов
+	static DataForm() {
+		responseQueue = gcnew System::Collections::Concurrent::ConcurrentQueue<cli::array<System::Byte>^>();
+		responseAvailable = gcnew System::Threading::Semaphore(0, 100);
+	}
+	
+public:
 		property SOCKET ClientSocket {
 			SOCKET get() { return clientSocket; }
 			void set(SOCKET value) { clientSocket = value; }
@@ -558,6 +570,15 @@ namespace ProjectServerW {
 		bool SendCommand(const struct Command& cmd, System::String^ commandName); // Универсальный метод отправки команды с явным именем
 		void SendStartCommand(); // Метод для отправки команды START клиенту
 		void SendStopCommand(); // Метод для отправки команды STOP клиенту
+		
+		// Методы для обработки ответов от контроллера
+		static void EnqueueResponse(cli::array<System::Byte>^ response); // Добавление ответа в очередь (вызывается из SServer)
+		bool ReceiveResponse(struct CommandResponse& response, int timeoutMs); // Прием ответа от контроллера с таймаутом
+		bool ReceiveResponse(struct CommandResponse& response); // Прием ответа от контроллера (таймаут по умолчанию 1000 мс)
+		void ProcessResponse(const struct CommandResponse& response); // Обработка полученного ответа
+		bool SendCommandAndWaitResponse(const struct Command& cmd, struct CommandResponse& response, System::String^ commandName); // Отправка команды и ожидание ответа с именем
+		bool SendCommandAndWaitResponse(const struct Command& cmd, struct CommandResponse& response); // Отправка команды и ожидание ответа (имя автоматически)
+		
 		void buttonSTARTstate_TRUE();	// Метод для изменения статуса кнопок Старт и Стоп
 		void buttonSTOPstate_TRUE();	// Метод для изменения статуса кнопок Старт и Стоп
 		System::Void DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ e);

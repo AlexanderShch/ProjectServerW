@@ -108,3 +108,45 @@ inline Command CreateRequestCommand(uint8_t commandCode) {
     return cmd;
 }
 
+// ============================
+// Структуры и функции для обработки ответов от контроллера
+// ============================
+
+// Коды статуса выполнения команд
+struct CmdStatus {
+    static const uint8_t OK = 0x00;                   // Команда выполнена успешно
+    static const uint8_t CRC_ERROR = 0x01;            // Ошибка контрольной суммы
+    static const uint8_t INVALID_TYPE = 0x02;         // Неизвестный тип команды
+    static const uint8_t INVALID_CODE = 0x03;         // Неизвестный код команды
+    static const uint8_t INVALID_LENGTH = 0x04;       // Неверная длина данных
+    static const uint8_t EXECUTION_ERROR = 0x05;      // Ошибка выполнения команды
+    static const uint8_t TIMEOUT = 0x06;              // Таймаут выполнения
+    static const uint8_t UNKNOWN_ERROR = 0xFF;        // Неизвестная ошибка
+};
+
+// Структура ответа от контроллера
+struct CommandResponse {
+    uint8_t commandType;           // Тип исходной команды
+    uint8_t commandCode;           // Код исходной команды
+    uint8_t status;                // Статус выполнения команды
+    uint8_t dataLength;            // Длина данных ответа
+    uint8_t data[MAX_COMMAND_SIZE - 6]; // Данные ответа (макс. 58 байт)
+    uint16_t crc;                  // CRC16 для проверки целостности
+
+    CommandResponse() : commandType(0), commandCode(0), status(0), dataLength(0), crc(0) {
+        memset(data, 0, sizeof(data));
+    }
+};
+
+// Функция для проверки CRC ответа
+bool ValidateResponseCRC(const uint8_t* buffer, size_t length);
+
+// Функция для разбора буфера ответа в структуру CommandResponse
+bool ParseResponseBuffer(const uint8_t* buffer, size_t bufferSize, CommandResponse& response);
+
+// Функция для получения строкового описания статуса
+const char* GetStatusName(uint8_t status);
+
+// Функция для проверки, требует ли команда ответа
+bool CommandRequiresResponse(const Command& cmd);
+

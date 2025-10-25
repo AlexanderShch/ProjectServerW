@@ -1,0 +1,123 @@
+# Система команд управления устройством
+
+## Обзор
+
+В проект добавлена структурированная система команд для управления внешним устройством. Все команды имеют единый формат и автоматически защищены контрольной суммой CRC16.
+
+## Основные файлы
+
+- **Commands.h** - Определения типов команд, кодов и вспомогательных функций
+- **Commands.cpp** - Реализация функций для работы с командами
+- **CommandsExamples.txt** - Подробные примеры использования
+
+## Быстрый старт
+
+### Отправка команды СТАРТ
+```cpp
+void ProjectServerW::DataForm::SendStartCommand() {
+    Command cmd = CreateControlCommand(ControlCommand::START);
+    SendCommand(cmd, "START");
+}
+```
+
+### Отправка команды СТОП
+```cpp
+void ProjectServerW::DataForm::SendStopCommand() {
+    Command cmd = CreateControlCommand(ControlCommand::STOP);
+    SendCommand(cmd, "STOP");
+}
+```
+
+### Установка температуры
+```cpp
+void SetTemperature(float temp) {
+    Command cmd = CreateConfigCommandFloat(ConfigCommand::SET_TEMPERATURE, temp);
+    SendCommand(cmd, "SET_TEMPERATURE");
+}
+```
+
+## Структура команды
+
+```
+[Тип команды][Код команды][Длина данных][Параметры...][CRC16]
+    1 байт       1 байт        1 байт      0-59 байт    2 байта
+```
+
+## Типы команд
+
+| Тип | Код | Описание |
+|-----|-----|----------|
+| CONTROL | 0x01 | Команды управления (СТАРТ, СТОП, ПАУЗА) |
+| CONFIGURATION | 0x02 | Команды конфигурации (установка параметров) |
+| REQUEST | 0x03 | Запросы данных от устройства |
+| RESPONSE | 0x04 | Ответы от устройства |
+
+## Команды управления (CONTROL)
+
+| Команда | Код | Описание |
+|---------|-----|----------|
+| START | 0x01 | Запуск работы устройства |
+| STOP | 0x02 | Остановка работы |
+| PAUSE | 0x03 | Приостановка |
+| RESUME | 0x04 | Возобновление |
+| RESET | 0x05 | Сброс устройства |
+
+## Команды конфигурации (CONFIGURATION)
+
+| Команда | Код | Описание | Параметр |
+|---------|-----|----------|----------|
+| SET_TEMPERATURE | 0x01 | Установить температуру | float (4 байта) |
+| SET_INTERVAL | 0x02 | Интервал измерений | int (4 байта) |
+| SET_MODE | 0x03 | Режим работы | uint8_t (1 байт) |
+
+## Команды запроса (REQUEST)
+
+| Команда | Код | Описание |
+|---------|-----|----------|
+| GET_STATUS | 0x01 | Запросить статус |
+| GET_VERSION | 0x02 | Запросить версию ПО |
+| GET_CONFIG | 0x03 | Запросить конфигурацию |
+
+## Как добавить новую команду
+
+### 1. Добавить константу в Commands.h
+```cpp
+namespace ControlCommand {
+    // ... существующие команды
+    const uint8_t MY_NEW_COMMAND = 0x06;  // Новая команда
+}
+```
+
+### 2. Создать метод в DataForm.h
+```cpp
+void SendMyNewCommand(int parameter);
+```
+
+### 3. Реализовать в DataForm.cpp
+```cpp
+void ProjectServerW::DataForm::SendMyNewCommand(int parameter) {
+    Command cmd = CreateConfigCommandInt(ControlCommand::MY_NEW_COMMAND, parameter);
+    SendCommand(cmd, "MY_NEW_COMMAND");
+}
+```
+
+### 4. Вызвать из обработчика кнопки
+```cpp
+private: System::Void button_Click(System::Object^ sender, System::EventArgs^ e) {
+    SendMyNewCommand(100);
+}
+```
+
+## Преимущества новой системы
+
+? **Единый формат** - все команды имеют одинаковую структуру  
+? **Защита данных** - автоматическое вычисление CRC16  
+? **Типобезопасность** - четкое разделение типов команд  
+? **Расширяемость** - легко добавлять новые команды  
+? **Логирование** - автоматическое логирование всех операций  
+? **Обработка ошибок** - централизованная обработка ошибок отправки  
+
+## Дополнительная информация
+
+Подробные примеры и инструкции см. в файле **CommandsExamples.txt**
+

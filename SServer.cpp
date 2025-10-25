@@ -1,4 +1,4 @@
-#include "SServer.h" // 
+#include "SServer.h" // Включает DataForm.h внутри себя
 #include <fstream>
 #include <iostream>
 #include <chrono>
@@ -296,48 +296,82 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 			break;	// Выходим из цикла
 		};
 
-		// ОБРАБОТКА ДАННЫХ
-		// Длина посылки вместе с CRC
-		uint8_t LengthOfPackage = 48;
-		// Вычислим CRC16 для первых 46 байт
-		uint16_t dataCRC = MB_GetCRC(buffer, LengthOfPackage - 2);
-		uint16_t DatCRC;
-		memcpy(&DatCRC, &buffer[LengthOfPackage - 2], 2);
+		// ===== РАЗЛИЧЕНИЕ ТИПА ПАКЕТА ПО ПЕРВОМУ БАЙТУ =====
+		uint8_t packetType = buffer[0];
+		
+		if (packetType >= 0x01 && packetType <= 0x04) {
+			// ===== ЭТО ОТВЕТ НА КОМАНДУ =====
+			// Пакеты с Type = 0x01-0x04 это ответы на команды от контроллера
+			
+			// Создаем управляемый массив для ответа
+			cli::array<System::Byte>^ responseBuffer = gcnew cli::array<System::Byte>(bytesReceived);
+			Marshal::Copy(IntPtr(buffer), responseBuffer, 0, bytesReceived);
+			
+		// Добавляем в очередь ответов
+		DataForm::EnqueueResponse(responseBuffer);
+		
+		GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+			"Response received and enqueued: Type=0x{0:X2}, Size={1} bytes", 
+			packetType, bytesReceived)));
+		}
+		else if (packetType == 0x00) {
+			// ===== ЭТО ТЕЛЕМЕТРИЯ =====
+			// Пакеты с Type = 0x00 это телеметрия от контроллера
+			
+			// Длина посылки вместе с CRC
+			uint8_t LengthOfPackage = 48;
+			// Вычислим CRC16 для первых 46 байт
+			uint16_t dataCRC = MB_GetCRC(buffer, LengthOfPackage - 2);
+			uint16_t DatCRC;
+			memcpy(&DatCRC, &buffer[LengthOfPackage - 2], 2);
 
-		if (DatCRC == dataCRC) {
-			// Отправляем зеркальную посылку клиенту
-			send(clientSocket, buffer, bytesReceived, 0);
+			if (DatCRC == dataCRC) {
+				// Отправляем зеркальную посылку клиенту
+				send(clientSocket, buffer, bytesReceived, 0);
 
-			// Найдём форму по идентификатору
-			DataForm^ form2 = DataForm::GetFormByGuid(guid);
-			if (form2 != nullptr && !form2->IsDisposed && form2->IsHandleCreated && !form2->Disposing) 
-			{
-				
-				// Передадим в форму сокет клиента этой формы и IP-адрес
-				if (form2 != nullptr) {
-					form2->ClientSocket = clientSocket;
-					form2->ClientIP = clientIPAddress;
+				// Найдём форму по идентификатору
+				DataForm^ form2 = DataForm::GetFormByGuid(guid);
+				if (form2 != nullptr && !form2->IsDisposed && form2->IsHandleCreated && !form2->Disposing) 
+				{
+					
+					// Передадим в форму сокет клиента этой формы и IP-адрес
+					if (form2 != nullptr) {
+						form2->ClientSocket = clientSocket;
+						form2->ClientIP = clientIPAddress;
+					}
+					
+					if (clientPort < SclientPort) {
+						// Создаем копию данных для безопасной передачи в другой поток
+						cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(bytesReceived);
+						Marshal::Copy(IntPtr(buffer), dataBuffer, 0, bytesReceived);
+
+						// Вызываем AddDataToTable через Invoke для выполнения в потоке формы
+						form2->BeginInvoke(gcnew Action<cli::array <System::Byte>^, int, int>
+							(form2, &DataForm::AddDataToTableThreadSafe),
+							dataBuffer, bytesReceived, clientPort);
+						// Refresh вызывать отдельно уже не нужно - он будет вызван в AddDataToTableThreadSafe
+					} else {
+						// здесь обработка для другого типа порта
+					}
 				}
-				
-				if (clientPort < SclientPort) {
-					// Создаем копию данных для безопасной передачи в другой поток
-					cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(bytesReceived);
-					Marshal::Copy(IntPtr(buffer), dataBuffer, 0, bytesReceived);
-
-					// Вызываем AddDataToTable через Invoke для выполнения в потоке формы
-					form2->BeginInvoke(gcnew Action<cli::array <System::Byte>^, int, int>
-						(form2, &DataForm::AddDataToTableThreadSafe),
-						dataBuffer, bytesReceived, clientPort);
-					// Refresh вызывать отдельно уже не нужно - он будет вызван в AddDataToTableThreadSafe
-				} else {
-					// здесь обработка для другого типа порта
-				}
-			}
-			else {
-				// Форма отсутствует, завершаем поток
-				break;
-			} // конец if (form2 != nullptr...
-		} // if (DatCRC == dataCRC)...
+				else {
+					// Форма отсутствует, завершаем поток
+					break;
+		} // конец if (form2 != nullptr...
+	} // if (DatCRC == dataCRC)
+	else {
+		// Ошибка CRC телеметрии
+		GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+			"Telemetry CRC error: Expected={0:X4}, Received={1:X4}", 
+			dataCRC, DatCRC)));
+	}
+} // else if (packetType == 0x00)
+else {
+	// Неизвестный тип пакета
+	GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+		"Unknown packet type: 0x{0:X2}, Size={1} bytes", 
+		packetType, bytesReceived)));
+		}
 	}	// конец while
 
 	// Цикл приёма данных прерван по ошибке приёма, закрываем форрму приёма данных
