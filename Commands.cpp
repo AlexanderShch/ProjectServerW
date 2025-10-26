@@ -159,7 +159,7 @@ bool ParseResponseBuffer(const uint8_t* buffer, size_t bufferSize, CommandRespon
     return true;
 }
 
-// Получение строкового описания статуса
+// Получение строкового описания статуса (краткое)
 const char* GetStatusName(uint8_t status) {
     switch (status) {
     case 0x00: return "OK";
@@ -171,6 +171,21 @@ const char* GetStatusName(uint8_t status) {
     case 0x06: return "TIMEOUT";
     case 0xFF: return "UNKNOWN_ERROR";
     default: return "UNDEFINED_STATUS";
+    }
+}
+
+// Получение детального описания ошибки на русском языке
+const char* GetStatusDescription(uint8_t status) {
+    switch (status) {
+    case 0x00: return "Команда выполнена успешно";
+    case 0x01: return "Ошибка контрольной суммы CRC. Данные повреждены при передаче";
+    case 0x02: return "Неизвестный тип команды. Контроллер не поддерживает данный тип";
+    case 0x03: return "Неизвестный код команды. Команда не реализована в контроллере";
+    case 0x04: return "Неверная длина данных. Размер параметров не соответствует ожидаемому";
+    case 0x05: return "Ошибка выполнения команды. Контроллер не смог выполнить операцию";
+    case 0x06: return "Таймаут выполнения. Контроллер не успел выполнить операцию в отведенное время";
+    case 0xFF: return "Неизвестная ошибка. Произошла непредвиденная ошибка в контроллере";
+    default: return "Неопределенный статус ответа";
     }
 }
 

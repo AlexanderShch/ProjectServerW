@@ -1,4 +1,10 @@
 #include "Chart.h"
+
+using namespace System;
+using namespace System::Windows::Forms;
+using namespace System::Runtime::InteropServices;
+using namespace Microsoft::Office::Interop::Excel;
+
 // Тестовый код для проверки настроек
 void CreateExcelFile() {
     ExcelHelper^ excel = gcnew ExcelHelper();

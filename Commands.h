@@ -1,6 +1,6 @@
 #pragma once
 #include <cstdint>
-#include <cstring>
+#include <cstring>  // Для memset и memcpy
 
 // Определение типов команд
 struct CmdType {
@@ -146,6 +146,9 @@ bool ParseResponseBuffer(const uint8_t* buffer, size_t bufferSize, CommandRespon
 
 // Функция для получения строкового описания статуса
 const char* GetStatusName(uint8_t status);
+
+// Функция для получения детального описания ошибки на русском языке
+const char* GetStatusDescription(uint8_t status);
 
 // Функция для проверки, требует ли команда ответа
 bool CommandRequiresResponse(const Command& cmd);

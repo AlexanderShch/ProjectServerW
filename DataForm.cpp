@@ -1010,7 +1010,7 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
         }
         else if (bytesSent == commandLength) {
             // Команда успешно отправлена
-            Label_Data->Text = "Команда " + commandName + " отправлена клиенту";
+            Label_Commands->Text = "Команда " + commandName + " отправлена клиенту";
             GlobalLogger::LogMessage("Information: Команда " + ConvertToStdString(commandName) + 
                                    " отправлена клиенту");
             return true;
@@ -1044,10 +1044,39 @@ void ProjectServerW::DataForm::SendStartCommand() {
     if (SendCommandAndWaitResponse(cmd, response)) {
         // Команда успешно выполнена на контроллере
         buttonSTOPstate_TRUE();
+        Label_Commands->Text = "? Программа запущена";
+        Label_Commands->ForeColor = System::Drawing::Color::Green;
         GlobalLogger::LogMessage("Information: Команда START успешно выполнена контроллером");
+        
+        // Восстанавливаем цвет через 3 секунды с помощью таймера
+        System::Windows::Forms::Timer^ colorTimer = gcnew System::Windows::Forms::Timer();
+        colorTimer->Interval = 3000;
+        colorTimer->Tick += gcnew EventHandler(this, &DataForm::RestoreLabelCommandsColor);
+        colorTimer->Start();
     } else {
-        // Ошибка выполнения команды
-        GlobalLogger::LogMessage("Error: Команда START не выполнена контроллером");
+        // Ошибка выполнения команды - детали уже обработаны в ProcessResponse
+        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+            "Error: Команда START не выполнена. Статус: 0x{0:X2} ({1})",
+            response.status, gcnew String(GetStatusName(response.status)))));
+        
+        // Дополнительная обработка специфичных ошибок для START
+        switch (response.status) {
+            case CmdStatus::EXECUTION_ERROR:
+                // Возможно, программа уже запущена или контроллер не готов
+                Label_Commands->Text = "? Невозможно запустить программу. Проверьте состояние контроллера";
+                Label_Commands->ForeColor = System::Drawing::Color::Orange;
+                break;
+                
+            case CmdStatus::TIMEOUT:
+                // Контроллер не успел выполнить запуск
+                Label_Commands->Text = "? Таймаут запуска программы";
+                Label_Commands->ForeColor = System::Drawing::Color::Orange;
+                break;
+                
+            default:
+                // Другие ошибки уже отображены в ProcessResponse
+                break;
+        }
     }
 }
 
@@ -1061,10 +1090,84 @@ void ProjectServerW::DataForm::SendStopCommand() {
     if (SendCommandAndWaitResponse(cmd, response)) {
         // Команда успешно выполнена на контроллере
         buttonSTARTstate_TRUE();
+        Label_Commands->Text = "? Программа остановлена";
+        Label_Commands->ForeColor = System::Drawing::Color::Green;
         GlobalLogger::LogMessage("Information: Команда STOP успешно выполнена контроллером");
+        
+        // Восстанавливаем цвет через 3 секунды с помощью таймера
+        System::Windows::Forms::Timer^ colorTimer = gcnew System::Windows::Forms::Timer();
+        colorTimer->Interval = 3000;
+        colorTimer->Tick += gcnew EventHandler(this, &DataForm::RestoreLabelCommandsColor);
+        colorTimer->Start();
     } else {
-        // Ошибка выполнения команды
-        GlobalLogger::LogMessage("Error: Команда STOP не выполнена контроллером");
+        // Ошибка выполнения команды - детали уже обработаны в ProcessResponse
+        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+            "Error: Команда STOP не выполнена. Статус: 0x{0:X2} ({1})",
+            response.status, gcnew String(GetStatusName(response.status)))));
+        
+        // Дополнительная обработка специфичных ошибок для STOP
+        switch (response.status) {
+            case CmdStatus::EXECUTION_ERROR:
+                // Возможно, программа уже остановлена или контроллер не готов
+                Label_Commands->Text = "? Невозможно остановить программу. Проверьте состояние контроллера";
+                Label_Commands->ForeColor = System::Drawing::Color::Orange;
+                break;
+                
+            case CmdStatus::TIMEOUT:
+                // Контроллер не успел выполнить остановку
+                Label_Commands->Text = "? Таймаут остановки программы";
+                Label_Commands->ForeColor = System::Drawing::Color::Orange;
+                break;
+                
+            default:
+                // Другие ошибки уже отображены в ProcessResponse
+                break;
+        }
+    }
+}
+
+// Метод для отправки команды RESET клиенту
+void ProjectServerW::DataForm::SendResetCommand() {
+    // Создаем команду RESET
+    Command cmd = CreateControlCommand(CmdProgControl::RESET);
+    CommandResponse response;
+    
+    // Отправляем команду и ждем ответ
+    if (SendCommandAndWaitResponse(cmd, response)) {
+        // Команда успешно выполнена на контроллере
+        Label_Commands->Text = "? Контроллер сброшен";
+        Label_Commands->ForeColor = System::Drawing::Color::Blue;
+        GlobalLogger::LogMessage("Information: Команда RESET успешно выполнена контроллером");
+        
+        // Восстанавливаем цвет через 3 секунды с помощью таймера
+        System::Windows::Forms::Timer^ colorTimer = gcnew System::Windows::Forms::Timer();
+        colorTimer->Interval = 3000;
+        colorTimer->Tick += gcnew EventHandler(this, &DataForm::RestoreLabelCommandsColor);
+        colorTimer->Start();
+    } else {
+        // Ошибка выполнения команды - детали уже обработаны в ProcessResponse
+        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+            "Error: Команда RESET не выполнена. Статус: 0x{0:X2} ({1})",
+            response.status, gcnew String(GetStatusName(response.status)))));
+        
+        // Дополнительная обработка специфичных ошибок для RESET
+        switch (response.status) {
+            case CmdStatus::EXECUTION_ERROR:
+                // Контроллер не может выполнить сброс
+                Label_Commands->Text = "? Невозможно выполнить сброс контроллера";
+                Label_Commands->ForeColor = System::Drawing::Color::Orange;
+                break;
+                
+            case CmdStatus::TIMEOUT:
+                // Контроллер не успел выполнить сброс
+                Label_Commands->Text = "? Таймаут сброса контроллера";
+                Label_Commands->ForeColor = System::Drawing::Color::Orange;
+                break;
+                
+            default:
+                // Другие ошибки уже отображены в ProcessResponse
+                break;
+        }
     }
 }
 
@@ -1150,6 +1253,7 @@ void ProjectServerW::DataForm::ProcessResponse(const CommandResponse& response) 
     try {
         // Получаем имя команды и статус
         const char* statusName = GetStatusName(response.status);
+        const char* statusDescription = GetStatusDescription(response.status);
         
         // Формируем сообщение о результате выполнения команды
         String^ message;
@@ -1193,23 +1297,114 @@ void ProjectServerW::DataForm::ProcessResponse(const CommandResponse& response) 
                 }
             }
             
+            // Отображаем успешный результат
+            Label_Commands->Text = message;
             GlobalLogger::LogMessage(ConvertToStdString(message));
             
         } else {
-            // Обработка ошибок
+            // ===== ОБРАБОТКА ОШИБОК =====
+            
+            // Формируем детальное сообщение об ошибке
             message = String::Format(
-                "? Ошибка выполнения команды Type=0x{0:X2}, Code=0x{1:X2}\nСтатус: {2}",
-                response.commandType, response.commandCode, gcnew String(statusName));
+                "? ОШИБКА выполнения команды\n\n"
+                "Команда:\n"
+                "  Тип: 0x{0:X2}\n"
+                "  Код: 0x{1:X2}\n\n"
+                "Статус ошибки:\n"
+                "  Код: 0x{2:X2} ({3})\n\n"
+                "Описание:\n"
+                "  {4}",
+                response.commandType, 
+                response.commandCode, 
+                response.status,
+                gcnew String(statusName),
+                gcnew String(statusDescription));
+            
+            // Добавляем специфичные для ошибки рекомендации
+            String^ recommendation = "";
+            switch (response.status) {
+                case CmdStatus::CRC_ERROR:
+                    recommendation = "\n\nРекомендация:\n"
+                                   "  • Проверьте качество соединения\n"
+                                   "  • Проверьте экранирование кабеля\n"
+                                   "  • Уменьшите скорость передачи данных";
+                    break;
+                    
+                case CmdStatus::INVALID_TYPE:
+                case CmdStatus::INVALID_CODE:
+                    recommendation = "\n\nРекомендация:\n"
+                                   "  • Обновите прошивку контроллера\n"
+                                   "  • Проверьте совместимость версий\n"
+                                   "  • Убедитесь, что команда поддерживается";
+                    break;
+                    
+                case CmdStatus::INVALID_LENGTH:
+                    recommendation = "\n\nРекомендация:\n"
+                                   "  • Проверьте параметры команды\n"
+                                   "  • Команда может требовать другой набор данных";
+                    break;
+                    
+                case CmdStatus::EXECUTION_ERROR:
+                    recommendation = "\n\nРекомендация:\n"
+                                   "  • Проверьте текущее состояние контроллера\n"
+                                   "  • Команда может быть недоступна в текущем режиме\n"
+                                   "  • Проверьте наличие необходимых условий для выполнения\n"
+                                   "  • Попробуйте выполнить команду позже";
+                    break;
+                    
+                case CmdStatus::TIMEOUT:
+                    recommendation = "\n\nРекомендация:\n"
+                                   "  • Команда требует длительного выполнения\n"
+                                   "  • Увеличьте таймаут ожидания\n"
+                                   "  • Проверьте, не занят ли контроллер другой операцией";
+                    break;
+                    
+                case CmdStatus::UNKNOWN_ERROR:
+                    recommendation = "\n\nРекомендация:\n"
+                                   "  • Перезагрузите контроллер\n"
+                                   "  • Проверьте журнал ошибок контроллера\n"
+                                   "  • Обратитесь в техническую поддержку";
+                    break;
+            }
+            
+            message += recommendation;
+            
+            // Отображаем сообщение об ошибке
+            Label_Commands->Text = "? " + gcnew String(statusDescription);
+            Label_Commands->ForeColor = System::Drawing::Color::Red;
             
             MessageBox::Show(message, "Ошибка выполнения команды", 
                            MessageBoxButtons::OK, MessageBoxIcon::Error);
             GlobalLogger::LogMessage(ConvertToStdString(message));
+            
+            // Восстанавливаем цвет текста через 3 секунды с помощью таймера
+            System::Windows::Forms::Timer^ colorTimer = gcnew System::Windows::Forms::Timer();
+            colorTimer->Interval = 3000;
+            colorTimer->Tick += gcnew EventHandler(this, &DataForm::RestoreLabelCommandsColor);
+            colorTimer->Start();
         }
 
     } catch (Exception^ ex) {
-        String^ errorMsg = "Exception in ProcessResponse: " + ex->Message;
-        MessageBox::Show(errorMsg);
+        String^ errorMsg = "Исключение в ProcessResponse: " + ex->Message;
+        MessageBox::Show(errorMsg, "Критическая ошибка", 
+                       MessageBoxButtons::OK, MessageBoxIcon::Error);
         GlobalLogger::LogMessage(ConvertToStdString(errorMsg));
+    }
+}
+
+// Восстановление цвета Label_Commands (вызывается таймером)
+void ProjectServerW::DataForm::RestoreLabelCommandsColor(System::Object^ sender, System::EventArgs^ e) {
+    try {
+        // Останавливаем таймер
+        System::Windows::Forms::Timer^ timer = safe_cast<System::Windows::Forms::Timer^>(sender);
+        timer->Stop();
+        timer->Tick -= gcnew EventHandler(this, &DataForm::RestoreLabelCommandsColor);
+        
+        // Восстанавливаем цвет
+        Label_Commands->ForeColor = System::Drawing::SystemColors::ControlText;
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error in RestoreLabelCommandsColor: " + ex->Message));
     }
 }
 
