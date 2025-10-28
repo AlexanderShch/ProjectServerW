@@ -327,7 +327,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 
 			if (DatCRC == dataCRC) {
 				// Отправляем зеркальную посылку клиенту
-				send(clientSocket, buffer, bytesReceived, 0);
+				// send(clientSocket, buffer, bytesReceived, 0);
 
 				// Найдём форму по идентификатору
 				DataForm^ form2 = DataForm::GetFormByGuid(guid);

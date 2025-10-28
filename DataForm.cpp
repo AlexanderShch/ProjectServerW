@@ -17,6 +17,7 @@ std::map<std::wstring, gcroot<DataForm^>> formData_Map; // Определение переменно
 #pragma pack(push, 1)
 typedef struct   // object data for Server type из STM32
 {
+    uint8_t DataType;           // Байт типа передаваемых данных (0х00 для телеметрии)
     uint16_t Time;				// Количество секунд с момента включения
     uint8_t SensorQuantity;		// Количество сенсоров
     uint8_t SensorType[SQ];		// Тип сенсора
