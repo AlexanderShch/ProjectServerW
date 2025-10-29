@@ -77,8 +77,8 @@ namespace ProjectServerW {
 				bool workBitDetected;            // Флаг для отслеживания активации бита "Work"
 				bool pendingExcelExport;		  // Флаг ожидания освобождения кнопки записи Excel
 				System::Windows::Forms::Timer^ exportTimer;	// Таймер для проверки освобождения кнопки
-				DateTime workBitZeroStartTime;   // время перехода бита Work в состояние ноль
-				bool workBitZeroTimerActive;     // флаг "запущен таймер отслеживания активности таймера бита Work в нуле"
+			DateTime workBitZeroStartTime;   // время перехода бита Work в состояние ноль
+			bool workBitZeroTimerActive;     // флаг "запущен таймер отслеживания активности таймера бита Work в нуле"
 		private: System::Windows::Forms::Label^ Label_Data;
 		private: System::Windows::Forms::Label^ LabelDefroster;
 		private: System::Windows::Forms::Label^ T_def_left;
@@ -91,6 +91,12 @@ namespace ProjectServerW {
 		private: System::Windows::Forms::Button^ buttonSTART;
 		private: System::Windows::Forms::Label^ labelSTOP;
 		private: System::Windows::Forms::Label^ labelSTART;
+		
+		// Элементы автозапуска по времени
+		private: System::Windows::Forms::CheckBox^ checkBoxAutoStart;
+		private: System::Windows::Forms::DateTimePicker^ dateTimePickerAutoStart;
+		private: System::Windows::Forms::Label^ labelAutoStart;
+		private: System::Windows::Forms::Timer^ timerAutoStart;
 
 		private: System::Windows::Forms::DataGridView^ dataGridView;
 
@@ -131,11 +137,11 @@ namespace ProjectServerW {
 				// Инициализируем путь сохранения из текстового поля
 				excelSavePath = textBoxExcelDirectory->Text;
 				// Имя файла будет сгенерировано позже, когда "Work" станет активным
-				excelFileName = nullptr;
-				workBitDetected = false;
-				workBitZeroTimerActive = false;
-				// Инициализация порта клиента
-				clientPort = 0;
+		excelFileName = nullptr;
+		workBitDetected = false;
+		workBitZeroTimerActive = false;
+		// Инициализация порта клиента
+		clientPort = 0;
 
 				// Загружаем настройки сразу после инициализации компонентов
 				LoadSettings();
@@ -218,6 +224,10 @@ namespace ProjectServerW {
 				this->labelSTART = (gcnew System::Windows::Forms::Label());
 				this->buttonSTOP = (gcnew System::Windows::Forms::Button());
 				this->buttonSTART = (gcnew System::Windows::Forms::Button());
+				this->checkBoxAutoStart = (gcnew System::Windows::Forms::CheckBox());
+				this->dateTimePickerAutoStart = (gcnew System::Windows::Forms::DateTimePicker());
+				this->labelAutoStart = (gcnew System::Windows::Forms::Label());
+				this->timerAutoStart = (gcnew System::Windows::Forms::Timer());
 				this->buttonBrowse = (gcnew System::Windows::Forms::Button());
 				this->textBoxExcelDirectory = (gcnew System::Windows::Forms::TextBox());
 				this->labelExcelDirectory = (gcnew System::Windows::Forms::Label());
@@ -392,6 +402,9 @@ namespace ProjectServerW {
 				this->tabPage2->Controls->Add(this->labelSTART);
 				this->tabPage2->Controls->Add(this->buttonSTOP);
 				this->tabPage2->Controls->Add(this->buttonSTART);
+				this->tabPage2->Controls->Add(this->checkBoxAutoStart);
+				this->tabPage2->Controls->Add(this->dateTimePickerAutoStart);
+				this->tabPage2->Controls->Add(this->labelAutoStart);
 				this->tabPage2->Controls->Add(this->buttonBrowse);
 				this->tabPage2->Controls->Add(this->textBoxExcelDirectory);
 				this->tabPage2->Controls->Add(this->labelExcelDirectory);
@@ -410,7 +423,7 @@ namespace ProjectServerW {
 				this->Label_Commands->Name = L"Label_Commands";
 				this->Label_Commands->Size = System::Drawing::Size(138, 20);
 				this->Label_Commands->TabIndex = 7;
-				this->Label_Commands->Text = L"Label_Commands";
+				this->Label_Commands->Text = L"Команда не отправлялась";
 				// 
 				// labelSTOP
 				// 
@@ -451,6 +464,42 @@ namespace ProjectServerW {
 				this->buttonSTART->Text = L"ПУСК";
 				this->buttonSTART->UseVisualStyleBackColor = true;
 				this->buttonSTART->Click += gcnew System::EventHandler(this, &DataForm::buttonSTART_Click);
+				// 
+				// labelAutoStart
+				// 
+				this->labelAutoStart->AutoSize = true;
+				this->labelAutoStart->Location = System::Drawing::Point(48, 185);
+				this->labelAutoStart->Name = L"labelAutoStart";
+				this->labelAutoStart->Size = System::Drawing::Size(150, 20);
+				this->labelAutoStart->TabIndex = 9;
+				this->labelAutoStart->Text = L"Автозапуск в:";
+				// 
+				// checkBoxAutoStart
+				// 
+				this->checkBoxAutoStart->AutoSize = true;
+				this->checkBoxAutoStart->Location = System::Drawing::Point(48, 215);
+				this->checkBoxAutoStart->Name = L"checkBoxAutoStart";
+				this->checkBoxAutoStart->Size = System::Drawing::Size(100, 24);
+				this->checkBoxAutoStart->TabIndex = 10;
+				this->checkBoxAutoStart->Text = L"Включен";
+				this->checkBoxAutoStart->UseVisualStyleBackColor = true;
+				this->checkBoxAutoStart->CheckedChanged += gcnew System::EventHandler(this, &DataForm::checkBoxAutoStart_CheckedChanged);
+				// 
+				// dateTimePickerAutoStart
+				// 
+				this->dateTimePickerAutoStart->Format = System::Windows::Forms::DateTimePickerFormat::Custom;
+				this->dateTimePickerAutoStart->CustomFormat = L"HH:mm";
+				this->dateTimePickerAutoStart->Location = System::Drawing::Point(160, 215);
+				this->dateTimePickerAutoStart->Name = L"dateTimePickerAutoStart";
+				this->dateTimePickerAutoStart->ShowUpDown = true;
+				this->dateTimePickerAutoStart->Size = System::Drawing::Size(100, 26);
+				this->dateTimePickerAutoStart->TabIndex = 11;
+				this->dateTimePickerAutoStart->Value = System::DateTime::Now;
+				// 
+				// timerAutoStart
+				// 
+				this->timerAutoStart->Interval = 30000; // Проверка каждые 30 секунд
+				this->timerAutoStart->Tick += gcnew System::EventHandler(this, &DataForm::timerAutoStart_Tick);	// Подписывает метод timerAutoStart_Tick на событие Tick таймера.
 				// 
 				// buttonBrowse
 				// 
@@ -579,10 +628,10 @@ namespace ProjectServerW {
 			static void CreateAndShowDataFormInThread(std::queue<std::wstring>& messageQueue,
 				std::mutex& mtx,
 				std::condition_variable& cv);
-			static void CloseForm(const std::wstring& guid);
-			static DataForm^ GetFormByGuid(const std::wstring& guid);
-			static std::wstring FindFormByClientIP(String^ clientIP); // найти форму по IP-адресу клиента
-			static void DelayedGarbageCollection(Object^ state);
+		static void CloseForm(const std::wstring& guid);
+		static DataForm^ GetFormByGuid(const std::wstring& guid);
+		static std::wstring FindFormByClientIP(String^ clientIP); // найти форму по IP-адресу клиента
+		static void DelayedGarbageCollection(Object^ state);
 			static void ParseBuffer(const char* buffer, size_t size);
 
 			void InitializeDataTable();
@@ -636,48 +685,8 @@ namespace ProjectServerW {
 			// Метод для инициализации наименований битов
 			static void InitializeBitFieldNames(gcroot<cli::array<cli::array<String^>^>^>& namesRef);
 
-			void TriggerExcelExport() {
-				// Проверка доступности кнопки Excel
-				if (buttonExcel->Enabled) {
-					// Автоматически запустить экспорт в Excel
-					buttonEXCEL_Click(nullptr, nullptr);
-				}
-				else {
-					// Кнопка недоступна, устанавливаем флаг ожидания и запускаем таймер
-					pendingExcelExport = true;
-
-					// Создаем таймер, если он еще не создан
-					if (exportTimer == nullptr) {
-						exportTimer = gcnew System::Windows::Forms::Timer();
-						exportTimer->Interval = 500; // Проверка каждые 500 мс
-						exportTimer->Tick += gcnew EventHandler(this, &DataForm::CheckExcelButtonStatus);
-					}
-
-					// Запускаем таймер
-					exportTimer->Start();
-
-					// Выводим сообщение для пользователя
-					Label_Data->Text = "Ожидание возможности записи в Excel...";
-				}
-			}
-
-			// Обработчик события таймера нажатия кнопки экспорта в Excel
-			void CheckExcelButtonStatus(Object^ sender, EventArgs^ e) {
-				// Проверяем, доступна ли кнопка
-				if (buttonExcel->Enabled && pendingExcelExport) {
-					// Останавливаем таймер
-					exportTimer->Stop();
-
-					// Сбрасываем флаг
-					pendingExcelExport = false;
-
-					// Запускаем экспорт
-					buttonEXCEL_Click(nullptr, nullptr);
-
-					// Обновляем метку
-					Label_Data->Text = "Данные записываются в Excel...";
-				}
-			}
+			void TriggerExcelExport();
+			void CheckExcelButtonStatus(Object^ sender, EventArgs^ e);
 		private: System::Void textBoxExcelDirectory_TextChanged(System::Object^ sender, System::EventArgs^ e) {
 		}
 	private: System::Void dataGridView_CellContentClick(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e) {
@@ -702,6 +711,15 @@ namespace ProjectServerW {
 		// Формируем команду "RESET" для отправки клиенту
 		SendResetCommand();
 	}
+	
+	// ====================================================================
+	// Обработчики автозапуска по времени (объявления)
+	// ====================================================================
+	
+	private: System::Void checkBoxAutoStart_CheckedChanged(System::Object^ sender, System::EventArgs^ e);
+	private: System::Void timerAutoStart_Tick(System::Object^ sender, System::EventArgs^ e);
+	private: System::Void RestoreAutoStartColor(System::Object^ sender, System::EventArgs^ e);
+	
 };  // Конец класса DataForm
 
 // Неуправляемый класс для хранения потоков (вне управляемого класса DataForm)

@@ -416,10 +416,10 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
 
     // Добавление строки в таблицу только во время работы дефростера
     // ВРЕМЕННО ОТКЛЮЧЕНО ДЛЯ ОТЛАДКИ - данные записываются всегда
-    //if (workBitDetected)
-    //{
+    if (workBitDetected)
+    {
         table->Rows->Add(row);
-    //}
+    }
 }
 
 
@@ -670,11 +670,13 @@ void ProjectServerW::DataForm::AddDataToExcel() {
                     System::IO::Directory::CreateDirectory(filePath);
                 }
 
-                // Обновляем переменную excelSavePath для будущих сохранений
-                excelSavePath = filePath;
+            // Обновляем переменную excelSavePath для будущих сохранений
+            excelSavePath = filePath;
 
-                // Обновляем текстовое поле, если оно существует
-                if (textBoxExcelDirectory != nullptr && !textBoxExcelDirectory->IsDisposed) {
+            // Обновляем текстовое поле, если оно существует и форма не закрыта
+            if (textBoxExcelDirectory != nullptr && !textBoxExcelDirectory->IsDisposed && 
+                !this->IsDisposed && this->IsHandleCreated) {
+                try {
                     if (textBoxExcelDirectory->InvokeRequired) {
                         textBoxExcelDirectory->BeginInvoke(gcnew System::Action<String^>(this, &DataForm::UpdateDirectoryTextBox), filePath);
                     }
@@ -682,8 +684,17 @@ void ProjectServerW::DataForm::AddDataToExcel() {
                         textBoxExcelDirectory->Text = filePath;
                     }
                 }
-                // Сохраняем в настройках
+                catch (...) {
+                    // Форма закрыта во время обновления - игнорируем
+                }
+            }
+            // Сохраняем в настройках
+            try {
                 DataForm::SaveSettings();
+            }
+            catch (...) {
+                // Игнорируем ошибки сохранения настроек при закрытии формы
+            }
             }
 
             // Добавляем разделитель в конец пути, если его нет
@@ -944,62 +955,32 @@ void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::ar
 ////******************** Обработка завершения формы ***************************************
 System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ sender, System::Windows::Forms::FormClosingEventArgs^ e) {
     try {
-        // Проверка, что объект событий инициализирован
-        if (exportCompletedEvent == nullptr) {
-            exportCompletedEvent = gcnew System::Threading::ManualResetEvent(false);
-        }
-        // Сбрасываем событие перед началом экспорта
-        exportCompletedEvent->Reset();
-        exportSuccessful = false;
-
         // Проверяем, есть ли данные в таблице
         if (dataTable != nullptr && dataTable->Rows->Count > 0) {
-            // Сначала отключаем обработчик события FormClosing, чтобы предотвратить повторный вызов
-            this->FormClosing -= gcnew System::Windows::Forms::FormClosingEventHandler(this, &DataForm::DataForm_FormClosing);
-            // Блокируем закрытие формы на время сохранения
-            e->Cancel = true;
-
             // Создаем имя файла, если оно еще не создано
             if (excelFileName == nullptr) {
                 DateTime now = DateTime::Now;
                 excelFileName = "EmergencyData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + "_Port" + clientPort.ToString() + ".xlsx";
             }
 
-            // Обновляем метку
-            if (Label_Data != nullptr) {
-                Label_Data->Text = "Сохранение данных в Excel...";
-                GlobalLogger::LogMessage("Сохранение данных в Excel... " + ConvertToStdString(excelFileName));
-                Label_Data->Refresh();
-            }
+            // Логируем начало сохранения
+            GlobalLogger::LogMessage("Сохранение данных в Excel (в фоновом режиме)... " + ConvertToStdString(excelFileName));
 
-            // Запускаем запись в Excel в отдельном потоке, текущий поток будет ожидать завершения записи
+            // Запускаем запись в Excel в отдельном потоке
+            // Форма закроется сразу, не дожидаясь завершения записи
             DataForm::TriggerExcelExport();
-
-            // Ожидаем завершения записи файла Excel с таймаутом
-            if (exportCompletedEvent->WaitOne(60*60*1000)) { // 60 минут выделено на запись файла
-                if (exportSuccessful) {
-                    //MessageBox::Show("Экспорт успешно завершен!");
-                    GlobalLogger::LogMessage("Information: Запись в EXCEL успешно завершена!");
-                }
-                else {
-                    //MessageBox::Show("Ошибка при экспорте данных");
-                    GlobalLogger::LogMessage("Error: Ошибка при записи данных в EXCEL");
-                }
-            }
-            else {
-                //MessageBox::Show("Превышено время ожидания экспорта");
-                GlobalLogger::LogMessage("Error: Превышено время ожидания записи в EXCEL");
-            }
-
-            // Закрываем форму
-            e->Cancel = false;
-
+            
+            // НЕ ЖДЁМ завершения записи - форма закрывается сразу
+            // Это позволяет клиенту переподключиться немедленно
+            GlobalLogger::LogMessage("Information: Форма закрывается, запись в Excel продолжается в фоновом режиме");
         }
+        
+        // Разрешаем закрытие формы немедленно
+        e->Cancel = false;
     }
     catch (Exception^ ex) {
-        //MessageBox::Show("Ошибка при попытке сохранения данных: " + ex->Message);
         GlobalLogger::LogMessage("Ошибка при попытке сохранения данных: " + ConvertToStdString(ex->Message));
-        // В случае ошибки разрешаем закрытие формы
+        // В случае ошибки также разрешаем закрытие формы
         e->Cancel = false;
     }
 }
@@ -1127,7 +1108,7 @@ void ProjectServerW::DataForm::SendStartCommand() {
     if (SendCommandAndWaitResponse(cmd, response)) {
         // Команда успешно выполнена на контроллере
         buttonSTOPstate_TRUE();
-        Label_Commands->Text = "? Программа запущена";
+        Label_Commands->Text = "[OK] Программа запущена";
         Label_Commands->ForeColor = System::Drawing::Color::Green;
         GlobalLogger::LogMessage("Information: Команда START успешно выполнена контроллером");
         
@@ -1146,13 +1127,13 @@ void ProjectServerW::DataForm::SendStartCommand() {
         switch (response.status) {
             case CmdStatus::EXECUTION_ERROR:
                 // Возможно, программа уже запущена или контроллер не готов
-                Label_Commands->Text = "? Невозможно запустить программу. Проверьте состояние контроллера";
+                Label_Commands->Text = "[!] Невозможно запустить программу. Проверьте состояние контроллера";
                 Label_Commands->ForeColor = System::Drawing::Color::Orange;
                 break;
                 
             case CmdStatus::TIMEOUT:
                 // Контроллер не успел выполнить запуск
-                Label_Commands->Text = "? Таймаут запуска программы";
+                Label_Commands->Text = "[!] Таймаут запуска программы";
                 Label_Commands->ForeColor = System::Drawing::Color::Orange;
                 break;
                 
@@ -1173,7 +1154,7 @@ void ProjectServerW::DataForm::SendStopCommand() {
     if (SendCommandAndWaitResponse(cmd, response)) {
         // Команда успешно выполнена на контроллере
         buttonSTARTstate_TRUE();
-        Label_Commands->Text = "? Программа остановлена";
+        Label_Commands->Text = "[OK] Программа остановлена";
         Label_Commands->ForeColor = System::Drawing::Color::Green;
         GlobalLogger::LogMessage("Information: Команда STOP успешно выполнена контроллером");
         
@@ -1192,13 +1173,13 @@ void ProjectServerW::DataForm::SendStopCommand() {
         switch (response.status) {
             case CmdStatus::EXECUTION_ERROR:
                 // Возможно, программа уже остановлена или контроллер не готов
-                Label_Commands->Text = "? Невозможно остановить программу. Проверьте состояние контроллера";
+                Label_Commands->Text = "[!] Невозможно остановить программу. Проверьте состояние контроллера";
                 Label_Commands->ForeColor = System::Drawing::Color::Orange;
                 break;
                 
             case CmdStatus::TIMEOUT:
                 // Контроллер не успел выполнить остановку
-                Label_Commands->Text = "? Таймаут остановки программы";
+                Label_Commands->Text = "[!] Таймаут остановки программы";
                 Label_Commands->ForeColor = System::Drawing::Color::Orange;
                 break;
                 
@@ -1218,7 +1199,7 @@ void ProjectServerW::DataForm::SendResetCommand() {
     // Отправляем команду и ждем ответ
     if (SendCommandAndWaitResponse(cmd, response)) {
         // Команда успешно выполнена на контроллере
-        Label_Commands->Text = "? Контроллер сброшен";
+        Label_Commands->Text = "[OK] Контроллер сброшен";
         Label_Commands->ForeColor = System::Drawing::Color::Blue;
         GlobalLogger::LogMessage("Information: Команда RESET успешно выполнена контроллером");
         
@@ -1237,13 +1218,13 @@ void ProjectServerW::DataForm::SendResetCommand() {
         switch (response.status) {
             case CmdStatus::EXECUTION_ERROR:
                 // Контроллер не может выполнить сброс
-                Label_Commands->Text = "? Невозможно выполнить сброс контроллера";
+                Label_Commands->Text = "[!] Невозможно выполнить сброс контроллера";
                 Label_Commands->ForeColor = System::Drawing::Color::Orange;
                 break;
                 
             case CmdStatus::TIMEOUT:
                 // Контроллер не успел выполнить сброс
-                Label_Commands->Text = "? Таймаут сброса контроллера";
+                Label_Commands->Text = "[!] Таймаут сброса контроллера";
                 Label_Commands->ForeColor = System::Drawing::Color::Orange;
                 break;
                 
@@ -1343,7 +1324,7 @@ void ProjectServerW::DataForm::ProcessResponse(const CommandResponse& response) 
         
         if (response.status == CmdStatus::OK) {
             message = String::Format(
-                "? Команда Type=0x{0:X2}, Code=0x{1:X2} успешно выполнена",
+                "[OK] Команда Type=0x{0:X2}, Code=0x{1:X2} успешно выполнена",
                 response.commandType, response.commandCode);
 
             // Если есть данные в ответе (для команд REQUEST)
@@ -1364,7 +1345,7 @@ void ProjectServerW::DataForm::ProcessResponse(const CommandResponse& response) 
                             // Получаем версию (строка)
                             String^ version = gcnew String(
                                 reinterpret_cast<const char*>(response.data), 
-                                0, response.dataLength, System::Text::Encoding::ASCII);
+                                0, static_cast<int>(response.dataLength), System::Text::Encoding::ASCII);
                             message += "\nВерсия прошивки: " + version;
                             break;
                         }
@@ -1389,7 +1370,7 @@ void ProjectServerW::DataForm::ProcessResponse(const CommandResponse& response) 
             
             // Формируем детальное сообщение об ошибке
             message = String::Format(
-                "? ОШИБКА выполнения команды\n\n"
+                "[ОШИБКА] ОШИБКА выполнения команды\n\n"
                 "Команда:\n"
                 "  Тип: 0x{0:X2}\n"
                 "  Код: 0x{1:X2}\n\n"
@@ -1453,7 +1434,7 @@ void ProjectServerW::DataForm::ProcessResponse(const CommandResponse& response) 
             message += recommendation;
             
             // Отображаем сообщение об ошибке
-            Label_Commands->Text = "? " + gcnew String(statusDescription);
+            Label_Commands->Text = "[ОШИБКА] " + gcnew String(statusDescription);
             Label_Commands->ForeColor = System::Drawing::Color::Red;
             
             MessageBox::Show(message, "Ошибка выполнения команды", 
@@ -1591,5 +1572,146 @@ void ProjectServerW::DataForm::OnDelayedExcelTimerTick(Object^ sender, EventArgs
         
         // Выполняем запись в Excel
         this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));
+    }
+}
+
+// ????????????????????????????????????????????????????????????????????????????
+// Реализация методов записи в Excel (отложенный запуск)
+// ????????????????????????????????????????????????????????????????????????????
+
+// Триггер автоматического экспорта в Excel
+void ProjectServerW::DataForm::TriggerExcelExport() {
+    // Проверка доступности кнопки Excel
+    if (buttonExcel->Enabled) {
+        // Автоматически запустить экспорт в Excel
+        buttonEXCEL_Click(nullptr, nullptr);
+    }
+    else {
+        // Кнопка недоступна, устанавливаем флаг ожидания и запускаем таймер
+        pendingExcelExport = true;
+
+        // Создаем таймер, если он еще не создан
+        if (exportTimer == nullptr) {
+            exportTimer = gcnew System::Windows::Forms::Timer();
+            exportTimer->Interval = 500; // Проверка каждые 500 мс
+            exportTimer->Tick += gcnew EventHandler(this, &DataForm::CheckExcelButtonStatus);
+        }
+
+        // Запускаем таймер
+        exportTimer->Start();
+
+        // Выводим сообщение для пользователя
+        Label_Data->Text = "Ожидание возможности записи в Excel...";
+    }
+}
+
+// Обработчик события таймера проверки доступности кнопки экспорта в Excel
+void ProjectServerW::DataForm::CheckExcelButtonStatus(Object^ sender, EventArgs^ e) {
+    // Проверяем, доступна ли кнопка
+    if (buttonExcel->Enabled && pendingExcelExport) {
+        // Останавливаем таймер
+        exportTimer->Stop();
+
+        // Сбрасываем флаг
+        pendingExcelExport = false;
+
+        // Запускаем экспорт
+        buttonEXCEL_Click(nullptr, nullptr);
+
+        // Обновляем метку
+        Label_Data->Text = "Данные записываются в Excel...";
+    }
+}
+
+// ????????????????????????????????????????????????????????????????????????????
+// Реализация методов автозапуска по времени
+// ????????????????????????????????????????????????????????????????????????????
+
+// Обработчик изменения состояния чекбокса автозапуска
+System::Void ProjectServerW::DataForm::checkBoxAutoStart_CheckedChanged(System::Object^ sender, System::EventArgs^ e) {
+    // Включение/выключение автозапуска
+    if (checkBoxAutoStart->Checked) {
+        // Включаем таймер
+        timerAutoStart->Start();
+        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+            "Information: Автозапуск включен на {0}",
+            dateTimePickerAutoStart->Value.ToString("HH:mm"))));
+        
+        // Визуальная индикация
+        labelAutoStart->ForeColor = System::Drawing::Color::Green;
+        dateTimePickerAutoStart->Enabled = true;
+    }
+    else {
+        // Выключаем таймер
+        timerAutoStart->Stop();
+        GlobalLogger::LogMessage("Information: Автозапуск отключен");
+        
+        // Визуальная индикация
+        labelAutoStart->ForeColor = System::Drawing::SystemColors::ControlText;
+    }
+}
+
+// Обработчик тика таймера автозапуска
+System::Void ProjectServerW::DataForm::timerAutoStart_Tick(System::Object^ sender, System::EventArgs^ e) {
+    // Проверка времени для автозапуска
+    if (!checkBoxAutoStart->Checked) {
+        return; // Если автозапуск выключен, ничего не делаем
+    }
+    
+    DateTime now = DateTime::Now;
+    DateTime targetTime = dateTimePickerAutoStart->Value;
+    
+    // Сравниваем часы и минуты
+    if (now.Hour == targetTime.Hour && now.Minute == targetTime.Minute) {
+        // Время совпало!
+        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+            "Information: Автозапуск сработал в {0} (установлено: {1})",
+            now.ToString("HH:mm:ss"),
+            targetTime.ToString("HH:mm"))));
+        
+        // Проверяем, что кнопка START доступна (программа не запущена)
+        if (buttonSTART->Enabled) {
+            // Визуальная индикация
+            labelAutoStart->ForeColor = System::Drawing::Color::Blue;
+            Label_Commands->Text = "[АВТОЗАПУСК] Автоматический запуск программы...";
+            Label_Commands->ForeColor = System::Drawing::Color::Blue;
+            
+            // Отправляем команду START
+            SendStartCommand();
+            
+            // Отключаем автозапуск после выполнения
+            checkBoxAutoStart->Checked = false;
+            
+            // Восстанавливаем цвет через 3 секунды
+            System::Windows::Forms::Timer^ colorTimer = gcnew System::Windows::Forms::Timer();
+            colorTimer->Interval = 3000;
+            colorTimer->Tick += gcnew EventHandler(this, &DataForm::RestoreAutoStartColor);
+            colorTimer->Start();
+        }
+        else {
+            // Программа уже запущена
+            GlobalLogger::LogMessage("Warning: Автозапуск не выполнен - программа уже запущена");
+            Label_Commands->Text = "[!] Автозапуск пропущен - программа уже работает";
+            Label_Commands->ForeColor = System::Drawing::Color::Orange;
+            
+            // Отключаем автозапуск
+            checkBoxAutoStart->Checked = false;
+        }
+    }
+}
+
+// Обработчик восстановления цвета надписи автозапуска
+System::Void ProjectServerW::DataForm::RestoreAutoStartColor(System::Object^ sender, System::EventArgs^ e) {
+    try {
+        // Останавливаем таймер
+        System::Windows::Forms::Timer^ timer = safe_cast<System::Windows::Forms::Timer^>(sender);
+        timer->Stop();
+        timer->Tick -= gcnew EventHandler(this, &DataForm::RestoreAutoStartColor);
+        
+        // Восстанавливаем цвет
+        labelAutoStart->ForeColor = System::Drawing::SystemColors::ControlText;
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error in RestoreAutoStartColor: " + ex->Message));
     }
 }
