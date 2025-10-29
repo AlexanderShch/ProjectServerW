@@ -415,10 +415,11 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     }
 
     // Добавление строки в таблицу только во время работы дефростера
-    if (workBitDetected)
-    {
+    // ВРЕМЕННО ОТКЛЮЧЕНО ДЛЯ ОТЛАДКИ - данные записываются всегда
+    //if (workBitDetected)
+    //{
         table->Rows->Add(row);
-    }
+    //}
 }
 
 
@@ -429,6 +430,10 @@ void ProjectServerW::DataForm::AddDataToExcel() {
     excel = gcnew ExcelHelper();
 
     try {
+        // Замеряем время выполнения для мониторинга производительности
+        DateTime startTime = DateTime::Now;
+        GlobalLogger::LogMessage("Information: Начало записи в Excel...");
+
         // DataTable не является потокобезопасной структурой, в Excel будем перегонять копию
         System::Data::DataTable^ copiedTable = dataTable->Copy();
         // Последняя строка может быть не заполнена полностью, её удалим
@@ -436,81 +441,135 @@ void ProjectServerW::DataForm::AddDataToExcel() {
             copiedTable->Rows->RemoveAt(copiedTable->Rows->Count - 1);
         }
 
+        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+            "Information: Количество строк для записи: {0}, столбцов: {1}", 
+            copiedTable->Rows->Count, copiedTable->Columns->Count)));
+
         if (excel->CreateNewWorkbook()) {
             Microsoft::Office::Interop::Excel::Worksheet^ ws = excel->GetWorksheet();
 
-            // Заголовки
-            ws->Cells[1, 1] = "RealTime";
-            ws->Cells[1, 2] = "Time";
-            ws->Cells[1, 3] = "SQ";
+            // ОПТИМИЗАЦИЯ: отключаем обновление экрана и автоматические вычисления
+            Microsoft::Office::Interop::Excel::Application^ excelApp = safe_cast<Microsoft::Office::Interop::Excel::Application^>(ws->Application);
+            
+            try {
+                excelApp->ScreenUpdating = false;
+                excelApp->Calculation = Microsoft::Office::Interop::Excel::XlCalculation::xlCalculationManual;
+                excelApp->EnableEvents = false;
+                GlobalLogger::LogMessage("Information: Excel оптимизирован для быстрой записи");
+
+            // Заголовки - ОПТИМИЗИРОВАННАЯ ВЕРСИЯ: записываем все заголовки сразу через массив
+            cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();
+            
+            // Определяем количество столбцов
+            int colCount = 6 + 4 * (SQ - 1); // базовые столбцы
+            if (bitNames[0] != nullptr) colCount += 16;
+            if (bitNames[1] != nullptr) colCount += 16;
+
+            // Создаем одномерный массив для заголовков
+            cli::array<System::Object^>^ headerArray = gcnew cli::array<System::Object^>(colCount);
+            
+            int col = 0;
+            headerArray[col++] = "RealTime";
+            headerArray[col++] = "Time";
+            headerArray[col++] = "SQ";
+            
             for (uint8_t i = 0; i < (SQ - 1); i++)
             {
-                ws->Cells[1, 4 + 4*i] = "Typ" + i;
-                ws->Cells[1, 5 + 4*i] = "Act" + i;
+                headerArray[col++] = "Typ" + i;
+                headerArray[col++] = "Act" + i;
                 // Добавляем имя датчика в заголовок T-столбца, если оно задано
                 if (sensorNames != nullptr && i < sensorNames->Length && sensorNames[i] != nullptr && sensorNames[i]->Length > 0) {
-                    ws->Cells[1, 6 + 4 * i] = "T" + i + " " + sensorNames[i];
-                    ws->Cells[1, 7 + 4 * i] = "H" + i + " " + sensorNames[i];
+                    headerArray[col++] = "T" + i + " " + sensorNames[i];
+                    headerArray[col++] = "H" + i + " " + sensorNames[i];
                 }
                 else {
-                    ws->Cells[1, 6 + 4 * i] = "T" + i;
-                    ws->Cells[1, 7 + 4 * i] = "H" + i;
+                    headerArray[col++] = "T" + i;
+                    headerArray[col++] = "H" + i;
                 }
             }
+            
             // Обработка сигналов с устройства ввода-вывода
-            ws->Cells[1, 4 + 4 * (SQ - 1)] = "Typ" + (SQ - 1);
-            ws->Cells[1, 5 + 4 * (SQ - 1)] = "Act" + (SQ - 1);
-            uint8_t ColomnNumber = 6 + 4 * (SQ - 1);
+            headerArray[col++] = "Typ" + (SQ - 1);
+            headerArray[col++] = "Act" + (SQ - 1);
 
-            cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();
             // Работа с массивом имен сигналов состояния дефростера
             if (bitNames[0] != nullptr) {
                 for (uint8_t i = 0; i < 16; i++)
                 {
-                    ws->Cells[1, ColomnNumber++] = bitNames[0][i];
+                    headerArray[col++] = bitNames[0][i];
                 }
             }
             // Работа с массивом имен сигналов управления дефростером
             if (bitNames[1] != nullptr) {
                 for (uint8_t i = 0; i < 16; i++)
                 {
-                    ws->Cells[1, ColomnNumber++] = bitNames[1][i];
+                    headerArray[col++] = bitNames[1][i];
                 }
             }
 
-            // Данные
-            int row = 2;
-            for each (DataRow ^ dr in copiedTable->Rows)
-            {
-                ws->Cells[row, 1] = dr["RealTime"]->ToString();
-                ws->Cells[row, 2] = Convert::ToInt32(dr["Time"]);
-                ws->Cells[row, 3] = Convert::ToUInt16(dr["SQ"]);
-                for (uint8_t i = 0; i < (SQ - 1); i++)
+            // КЛЮЧЕВАЯ ОПТИМИЗАЦИЯ: записываем весь ряд заголовков одной операцией
+            Microsoft::Office::Interop::Excel::Range^ headerRange = ws->Range[ws->Cells[1, 1], ws->Cells[1, colCount]];
+            headerRange->Value2 = headerArray;
+            Marshal::ReleaseComObject(headerRange);
+
+            // Данные - ОПТИМИЗИРОВАННАЯ ВЕРСИЯ: записываем все данные сразу через массив
+            int rowCount = copiedTable->Rows->Count;
+            if (rowCount > 0) {
+                // Определяем количество столбцов
+                int colCount = 6 + 4 * (SQ - 1); // базовые столбцы
+                if (bitNames[0] != nullptr) colCount += 16;
+                if (bitNames[1] != nullptr) colCount += 16;
+
+                // Создаем двумерный массив для всех данных
+                cli::array<System::Object^, 2>^ dataArray = gcnew cli::array<System::Object^, 2>(rowCount, colCount);
+
+                // Заполняем массив данными из таблицы
+                int arrayRow = 0;
+                for each (DataRow ^ dr in copiedTable->Rows)
                 {
-                    ws->Cells[row, 4 + 4*i] = Convert::ToUInt16(dr["Typ" + i]);
-                    ws->Cells[row, 5 + 4*i] = Convert::ToUInt16(dr["Act" + i]);
-                    ws->Cells[row, 6 + 4*i] = dr["T" + i];
-                    ws->Cells[row, 7 + 4*i] = dr["H" + i];
+                    int col = 0;
+                    dataArray[arrayRow, col++] = dr["RealTime"]->ToString();
+                    dataArray[arrayRow, col++] = Convert::ToInt32(dr["Time"]);
+                    dataArray[arrayRow, col++] = Convert::ToUInt16(dr["SQ"]);
+                    
+                    for (uint8_t i = 0; i < (SQ - 1); i++)
+                    {
+                        dataArray[arrayRow, col++] = Convert::ToUInt16(dr["Typ" + i]);
+                        dataArray[arrayRow, col++] = Convert::ToUInt16(dr["Act" + i]);
+                        dataArray[arrayRow, col++] = dr["T" + i];
+                        dataArray[arrayRow, col++] = dr["H" + i];
+                    }
+
+                    // Работа с массивом имен сигналов состояния дефростера
+                    if (bitNames[0] != nullptr) {
+                        for (uint8_t i = 0; i < 16; i++)
+                        {
+                            dataArray[arrayRow, col++] = Convert::ToUInt16(dr[bitNames[0][i]]);
+                        }
+                    }
+                    // Работа с массивом имен сигналов управления дефростером
+                    if (bitNames[1] != nullptr) {
+                        for (uint8_t i = 0; i < 16; i++)
+                        {
+                            dataArray[arrayRow, col++] = Convert::ToUInt16(dr[bitNames[1][i]]);
+                        }
+                    }
+
+                    arrayRow++;
                 }
 
-                ColomnNumber = 6 + 4 * (SQ - 1);
-                // Работа с массивом имен сигналов состояния дефростера
-                if (bitNames[0] != nullptr) {
-                    for (uint8_t i = 0; i < 16; i++)
-                    {
-                        ws->Cells[row, ColomnNumber++] = Convert::ToUInt16(dr[bitNames[0][i]]);
-                    }
-                }
-                // Работа с массивом имен сигналов управления дефростером
-                if (bitNames[1] != nullptr) {
-                    for (uint8_t i = 0; i < 16; i++)
-                    {
-                        ws->Cells[row, ColomnNumber++] = Convert::ToUInt16(dr[bitNames[1][i]]);
-                    }
-                }
+                // КЛЮЧЕВАЯ ОПТИМИЗАЦИЯ: записываем весь массив одной операцией
+                Microsoft::Office::Interop::Excel::Range^ startCell = safe_cast<Microsoft::Office::Interop::Excel::Range^>(ws->Cells[2, 1]);
+                Microsoft::Office::Interop::Excel::Range^ endCell = safe_cast<Microsoft::Office::Interop::Excel::Range^>(ws->Cells[rowCount + 1, colCount]);
+                Microsoft::Office::Interop::Excel::Range^ dataRange = ws->Range[startCell, endCell];
+                dataRange->Value2 = dataArray;
 
-                row++;
+                // Освобождаем временные объекты
+                Marshal::ReleaseComObject(startCell);
+                Marshal::ReleaseComObject(endCell);
+                Marshal::ReleaseComObject(dataRange);
             }
+            int row = rowCount + 2; // Для дальнейшего использования в графике
             // Добавление листа с графиком температур
             try {
                 int lastRow = row - 1;
@@ -580,6 +639,23 @@ void ProjectServerW::DataForm::AddDataToExcel() {
                 // Пропускаем создание графика при ошибке, чтобы не сорвать сохранение файла
             }
 
+            } // конец try блока для работы с Excel
+            finally {
+                // ОПТИМИЗАЦИЯ: ВСЕГДА восстанавливаем настройки Excel перед сохранением
+                try {
+                    if (excelApp != nullptr) {
+                        excelApp->Calculation = Microsoft::Office::Interop::Excel::XlCalculation::xlCalculationAutomatic;
+                        excelApp->ScreenUpdating = true;
+                        excelApp->EnableEvents = true;
+                        Marshal::ReleaseComObject(excelApp);
+                        GlobalLogger::LogMessage("Information: Настройки Excel восстановлены");
+                    }
+                }
+                catch (...) {
+                    GlobalLogger::LogMessage("Warning: Ошибка при восстановлении настроек Excel");
+                }
+            }
+
             // Сохранение файла
             // Формируем полный путь к файлу
             String^ filePath = excelSavePath;
@@ -639,7 +715,13 @@ void ProjectServerW::DataForm::AddDataToExcel() {
 
             // Сохранение по выбранному пути
             excel->SaveAs(filePath);
-            GlobalLogger::LogMessage(ConvertToStdString("Information: EXCEL save to " + excelFileName));
+            
+            // Вычисляем время выполнения
+            DateTime endTime = DateTime::Now;
+            TimeSpan elapsed = endTime.Subtract(startTime);
+            GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+                "Information: Файл Excel успешно сохранен: {0}\nВремя записи: {1} секунд ({2} строк)", 
+                excelFileName, elapsed.TotalSeconds.ToString("F2"), copiedTable->Rows->Count)));
 
             // Освободим память от copiedTable
             delete copiedTable;
