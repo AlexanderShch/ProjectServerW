@@ -345,6 +345,21 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         // Проверяем текущее состояние бита "Work"
         bool currentWorkBitState = (bitField & (1 << workBitIndex)) != 0;
 
+        // ===== УСТАНОВКА НАЧАЛЬНОГО СОСТОЯНИЯ КНОПОК ПРИ ПЕРВОМ ПРИЁМЕ ДАННЫХ =====
+        if (!firstDataReceived) {
+            // Это первый пакет данных - устанавливаем начальное состояние кнопок
+            if (currentWorkBitState) {
+                // Бит WORK активен - работа уже идёт
+                buttonSTOPstate_TRUE();
+                GlobalLogger::LogMessage("Information: Первый пакет данных - бит WORK активен, кнопка STOP активна");
+            } else {
+                // Бит WORK не активен - можно запустить
+                buttonSTARTstate_TRUE();
+                GlobalLogger::LogMessage("Information: Первый пакет данных - бит WORK не активен, кнопка START активна");
+            }
+            firstDataReceived = true;
+        }
+
         // Если бит "Work" переходит из 0 в 1 (дефростер is ON)
         if (!workBitDetected && currentWorkBitState) {
             // Сохраняем время начала сбора данных
@@ -841,17 +856,26 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
     pin_ptr<Byte> pinnedBuffer = &buffer[0];
     char* rawBuffer = reinterpret_cast<char*>(pinnedBuffer);
 
-    // Вызываем стандартный метод добавления данных
-    AddDataToTable(rawBuffer, size, dataTable);
-
-    // Автоматически обновляем форму после добавления данных
-    if (dataGridView->RowCount > 0) {
-        // Прокрутка к последней строке
-        dataGridView->FirstDisplayedScrollingRowIndex = dataGridView->RowCount - 1;
+    // ===== ОПТИМИЗАЦИЯ ПРОИЗВОДИТЕЛЬНОСТИ =====
+    // Приостанавливаем обновление DataGridView для ускорения
+    dataGridView->SuspendLayout();
+    
+    try {
+        // Вызываем стандартный метод добавления данных
+        AddDataToTable(rawBuffer, size, dataTable);
+    }
+    finally {
+        // Возобновляем обновление DataGridView
+        dataGridView->ResumeLayout(false);
     }
 
-    // Обновляем UI (это безопасно, т.к. мы уже в потоке формы)
-    this->Refresh();
+    // УБРАНО: Автоматическая прокрутка к последней строке
+    // Причина: мешает пользователю просматривать данные в середине таблицы
+    // Пользователь может самостоятельно прокрутить к последней строке при необходимости
+    
+    // УБРАНО: this->Refresh() - полное обновление формы
+    // Причина: DataGridView обновляется автоматически при изменении DataSource
+    // Полное обновление всей формы замедляет работу
 }
 
 /*

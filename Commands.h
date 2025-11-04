@@ -4,10 +4,17 @@
 
 // Определение типов команд
 struct CmdType {
+    static const uint8_t TELEMETRY = 0x00;         // Подтверждение приёма телеметрии
     static const uint8_t PROG_CONTROL = 0x01;      // Команды управления программой (СТАРТ, СТОП и т.д.)
     static const uint8_t CONFIGURATION = 0x02;     // Команды конфигурации
     static const uint8_t REQUEST = 0x03;           // Команды запроса данных
     static const uint8_t DEVICE_CONTROL = 0x04;    // Команды управления устройствами
+};
+
+// Коды команд телеметрии (тип TELEMETRY)
+struct CmdTelemetry {
+    static const uint8_t DATA_OK = 0x01;       // Подтверждение приёма телеметрии без ошибок
+    static const uint8_t DATA_FALSE = 0x02;    // Телеметрия принята с ошибкой CRC
 };
 
 // Коды команд управления (тип PROG_CONTROL)
@@ -59,6 +66,15 @@ size_t BuildCommandBuffer(const Command& cmd, uint8_t* buffer, size_t bufferSize
 const char* GetCommandName(const Command& cmd);
 
 // Вспомогательные функции для создания команд
+
+// Создать команду подтверждения телеметрии (без параметров)
+inline Command CreateTelemetryAckCommand(uint8_t commandCode) {
+    Command cmd;
+    cmd.commandType = CmdType::TELEMETRY;
+    cmd.commandCode = commandCode;
+    cmd.dataLength = 0;
+    return cmd;
+}
 
 // Создать команду управления без параметров
 inline Command CreateControlCommand(uint8_t commandCode) {

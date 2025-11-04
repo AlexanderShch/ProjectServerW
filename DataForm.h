@@ -74,11 +74,12 @@ namespace ProjectServerW {
 				System::String^ excelFileName;   // Для хранения имени файла, связанного с битом "Work"
 				DateTime dataCollectionStartTime; // Время начала сбора данных
 				DateTime dataCollectionEndTime;   // Время окончания сбора данных
-				bool workBitDetected;            // Флаг для отслеживания активации бита "Work"
-				bool pendingExcelExport;		  // Флаг ожидания освобождения кнопки записи Excel
-				System::Windows::Forms::Timer^ exportTimer;	// Таймер для проверки освобождения кнопки
-			DateTime workBitZeroStartTime;   // время перехода бита Work в состояние ноль
-			bool workBitZeroTimerActive;     // флаг "запущен таймер отслеживания активности таймера бита Work в нуле"
+			bool workBitDetected;            // Флаг для отслеживания активации бита "Work"
+			bool pendingExcelExport;		  // Флаг ожидания освобождения кнопки записи Excel
+			System::Windows::Forms::Timer^ exportTimer;	// Таймер для проверки освобождения кнопки
+		DateTime workBitZeroStartTime;   // время перехода бита Work в состояние ноль
+		bool workBitZeroTimerActive;     // флаг "запущен таймер отслеживания активности таймера бита Work в нуле"
+		bool firstDataReceived;          // флаг "получен первый пакет данных" (для установки начального состояния кнопок)
 		private: System::Windows::Forms::Label^ Label_Data;
 		private: System::Windows::Forms::Label^ LabelDefroster;
 		private: System::Windows::Forms::Label^ T_def_left;
@@ -134,19 +135,51 @@ namespace ProjectServerW {
 				// Инициализация объекта для синхронизации
 				exportCompletedEvent = gcnew System::Threading::ManualResetEvent(false);
 
-				// Инициализируем путь сохранения из текстового поля
-				excelSavePath = textBoxExcelDirectory->Text;
-				// Имя файла будет сгенерировано позже, когда "Work" станет активным
-		excelFileName = nullptr;
-		workBitDetected = false;
-		workBitZeroTimerActive = false;
-		// Инициализация порта клиента
-		clientPort = 0;
+			// Инициализируем путь сохранения из текстового поля
+			excelSavePath = textBoxExcelDirectory->Text;
+			// Имя файла будет сгенерировано позже, когда "Work" станет активным
+	excelFileName = nullptr;
+	workBitDetected = false;
+	workBitZeroTimerActive = false;
+	firstDataReceived = false;      // Флаг первого приёма данных
+	// Инициализация порта клиента
+	clientPort = 0;
 
-				// Загружаем настройки сразу после инициализации компонентов
-				LoadSettings();
+			// Загружаем настройки сразу после инициализации компонентов
+			LoadSettings();
 
+			// Состояние кнопок START/STOP будет установлено при получении первого пакета данных
+
+		// ===== ОПТИМИЗАЦИЯ ПРОИЗВОДИТЕЛЬНОСТИ DataGridView =====
+		// Отключаем автоматический пересчет размеров - это ОЧЕНЬ медленно при большом количестве строк
+		dataGridView->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::None;
+		dataGridView->AutoSizeRowsMode = System::Windows::Forms::DataGridViewAutoSizeRowsMode::None;
+		
+		// Устанавливаем ширину столбцов по умолчанию
+		// Пользователь сможет изменить вручную, но не будет автоматического пересчета
+		dataGridView->DefaultCellStyle->WrapMode = System::Windows::Forms::DataGridViewTriState::False;
+		for each (System::Windows::Forms::DataGridViewColumn^ column in dataGridView->Columns) {
+			if (column->Name == "RealTime") {
+				column->Width = 60;  // Ширина для столбца времени (HH:mm:ss)
+			} else {
+				column->Width = 40;  // Ширина для остальных столбцов
 			}
+		}
+		
+		// Отключаем визуальные стили для увеличения скорости
+		dataGridView->EnableHeadersVisualStyles = false;
+		
+		// Включаем двойную буферизацию через рефлексию (DoubleBuffered - защищённое свойство)
+		System::Reflection::PropertyInfo^ pi = dataGridView->GetType()->GetProperty("DoubleBuffered",
+			System::Reflection::BindingFlags::Instance | System::Reflection::BindingFlags::NonPublic);
+		if (pi != nullptr) {
+			pi->SetValue(dataGridView, true, nullptr);
+		}
+		
+		// Устанавливаем виртуальный режим для больших таблиц (опционально)
+		// dataGridView->VirtualMode = true;
+
+		}
 
 		protected:
 			/// <summary>
@@ -386,9 +419,9 @@ namespace ProjectServerW {
 				this->dataGridView->Name = L"dataGridView";
 				this->dataGridView->RightToLeft = System::Windows::Forms::RightToLeft::No;
 				this->dataGridView->RowHeadersWidthSizeMode = System::Windows::Forms::DataGridViewRowHeadersWidthSizeMode::AutoSizeToDisplayedHeaders;
-				this->dataGridView->RowTemplate->Height = 28;
-				this->dataGridView->RowTemplate->Resizable = System::Windows::Forms::DataGridViewTriState::True;
-				this->dataGridView->ScrollBars = System::Windows::Forms::ScrollBars::Horizontal;
+			this->dataGridView->RowTemplate->Height = 20;  // Уменьшена высота строк с 28 до 20
+			this->dataGridView->RowTemplate->Resizable = System::Windows::Forms::DataGridViewTriState::True;
+			this->dataGridView->ScrollBars = System::Windows::Forms::ScrollBars::Both;  // Горизонтальный И вертикальный
 				this->dataGridView->Size = System::Drawing::Size(1276, 400);
 				this->dataGridView->TabIndex = 6;
 				this->dataGridView->CellContentClick += gcnew System::Windows::Forms::DataGridViewCellEventHandler(this, &DataForm::dataGridView_CellContentClick);

@@ -62,8 +62,16 @@ size_t BuildCommandBuffer(const Command& cmd, uint8_t* buffer, size_t bufferSize
 
 // Получение строкового имени команды
 const char* GetCommandName(const Command& cmd) {
+    // Команды подтверждения телеметрии
+    if (cmd.commandType == 0x00) { // CmdType::TELEMETRY
+        switch (cmd.commandCode) {
+        case 0x01: return "DATA_OK";
+        case 0x02: return "DATA_FALSE";
+        default: return "TELEMETRY_UNKNOWN";
+        }
+    }
     // Команды управления программой
-    if (cmd.commandType == 0x01) { // CmdType::PROG_CONTROL
+    else if (cmd.commandType == 0x01) { // CmdType::PROG_CONTROL
         switch (cmd.commandCode) {
         case 0x01: return "START";
         case 0x02: return "STOP";
