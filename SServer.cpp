@@ -167,6 +167,9 @@ void SServer::handle() {
 			} else {
 				if (form != nullptr && !form->IsDisposed) {
 					form->SetMessage_TextValue("Information: New thread was created");
+					// Визуальный разделитель для нового соединения
+					GlobalLogger::LogMessage("");
+					GlobalLogger::LogMessage("================================================================================");
 					GlobalLogger::LogMessage(ConvertToStdString("Information: New thread was created, port " + ClientPort));
 				}
 				CloseHandle(hThread); // Закрытие дескриптора потока
@@ -194,8 +197,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	int SclientPort = 900000; // Порт Sclient
 
 	SOCKET clientSocket = (SOCKET)lpParam;
-    char buffer[512];
-    int bytesReceived;
+	int bytesReceived;
 	// откроем форму MyForm для записи сообщений об ошибках
 	MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
 
@@ -264,9 +266,23 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	// Установка тайм-аута для операций чтения (recv)
 	setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
 
+	// Буфер для накопления данных (для обработки нескольких пакетов)
+	char accumulatedBuffer[1024];  // Буфер для накопления данных
+	int accumulatedBytes = 0;      // Количество накопленных байт
+	const int TELEMETRY_PACKET_SIZE = 48;  // Размер одного пакета телеметрии
+
 	// Бесконечный цикл считывания данных
 	while (true) {
-		bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0);
+		// Принимаем данные в конец накопительного буфера
+		int spaceAvailable = sizeof(accumulatedBuffer) - accumulatedBytes;
+		if (spaceAvailable <= 0) {
+			// Буфер переполнен - это ошибка
+			GlobalLogger::LogMessage("Error: Accumulated buffer overflow! Resetting buffer.");
+			accumulatedBytes = 0;
+			continue;
+		}
+		
+		bytesReceived = recv(clientSocket, accumulatedBuffer + accumulatedBytes, spaceAvailable, 0);
 
 		/* ОБРАБОТКА ОШИБОК
 		Если функция recv возвращает 0, это означает, что соединение было закрыто клиентом.
@@ -295,104 +311,231 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				GlobalLogger::LogMessage("Attention: Connection closed by client");
 			}
 			break;	// Выходим из цикла
-		};
+		}
 
-		// ===== РАЗЛИЧЕНИЕ ТИПА ПАКЕТА ПО ПЕРВОМУ БАЙТУ =====
-		uint8_t packetType = buffer[0];
+		// Добавляем полученные байты к накопленным
+		accumulatedBytes += bytesReceived;
 		
-		if (packetType >= 0x01 && packetType <= 0x04) {
-			// ===== ЭТО ОТВЕТ НА КОМАНДУ =====
-			// Пакеты с Type = 0x01-0x04 это ответы от контроллера на команды сервера
-			
-			// Создаем управляемый массив для ответа
-			cli::array<System::Byte>^ responseBuffer = gcnew cli::array<System::Byte>(bytesReceived);
-			Marshal::Copy(IntPtr(buffer), responseBuffer, 0, bytesReceived);
-			
-			// Добавляем в очередь ответов
-			DataForm::EnqueueResponse(responseBuffer);
+		// ДИАГНОСТИКА: Логируем recv() (только если есть ошибки)
+		static int consecutiveErrors = 0;
+		if (consecutiveErrors > 0 && consecutiveErrors < 5) {
 			GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-				"Ответ получен и помещен в очередь: Type=0x{0:X2}, Size={1} bytes", 
-				packetType, bytesReceived)));
-			// Обработка ответа будет выполнена в DataForm.cpp
-		} // конец if (packetType >= 0x01 && packetType <= 0x04)
-		else if (packetType == 0x00) {
-			// ===== ОБРАБОТКА ТЕЛЕМЕТРИИ =====
-			// Пакеты с Type = 0x00 это телеметрия от контроллера
+				"[RECV] Получено {0} байт, накоплено {1} байт", 
+				bytesReceived, accumulatedBytes)));
+		}
+		
+		// Обрабатываем все полные пакеты в буфере
+		int processedBytes = 0;
+		while (accumulatedBytes - processedBytes > 0) {
+			// Указатель на начало текущего пакета
+			char* buffer = accumulatedBuffer + processedBytes;
+			int remainingInBuffer = accumulatedBytes - processedBytes;
 			
-			// Длина посылки вместе с CRC
-			uint8_t LengthOfPackage = 48;
-			// Вычислим CRC16 для первых 46 байт
-			uint16_t dataCRC = MB_GetCRC(buffer, LengthOfPackage - 2);
-			uint16_t DatCRC;
-			memcpy(&DatCRC, &buffer[LengthOfPackage - 2], 2);
-			bool crcValid = (DatCRC == dataCRC);
+			// Минимум 1 байт для определения типа
+			if (remainingInBuffer < 1) {
+				break; // Недостаточно данных
+			}
 
-			// Переменные для команды подтверждения (объявляем ДО if/else)
-			Command ackCmd;
-			uint8_t ackBuffer[MAX_COMMAND_SIZE];
-			size_t ackSize;
+			// ===== РАЗЛИЧЕНИЕ ТИПА ПАКЕТА ПО ПЕРВОМУ БАЙТУ =====
+			uint8_t packetType = buffer[0];
+			int bytesInPacket = 0;
+			
+			// Определяем размер пакета
+			if (packetType == 0x00) {
+				// ОБРАБОТКА АНОМАЛИИ: Контроллер иногда присылает "ответы" с Type=0x00
+				// Проверяем, не 6-байтовый ли это мусорный пакет перед телеметрией
+				if (remainingInBuffer >= 6 && remainingInBuffer >= 54) {
+					// Достаточно данных для проверки
+					// Проверяем: есть ли второй Type=0x00 на позиции 6?
+					if (buffer[6] == 0x00) {
+						// Вероятно, первые 6 байт - мусор, пропускаем их
+						GlobalLogger::LogMessage("[ФИЛЬТР] Обнаружен мусорный 6-байтовый пакет с Type=0x00, пропускаем");
+						processedBytes += 6;
+						continue;  // Начинаем обработку заново со следующего пакета
+					}
+				}
+				
+				// Телеметрия - фиксированный размер 48 байт
+				bytesInPacket = TELEMETRY_PACKET_SIZE;
+			} else if (packetType >= 0x01 && packetType <= 0x04) {
+				// Ответ на команду - переменный размер
+				// Минимум 4 байта для чтения DataLen: Type + Code + Status + DataLen
+				if (remainingInBuffer < 4) {
+					break; // Недостаточно данных для определения размера
+				}
+				uint8_t dataLen = buffer[3]; // DataLen находится в 4-м байте (индекс 3)
+				bytesInPacket = 4 + dataLen + 2; // Type+Code+Status+DataLen + Data + CRC
+			} else {
+				// Неизвестный тип - пропускаем 1 байт и продолжаем
+				GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+					"Неизвестный тип пакета: 0x{0:X2}, пропускаем 1 байт", 
+					packetType)));
+				processedBytes += 1;
+				continue;
+			}
+			
+			// Проверяем, достаточно ли данных для полного пакета
+			if (remainingInBuffer < bytesInPacket) {
+				break; // Пакет неполный, ждем следующего recv()
+			}
+			
+			// ===== ОБРАБОТКА ПАКЕТА В ЗАВИСИМОСТИ ОТ ТИПА =====
+			if (packetType >= 0x01 && packetType <= 0x04) {
+				// ===== ЭТО ОТВЕТ НА КОМАНДУ =====
+				// Пакеты с Type = 0x01-0x04 это ответы от контроллера на команды сервера
+				
+				// Создаем управляемый массив для ответа
+				cli::array<System::Byte>^ responseBuffer = gcnew cli::array<System::Byte>(bytesInPacket);
+				Marshal::Copy(IntPtr(buffer), responseBuffer, 0, bytesInPacket);
+				
+				// Добавляем в очередь ответов
+				DataForm::EnqueueResponse(responseBuffer);
+				GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+					"Ответ получен и помещен в очередь: Type=0x{0:X2}, Size={1} bytes", 
+					packetType, bytesInPacket)));
+				// Обработка ответа будет выполнена в DataForm.cpp
+				
+				// Переходим к следующему пакету
+				processedBytes += bytesInPacket;
+			} // конец if (packetType >= 0x01 && packetType <= 0x04)
+			else if (packetType == 0x00) {
+				// ===== ОБРАБОТКА ТЕЛЕМЕТРИИ =====
+				// Пакеты с Type = 0x00 это телеметрия от контроллера
+				
+				// Длина посылки вместе с CRC
+				uint8_t LengthOfPackage = 48;
+				// Вычислим CRC16 для первых 46 байт
+				uint16_t dataCRC = MB_GetCRC(buffer, LengthOfPackage - 2);
+				uint16_t DatCRC;
+				memcpy(&DatCRC, &buffer[LengthOfPackage - 2], 2);
+				bool crcValid = (DatCRC == dataCRC);
+
+				// Переменные для команды подтверждения (объявляем ДО if/else)
+				Command ackCmd;
+				uint8_t ackBuffer[MAX_COMMAND_SIZE];
+				size_t ackSize;
 
 			if (crcValid) {
 				// ===== CRC ПРАВИЛЬНЫЙ - ОБРАБАТЫВАЕМ ДАННЫЕ =====
+				consecutiveErrors = 0;  // Сбрасываем счётчик ошибок
+				
 				// Найдём форму по идентификатору
 				DataForm^ form2 = DataForm::GetFormByGuid(guid);
-				if (form2 != nullptr && !form2->IsDisposed && form2->IsHandleCreated && !form2->Disposing) 
-				{					
-					// Передадим в форму сокет клиента этой формы и IP-адрес
-					if (form2 != nullptr) {
-						form2->ClientSocket = clientSocket;
-						form2->ClientIP = clientIPAddress;
+					if (form2 != nullptr && !form2->IsDisposed && form2->IsHandleCreated && !form2->Disposing) 
+					{					
+						// Передадим в форму сокет клиента этой формы и IP-адрес
+						if (form2 != nullptr) {
+							form2->ClientSocket = clientSocket;
+							form2->ClientIP = clientIPAddress;
+						}
+						// ===== ОБРАБОТКА ТЕЛЕМЕТРИИ =====
+						if (clientPort < SclientPort) {
+							// Создаем копию данных для безопасной передачи в другой поток
+							cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(bytesInPacket);
+							Marshal::Copy(IntPtr(buffer), dataBuffer, 0, bytesInPacket);
+							// Вызываем AddDataToTable через Invoke для выполнения в потоке формы
+							form2->BeginInvoke(gcnew Action<cli::array <System::Byte>^, int, int>
+								(form2, &DataForm::AddDataToTableThreadSafe),
+								dataBuffer, bytesInPacket, clientPort);
+							// Refresh вызывать отдельно уже не нужно - он будет вызван в AddDataToTableThreadSafe
+						} else {
+							// здесь обработка для другого типа порта
+						}
 					}
-					// ===== ОБРАБОТКА ТЕЛЕМЕТРИИ =====
-					if (clientPort < SclientPort) {
-						// Создаем копию данных для безопасной передачи в другой поток
-						cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(bytesReceived);
-						Marshal::Copy(IntPtr(buffer), dataBuffer, 0, bytesReceived);
-						// Вызываем AddDataToTable через Invoke для выполнения в потоке формы
-						form2->BeginInvoke(gcnew Action<cli::array <System::Byte>^, int, int>
-							(form2, &DataForm::AddDataToTableThreadSafe),
-							dataBuffer, bytesReceived, clientPort);
-						// Refresh вызывать отдельно уже не нужно - он будет вызван в AddDataToTableThreadSafe
-					} else {
-						// здесь обработка для другого типа порта
-					}
-				}
-				else {
-					// Форма отсутствует, завершаем поток
-					break;
-				} // конец if (form2 != nullptr...
+					else {
+						// Форма отсутствует, завершаем ВСЁ соединение
+						GlobalLogger::LogMessage("Warning: Форма закрыта во время приёма данных, завершаем соединение");
+						goto exitMainLoop;  // Выходим из ВСЕХ циклов
+					} // конец if (form2 != nullptr...
 
-				// CRC правильный - формируем DATA_OK
-				ackCmd = CreateTelemetryAckCommand(CmdTelemetry::DATA_OK);
-				
+					// CRC правильный - формируем DATA_OK
+					ackCmd = CreateTelemetryAckCommand(CmdTelemetry::DATA_OK);
+					
 			} else {
-				// ===== CRC НЕПРАВИЛЬНЫЙ - ДАННЫЕ НЕ ОБРАБАТЫВАЕМ =====
-				// Формируем DATA_FALSE
+				// ===== CRC НЕПРАВИЛЬНЫЙ - ПОПЫТКА ВОССТАНОВИТЬ СИНХРОНИЗАЦИЮ =====
+				consecutiveErrors++;  // Увеличиваем счётчик ошибок
+				
+				// ДИАГНОСТИКА: Выводим детальную информацию при ошибке CRC (первые 5 ошибок)
+				if (consecutiveErrors <= 5) {
+					std::string hexDump = "";
+					for (int i = 0; i < min(48, bytesInPacket); i++) {
+						char hex[8];
+						sprintf_s(hex, sizeof(hex), "%02X ", (uint8_t)buffer[i]);
+						hexDump += hex;
+						if ((i + 1) % 16 == 0) hexDump += "\n                ";
+					}
+					
+					GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+						"[ОШИБКА CRC #{0}] Expected={1:X4}, Received={2:X4}\n" +
+						"             AccumBytes={3}, ProcessedBytes={4}, PacketSize={5}\n" +
+						"             HEX: {6}", 
+						consecutiveErrors, dataCRC, DatCRC, accumulatedBytes, processedBytes, bytesInPacket,
+						gcnew String(hexDump.c_str()))));
+				} else if (consecutiveErrors == 6) {
+					GlobalLogger::LogMessage("(дальнейшие ошибки CRC не логируются)");
+				} else {
+					// Только короткое сообщение для последующих ошибок
+					GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+						"Ошибка CRC телеметрии: Expected={0:X4}, Received={1:X4}", 
+						dataCRC, DatCRC)));
+				}
+				
+				// ВОССТАНОВЛЕНИЕ СИНХРОНИЗАЦИИ: Ищем следующий Type=0x00
+				if (consecutiveErrors >= 3) {
+					// Ищем следующий байт 0x00 в буфере (потенциальное начало телеметрии)
+					int searchOffset = 1;
+					bool found = false;
+					
+					while (processedBytes + searchOffset < accumulatedBytes && searchOffset < 48) {
+						if (accumulatedBuffer[processedBytes + searchOffset] == 0x00) {
+							// Нашли потенциальное начало пакета
+							found = true;
+							break;
+						}
+						searchOffset++;
+					}
+					
+					if (found && searchOffset > 1) {
+						GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+							"[РЕСИНХРОНИЗАЦИЯ] Пропускаем {0} байт, найден Type=0x00", searchOffset)));
+						processedBytes += searchOffset;
+					} else {
+						// Не нашли или это следующий байт - пропускаем 1 байт
+						GlobalLogger::LogMessage("[РЕСИНХРОНИЗАЦИЯ] Пропускаем 1 байт");
+						processedBytes += 1;
+					}
+					continue;  // Переходим к следующей итерации без отправки подтверждения
+				}
+				
+				// Для первых 2 ошибок - отправляем DATA_FALSE как обычно
 				ackCmd = CreateTelemetryAckCommand(CmdTelemetry::DATA_FALSE);
-				GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-					"Ошибка CRC телеметрии: Expected={0:X4}, Received={1:X4}", 
-					dataCRC, DatCRC)));
 			} // конец if (crcValid)
 
-		// ===== ОТПРАВКА ПОДТВЕРЖДЕНИЯ ТЕЛЕМЕТРИИ =====
-		// (выполняется и для DATA_OK, и для DATA_FALSE)
-		ackSize = BuildCommandBuffer(ackCmd, ackBuffer, sizeof(ackBuffer));
-		int bytesSent = send(clientSocket, (char*)ackBuffer, (int)ackSize, 0);
-			
-			if (bytesSent == SOCKET_ERROR) {
-				int error = WSAGetLastError();
-				GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-					"Warning: Ошибка отправки подтверждения клиенту, error: {0}", error)));
-			}
-		} // else if (packetType == 0x00)
-		else {
-		// Неизвестный тип пакета
-		GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-			"Неизвестный тип пакета: 0x{0:X2}, Size={1} bytes", 
-			packetType, bytesReceived)));
-		} // конец else
-	}	// конец while
+				// ===== ОТПРАВКА ПОДТВЕРЖДЕНИЯ ТЕЛЕМЕТРИИ =====
+				// (выполняется и для DATA_OK, и для DATA_FALSE)
+				ackSize = BuildCommandBuffer(ackCmd, ackBuffer, sizeof(ackBuffer));
+				int bytesSent = send(clientSocket, (char*)ackBuffer, (int)ackSize, 0);
+				
+				if (bytesSent == SOCKET_ERROR) {
+					int error = WSAGetLastError();
+					GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+						"Warning: Ошибка отправки подтверждения клиенту, error: {0}", error)));
+				}
+				
+				// Переходим к следующему пакету
+				processedBytes += bytesInPacket;
+			} // else if (packetType == 0x00)
+		} // конец while (обработка пакетов из буфера)
+		
+		// Переносим необработанные байты в начало буфера
+		int remainingBytes = accumulatedBytes - processedBytes;
+		if (remainingBytes > 0) {
+			memmove(accumulatedBuffer, accumulatedBuffer + processedBytes, remainingBytes);
+		}
+		accumulatedBytes = remainingBytes;
+	}	// конец while (основной цикл)
 
+exitMainLoop:  // Метка для выхода из всех циклов
 	// Цикл приёма данных прерван по ошибке приёма, закрываем форрму приёма данных
 	closesocket(clientSocket);
 	// Найдём форму данных по идентификатору и закроем её

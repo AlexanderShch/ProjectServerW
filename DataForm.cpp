@@ -1605,27 +1605,45 @@ void ProjectServerW::DataForm::OnDelayedExcelTimerTick(Object^ sender, EventArgs
 
 // Òğèããåğ àâòîìàòè÷åñêîãî ıêñïîğòà â Excel
 void ProjectServerW::DataForm::TriggerExcelExport() {
-    // Ïğîâåğêà äîñòóïíîñòè êíîïêè Excel
-    if (buttonExcel->Enabled) {
-        // Àâòîìàòè÷åñêè çàïóñòèòü ıêñïîğò â Excel
-        buttonEXCEL_Click(nullptr, nullptr);
-    }
-    else {
-        // Êíîïêà íåäîñòóïíà, óñòàíàâëèâàåì ôëàã îæèäàíèÿ è çàïóñêàåì òàéìåğ
-        pendingExcelExport = true;
-
-        // Ñîçäàåì òàéìåğ, åñëè îí åùå íå ñîçäàí
-        if (exportTimer == nullptr) {
-            exportTimer = gcnew System::Windows::Forms::Timer();
-            exportTimer->Interval = 500; // Ïğîâåğêà êàæäûå 500 ìñ
-            exportTimer->Tick += gcnew EventHandler(this, &DataForm::CheckExcelButtonStatus);
+    // Ïğîâåğÿåì, âûçûâàåòñÿ ëè ìåòîä èç ïğàâèëüíîãî ïîòîêà
+    if (this->InvokeRequired) {
+        // Âûçûâàåì èç ïîòîêà UI
+        try {
+            this->Invoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));
         }
+        catch (Exception^ ex) {
+            GlobalLogger::LogMessage("Îøèáêà ïğè âûçîâå TriggerExcelExport: " + ConvertToStdString(ex->Message));
+        }
+        return;
+    }
+    
+    // Òåïåğü ìû â ïîòîêå UI, ìîæåì áåçîïàñíî îáğàùàòüñÿ ê ıëåìåíòàì óïğàâëåíèÿ
+    try {
+        // Ïğîâåğêà äîñòóïíîñòè êíîïêè Excel
+        if (buttonExcel->Enabled) {
+            // Àâòîìàòè÷åñêè çàïóñòèòü ıêñïîğò â Excel
+            buttonEXCEL_Click(nullptr, nullptr);
+        }
+        else {
+            // Êíîïêà íåäîñòóïíà, óñòàíàâëèâàåì ôëàã îæèäàíèÿ è çàïóñêàåì òàéìåğ
+            pendingExcelExport = true;
 
-        // Çàïóñêàåì òàéìåğ
-        exportTimer->Start();
+            // Ñîçäàåì òàéìåğ, åñëè îí åùå íå ñîçäàí
+            if (exportTimer == nullptr) {
+                exportTimer = gcnew System::Windows::Forms::Timer();
+                exportTimer->Interval = 500; // Ïğîâåğêà êàæäûå 500 ìñ
+                exportTimer->Tick += gcnew EventHandler(this, &DataForm::CheckExcelButtonStatus);
+            }
 
-        // Âûâîäèì ñîîáùåíèå äëÿ ïîëüçîâàòåëÿ
-        Label_Data->Text = "Îæèäàíèå âîçìîæíîñòè çàïèñè â Excel...";
+            // Çàïóñêàåì òàéìåğ
+            exportTimer->Start();
+
+            // Âûâîäèì ñîîáùåíèå äëÿ ïîëüçîâàòåëÿ
+            Label_Data->Text = "Îæèäàíèå âîçìîæíîñòè çàïèñè â Excel...";
+        }
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage("Îøèáêà â TriggerExcelExport: " + ConvertToStdString(ex->Message));
     }
 }
 
