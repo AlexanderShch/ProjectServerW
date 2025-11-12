@@ -155,6 +155,14 @@ void ProjectServerW::DataForm::CloseForm(const std::wstring& guid) {
     GlobalLogger::LogMessage("DataForm will be closed!");
 
     if (form != nullptr) {
+        // ВАЖНО: Удаляем форму из карты СРАЗУ, до закрытия
+        // Это позволяет новым соединениям от того же клиента создавать новые формы немедленно
+        auto it = formData_Map.find(guid);
+        if (it != formData_Map.end()) {
+            formData_Map.erase(it);
+            GlobalLogger::LogMessage("Information: Форма удалена из карты, разрешено новое соединение");
+        }
+        
         // Проверяем, нужен ли Invoke
         if (form->InvokeRequired) {
             // Закрываем форму через Invoke
@@ -237,7 +245,7 @@ std::mutex& ThreadStorage::GetMutex() {
 }
 
 // Эта функция принимает буфер и его длину, затем преобразует каждый байт буфера в шестнадцатеричный формат и добавляет его в строку.
-String^ bufferToHex(const char* buffer, size_t length) {
+static String^ bufferToHex(const char* buffer, size_t length) {
     // Использование std::stringstream позволяет преобразовывать данные в строку и форматировать их.
     std::stringstream ss;
     ss << std::hex << std::setfill('0');
@@ -362,18 +370,28 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
 
         // Если бит "Work" переходит из 0 в 1 (дефростер is ON)
         if (!workBitDetected && currentWorkBitState) {
-            // Сохраняем время начала сбора данных
-            dataCollectionStartTime = now;
-            // Создаем имя файла на основе времени начала (окончание добавится позже при записи в Excel)
-            excelFileName = "WorkData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + "_Port" + clientPort.ToString();
-            GlobalLogger::LogMessage(ConvertToStdString("Information: СТАРТ фиксации данных, создано имя файла " + excelFileName));
+            // Проверяем: это возврат после мигания или новый запуск?
+            if (workBitZeroTimerActive) {
+                // Это мигание лампы - бит вернулся в 1 во время отслеживания
+                // НЕ логируем, только сбрасываем таймер отслеживания
+                workBitZeroTimerActive = false;
+                // НЕ сбрасываем workBitZeroLogged - чтобы не логировать повторно при следующем мигании
+                if (delayedExcelTimer != nullptr && delayedExcelTimer->Enabled) {
+                    delayedExcelTimer->Stop();
+                }
+            } else {
+                // Это новый запуск работы (не мигание)
+                // Сохраняем время начала сбора данных
+                dataCollectionStartTime = now;
+                // Создаем имя файла на основе времени начала (окончание добавится позже при записи в Excel)
+                excelFileName = "WorkData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + "_Port" + clientPort.ToString();
+                GlobalLogger::LogMessage(ConvertToStdString("Information: СТАРТ фиксации данных, создано имя файла " + excelFileName));
+                // Сбрасываем флаги при новом запуске работы
+                workBitZeroLogged = false;
+                dataExportedToExcel = false;  // Новый цикл - данные еще не экспортированы
+            }
             // Меняем состояние кнопок СТАРТ и СТОП
             buttonSTOPstate_TRUE();
-            // Сбрасываем таймер отслеживания нуля, если он был активен
-            workBitZeroTimerActive = false;
-            if (delayedExcelTimer != nullptr && delayedExcelTimer->Enabled) {
-                delayedExcelTimer->Stop();
-            }
         }
 
         // Если бит "Work" переходит из 1 в 0 (дефростер is OFF)
@@ -390,7 +408,11 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
             }
             delayedExcelTimer->Start();
             
-            GlobalLogger::LogMessage(ConvertToStdString("Information: Бит Work стал нулём, начато отслеживание времени..."));
+            // Логируем только первый переход в ноль
+            if (!workBitZeroLogged) {
+                GlobalLogger::LogMessage(ConvertToStdString("Information: Бит Work стал нулём, начато отслеживание времени..."));
+                workBitZeroLogged = true;
+            }
         }
 
         // Если бит "Work" остаётся в нуле и таймер активен, проверяем, прошла ли минута
@@ -399,6 +421,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
             if (elapsed.TotalSeconds >= 60) {
                 // Прошло не менее 1 минуты непрерывного нахождения в нуле
                 workBitZeroTimerActive = false;
+                workBitZeroLogged = false;  // Сбрасываем флаг логирования
                 delayedExcelTimer->Stop();
                 
                 // Сохраняем время окончания сбора данных
@@ -407,6 +430,9 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
                 GlobalLogger::LogMessage(ConvertToStdString("Information: СТОП фиксации данных, запись в файл " + excelFileName));
                 // Меняем состояние кнопок СТАРТ и СТОП
                 buttonSTARTstate_TRUE();
+                
+                // Устанавливаем флаг, что данные экспортированы (чтобы не дублировать при закрытии формы)
+                dataExportedToExcel = true;
                 
                 // Выполняем запись в Excel
                 this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));
@@ -979,24 +1005,33 @@ void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::ar
 ////******************** Обработка завершения формы ***************************************
 System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ sender, System::Windows::Forms::FormClosingEventArgs^ e) {
     try {
-        // Проверяем, есть ли данные в таблице
+        // Проверяем, есть ли данные в таблице И не были ли они уже экспортированы
         if (dataTable != nullptr && dataTable->Rows->Count > 0) {
-            // Создаем имя файла, если оно еще не создано
-            if (excelFileName == nullptr) {
-                DateTime now = DateTime::Now;
-                excelFileName = "EmergencyData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + "_Port" + clientPort.ToString() + ".xlsx";
-            }
-
-            // Логируем начало сохранения
-            GlobalLogger::LogMessage("Сохранение данных в Excel (в фоновом режиме)... " + ConvertToStdString(excelFileName));
-
-            // Запускаем запись в Excel в отдельном потоке
-            // Форма закроется сразу, не дожидаясь завершения записи
-            DataForm::TriggerExcelExport();
             
-            // НЕ ЖДЁМ завершения записи - форма закрывается сразу
-            // Это позволяет клиенту переподключиться немедленно
-            GlobalLogger::LogMessage("Information: Форма закрывается, запись в Excel продолжается в фоновом режиме");
+            // Проверяем флаг: были ли данные уже записаны в Excel
+            if (dataExportedToExcel) {
+                // Данные уже были экспортированы - не дублируем запись
+                GlobalLogger::LogMessage("Information: Данные уже были экспортированы в Excel, повторная запись не требуется");
+            }
+            else {
+                // Данные НЕ были экспортированы - это аварийное сохранение при потере связи
+                // Создаем имя файла, если оно еще не создано
+                if (excelFileName == nullptr) {
+                    DateTime now = DateTime::Now;
+                    excelFileName = "EmergencyData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + "_Port" + clientPort.ToString() + ".xlsx";
+                }
+
+                // Логируем начало сохранения
+                GlobalLogger::LogMessage("АВАРИЙНОЕ сохранение данных в Excel (потеря связи)... " + ConvertToStdString(excelFileName));
+
+                // Запускаем запись в Excel в отдельном потоке
+                // Форма закроется сразу, не дожидаясь завершения записи
+                DataForm::TriggerExcelExport();
+                
+                // НЕ ЖДЁМ завершения записи - форма закрывается сразу
+                // Это позволяет клиенту переподключиться немедленно
+                GlobalLogger::LogMessage("Information: Форма закрывается, запись в Excel продолжается в фоновом режиме");
+            }
         }
         
         // Разрешаем закрытие формы немедленно
@@ -1012,7 +1047,9 @@ System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ send
 // Обработчик события после закрытия формы
 System::Void DataForm::DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ e)
 {
-    // Удаляем форму из карты
+    // Удаляем форму из карты (если она ещё там есть)
+    // Форма могла быть удалена ранее в CloseForm()
+    bool formFoundInMap = false;
     for (auto it = formData_Map.begin(); it != formData_Map.end(); ++it) {
         // Извлекаем управляемый указатель из gcroot
         ProjectServerW::DataForm^ formPtr = it->second;
@@ -1021,9 +1058,16 @@ System::Void DataForm::DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ 
         if (formPtr == this) {
             // Нашли текущую форму, удаляем её из карты
             formData_Map.erase(it);
+            formFoundInMap = true;
+            GlobalLogger::LogMessage("Information: Форма удалена из карты в FormClosed");
             break;
         }
     }
+    
+    if (!formFoundInMap) {
+        GlobalLogger::LogMessage("Information: Форма уже была удалена из карты ранее");
+    }
+    
     // Закрываем сокет клиента
     closesocket(this->ClientSocket);
 }
@@ -1585,6 +1629,7 @@ void ProjectServerW::DataForm::OnDelayedExcelTimerTick(Object^ sender, EventArgs
     if (elapsed.TotalSeconds >= 60) {
         // Прошло не менее 1 минуты непрерывного нахождения в нуле
         workBitZeroTimerActive = false;
+        workBitZeroLogged = false;  // Сбрасываем флаг логирования
         delayedExcelTimer->Stop();
         
         // Сохраняем время окончания сбора данных
@@ -1593,6 +1638,9 @@ void ProjectServerW::DataForm::OnDelayedExcelTimerTick(Object^ sender, EventArgs
         GlobalLogger::LogMessage(ConvertToStdString("Information: СТОП фиксации данных (по таймеру), запись в файл " + excelFileName));
         // Меняем состояние кнопок СТАРТ и СТОП
         buttonSTARTstate_TRUE();
+        
+        // Устанавливаем флаг, что данные экспортированы (чтобы не дублировать при закрытии формы)
+        dataExportedToExcel = true;
         
         // Выполняем запись в Excel
         this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));

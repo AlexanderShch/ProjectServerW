@@ -137,3 +137,4 @@ Doc/RECONNECTION_FIX_SUMMARY_RU.md   - Этот файл
 *Дата: 29 октября 2025*  
 *Версия: 1.0*
 
+

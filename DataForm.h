@@ -7,7 +7,8 @@
 #include <queue>
 #include <vcclr.h>					// Для использования gcroot
 
-#define SQ 7				// датчики TH дефростера (0-2) + датчики продукта (3, 4) + T корпуса (5) + MB_IO (6)
+// Количество датчиков: TH дефростера (0-2) + датчики продукта (3, 4) + T корпуса (5) + MB_IO (6)
+constexpr uint8_t SQ = 7;
 
 // Forward declaration для избежания циклических зависимостей
 struct Command;
@@ -79,7 +80,9 @@ namespace ProjectServerW {
 			System::Windows::Forms::Timer^ exportTimer;	// Таймер для проверки освобождения кнопки
 		DateTime workBitZeroStartTime;   // время перехода бита Work в состояние ноль
 		bool workBitZeroTimerActive;     // флаг "запущен таймер отслеживания активности таймера бита Work в нуле"
+		bool workBitZeroLogged;          // флаг "уже залогировано сообщение о начале отслеживания нуля" (для избежания повторных записей в лог)
 		bool firstDataReceived;          // флаг "получен первый пакет данных" (для установки начального состояния кнопок)
+		bool dataExportedToExcel;        // флаг "данные уже были экспортированы в Excel" (для предотвращения дублирующей записи при закрытии формы)
 		private: System::Windows::Forms::Label^ Label_Data;
 		private: System::Windows::Forms::Label^ LabelDefroster;
 		private: System::Windows::Forms::Label^ T_def_left;
@@ -141,7 +144,9 @@ namespace ProjectServerW {
 	excelFileName = nullptr;
 	workBitDetected = false;
 	workBitZeroTimerActive = false;
+	workBitZeroLogged = false;      // Флаг логирования начала отслеживания нуля
 	firstDataReceived = false;      // Флаг первого приёма данных
+	dataExportedToExcel = false;    // Флаг экспорта данных в Excel
 	// Инициализация порта клиента
 	clientPort = 0;
 
