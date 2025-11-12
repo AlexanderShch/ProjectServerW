@@ -366,6 +366,9 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
                 GlobalLogger::LogMessage("Information: Первый пакет данных - бит WORK не активен, кнопка START активна");
             }
             firstDataReceived = true;
+            
+            // Автоматически запрашиваем версию прошивки контроллера после первого пакета
+            SendVersionRequest();
         }
 
         // Если бит "Work" переходит из 0 в 1 (дефростер is ON)
@@ -1300,6 +1303,68 @@ void ProjectServerW::DataForm::SendResetCommand() {
                 // Другие ошибки уже отображены в ProcessResponse
                 break;
         }
+    }
+}
+
+// Метод для запроса версии прошивки контроллера
+void ProjectServerW::DataForm::SendVersionRequest() {
+    // Создаем команду GET_VERSION
+    Command cmd;
+    cmd.commandType = CmdType::REQUEST;
+    cmd.commandCode = CmdRequest::GET_VERSION;
+    cmd.dataLength = 0;
+    
+    CommandResponse response;
+    
+    // Отправляем команду и ждем ответ
+    if (SendCommandAndWaitResponse(cmd, response)) {
+        // Команда успешно выполнена контроллером
+        if (response.dataLength > 0) {
+            // Извлекаем строку версии из ответа
+            String^ version = gcnew String(
+                reinterpret_cast<const char*>(response.data), 
+                0, static_cast<int>(response.dataLength), 
+                System::Text::Encoding::ASCII);
+            
+            // Обновляем label_Version на форме (поточно-безопасно)
+            pendingVersion = version; // Сохраняем версию во временное поле
+            if (label_Version != nullptr && !label_Version->IsDisposed) {
+                if (label_Version->InvokeRequired) {
+                    label_Version->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(
+                        this, &DataForm::UpdateVersionLabelInternal));
+                } else {
+                    label_Version->Text = version;
+                }
+            }
+            
+            Label_Commands->Text = "Версия прошивки получена: " + version;
+            Label_Commands->ForeColor = System::Drawing::Color::Green;
+            GlobalLogger::LogMessage(ConvertToStdString("Information: Версия прошивки контроллера: " + version));
+        } else {
+            Label_Commands->Text = "Версия получена, но данные пусты";
+            Label_Commands->ForeColor = System::Drawing::Color::Orange;
+        }
+        
+        // Восстанавливаем цвет через 3 секунды в обратном таймере
+        System::Windows::Forms::Timer^ colorTimer = gcnew System::Windows::Forms::Timer();
+        colorTimer->Interval = 3000;
+        colorTimer->Tick += gcnew EventHandler(this, &DataForm::RestoreLabelCommandsColor);
+        colorTimer->Start();
+    } else {
+        // Ошибка выполнения команды
+        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+            "Error: Команда GET_VERSION не выполнена. Статус: 0x{0:X2} ({1})",
+            response.status, gcnew String(GetStatusName(response.status)))));
+        
+        Label_Commands->Text = "[!] Не удалось получить версию прошивки";
+        Label_Commands->ForeColor = System::Drawing::Color::Red;
+    }
+}
+
+// Вспомогательный метод для обновления label_Version из UI потока
+void ProjectServerW::DataForm::UpdateVersionLabelInternal() {
+    if (label_Version != nullptr && !label_Version->IsDisposed) {
+        label_Version->Text = pendingVersion;
     }
 }
 

@@ -1,4 +1,4 @@
 #pragma once
 
 // Строка версии для отображения
-#define VERSION_STR L"1.3.5"
+constexpr const wchar_t* VERSION_STR = L"1.3.5";

@@ -171,7 +171,7 @@ namespace ProjectServerW {
 			this->labelVersion->Name = L"labelVersion";
 			this->labelVersion->Size = System::Drawing::Size(100, 23);
 			this->labelVersion->TabIndex = 10;
-			this->labelVersion->Text = String::Concat(L"v ", VERSION_STR);
+			this->labelVersion->Text = L"v " + gcnew String(VERSION_STR);
 			// 
 			// MyForm
 			// 

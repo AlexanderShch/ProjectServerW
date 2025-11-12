@@ -37,6 +37,9 @@ namespace ProjectServerW {
 		private: System::Windows::Forms::Label^ Label_Commands;
 		private: System::Windows::Forms::Label^ label_Commands_Info;
 		private: System::Windows::Forms::Button^ button_RESET;
+	private: System::Windows::Forms::Label^ label_Version;
+
+	private: System::Windows::Forms::Label^ labelVersion;
 
 
 
@@ -80,10 +83,11 @@ namespace ProjectServerW {
 			System::Windows::Forms::Timer^ exportTimer;	// Таймер для проверки освобождения кнопки
 		DateTime workBitZeroStartTime;   // время перехода бита Work в состояние ноль
 		bool workBitZeroTimerActive;     // флаг "запущен таймер отслеживания активности таймера бита Work в нуле"
-		bool workBitZeroLogged;          // флаг "уже залогировано сообщение о начале отслеживания нуля" (для избежания повторных записей в лог)
-		bool firstDataReceived;          // флаг "получен первый пакет данных" (для установки начального состояния кнопок)
-		bool dataExportedToExcel;        // флаг "данные уже были экспортированы в Excel" (для предотвращения дублирующей записи при закрытии формы)
-		private: System::Windows::Forms::Label^ Label_Data;
+	bool workBitZeroLogged;          // флаг "уже залогировано сообщение о начале отслеживания нуля" (для избежания повторных записей в лог)
+	bool firstDataReceived;          // флаг "получен первый пакет данных" (для установки начального состояния кнопок)
+	bool dataExportedToExcel;        // флаг "данные уже были экспортированы в Excel" (для предотвращения дублирующей записи при закрытии формы)
+	System::String^ pendingVersion;  // временное хранение версии для обновления UI из другого потока
+	private: System::Windows::Forms::Label^ Label_Data;
 		private: System::Windows::Forms::Label^ LabelDefroster;
 		private: System::Windows::Forms::Label^ T_def_left;
 		private: System::Windows::Forms::Label^ T_def_right;
@@ -147,6 +151,7 @@ namespace ProjectServerW {
 	workBitZeroLogged = false;      // Флаг логирования начала отслеживания нуля
 	firstDataReceived = false;      // Флаг первого приёма данных
 	dataExportedToExcel = false;    // Флаг экспорта данных в Excel
+	pendingVersion = nullptr;       // Временная версия для обновления UI
 	// Инициализация порта клиента
 	clientPort = 0;
 
@@ -228,12 +233,13 @@ namespace ProjectServerW {
 		private: System::Windows::Forms::ToolStripMenuItem^ выходToolStripMenuItem;
 
 		private: System::Windows::Forms::Button^ buttonExcel;
+private: System::ComponentModel::IContainer^ components;
 
 		private:
 			/// <summary>
 			/// Обязательная переменная конструктора.
 			/// </summary>
-			System::ComponentModel::Container^ components;
+
 
 	#pragma region Windows Form Designer generated code
 			/// <summary>
@@ -242,6 +248,7 @@ namespace ProjectServerW {
 			/// </summary>
 			void InitializeComponent(void)
 			{
+				this->components = (gcnew System::ComponentModel::Container());
 				this->menuStrip1 = (gcnew System::Windows::Forms::MenuStrip());
 				this->выходToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
 				this->buttonExcel = (gcnew System::Windows::Forms::Button());
@@ -257,6 +264,10 @@ namespace ProjectServerW {
 				this->Label_Data = (gcnew System::Windows::Forms::Label());
 				this->dataGridView = (gcnew System::Windows::Forms::DataGridView());
 				this->tabPage2 = (gcnew System::Windows::Forms::TabPage());
+				this->label_Version = (gcnew System::Windows::Forms::Label());
+				this->labelVersion = (gcnew System::Windows::Forms::Label());
+			this->button_RESET = (gcnew System::Windows::Forms::Button());
+			this->label_Commands_Info = (gcnew System::Windows::Forms::Label());
 				this->Label_Commands = (gcnew System::Windows::Forms::Label());
 				this->labelSTOP = (gcnew System::Windows::Forms::Label());
 				this->labelSTART = (gcnew System::Windows::Forms::Label());
@@ -265,12 +276,10 @@ namespace ProjectServerW {
 				this->checkBoxAutoStart = (gcnew System::Windows::Forms::CheckBox());
 				this->dateTimePickerAutoStart = (gcnew System::Windows::Forms::DateTimePicker());
 				this->labelAutoStart = (gcnew System::Windows::Forms::Label());
-				this->timerAutoStart = (gcnew System::Windows::Forms::Timer());
 				this->buttonBrowse = (gcnew System::Windows::Forms::Button());
 				this->textBoxExcelDirectory = (gcnew System::Windows::Forms::TextBox());
 				this->labelExcelDirectory = (gcnew System::Windows::Forms::Label());
-				this->label_Commands_Info = (gcnew System::Windows::Forms::Label());
-				this->button_RESET = (gcnew System::Windows::Forms::Button());
+				this->timerAutoStart = (gcnew System::Windows::Forms::Timer(this->components));
 				this->menuStrip1->SuspendLayout();
 				this->tabControl1->SuspendLayout();
 				this->tabPage1->SuspendLayout();
@@ -424,17 +433,18 @@ namespace ProjectServerW {
 				this->dataGridView->Name = L"dataGridView";
 				this->dataGridView->RightToLeft = System::Windows::Forms::RightToLeft::No;
 				this->dataGridView->RowHeadersWidthSizeMode = System::Windows::Forms::DataGridViewRowHeadersWidthSizeMode::AutoSizeToDisplayedHeaders;
-			this->dataGridView->RowTemplate->Height = 20;  // Уменьшена высота строк с 28 до 20
-			this->dataGridView->RowTemplate->Resizable = System::Windows::Forms::DataGridViewTriState::True;
-			this->dataGridView->ScrollBars = System::Windows::Forms::ScrollBars::Both;  // Горизонтальный И вертикальный
+				this->dataGridView->RowTemplate->Height = 20;
+				this->dataGridView->RowTemplate->Resizable = System::Windows::Forms::DataGridViewTriState::True;
 				this->dataGridView->Size = System::Drawing::Size(1276, 400);
 				this->dataGridView->TabIndex = 6;
 				this->dataGridView->CellContentClick += gcnew System::Windows::Forms::DataGridViewCellEventHandler(this, &DataForm::dataGridView_CellContentClick);
 				// 
 				// tabPage2
 				// 
-				this->tabPage2->Controls->Add(this->button_RESET);
-				this->tabPage2->Controls->Add(this->label_Commands_Info);
+				this->tabPage2->Controls->Add(this->label_Version);
+				this->tabPage2->Controls->Add(this->labelVersion);
+			this->tabPage2->Controls->Add(this->button_RESET);
+			this->tabPage2->Controls->Add(this->label_Commands_Info);
 				this->tabPage2->Controls->Add(this->Label_Commands);
 				this->tabPage2->Controls->Add(this->labelSTOP);
 				this->tabPage2->Controls->Add(this->labelSTART);
@@ -454,12 +464,50 @@ namespace ProjectServerW {
 				this->tabPage2->Text = L"Настройки";
 				this->tabPage2->UseVisualStyleBackColor = true;
 				// 
+				// label_Version
+				// 
+				this->label_Version->AutoSize = true;
+				this->label_Version->Location = System::Drawing::Point(234, 355);
+				this->label_Version->Name = L"label_Version";
+				this->label_Version->Size = System::Drawing::Size(96, 20);
+				this->label_Version->TabIndex = 13;
+				this->label_Version->Text = L"labelVersion";
+				// 
+				// labelVersion
+				// 
+				this->labelVersion->AutoSize = true;
+				this->labelVersion->Location = System::Drawing::Point(48, 355);
+				this->labelVersion->Name = L"labelVersion";
+				this->labelVersion->Size = System::Drawing::Size(172, 20);
+				this->labelVersion->TabIndex = 12;
+				this->labelVersion->Text = L"Версия контроллера:";
+				// 
+				// button_RESET
+				// 
+				this->button_RESET->Location = System::Drawing::Point(48, 395);
+				this->button_RESET->Name = L"button_RESET";
+				this->button_RESET->RightToLeft = System::Windows::Forms::RightToLeft::Yes;
+				this->button_RESET->Size = System::Drawing::Size(91, 33);
+				this->button_RESET->TabIndex = 9;
+			this->button_RESET->Text = L"СБРОС";
+			this->button_RESET->UseVisualStyleBackColor = true;
+			this->button_RESET->Click += gcnew System::EventHandler(this, &DataForm::button_RESET_Click);
+			// 
+			// label_Commands_Info
+				// 
+				this->label_Commands_Info->AutoSize = true;
+				this->label_Commands_Info->Location = System::Drawing::Point(44, 449);
+				this->label_Commands_Info->Name = L"label_Commands_Info";
+				this->label_Commands_Info->Size = System::Drawing::Size(196, 20);
+				this->label_Commands_Info->TabIndex = 8;
+				this->label_Commands_Info->Text = L"Информация о команде:";
+				// 
 				// Label_Commands
 				// 
 				this->Label_Commands->AutoSize = true;
 				this->Label_Commands->Location = System::Drawing::Point(246, 449);
 				this->Label_Commands->Name = L"Label_Commands";
-				this->Label_Commands->Size = System::Drawing::Size(138, 20);
+				this->Label_Commands->Size = System::Drawing::Size(212, 20);
 				this->Label_Commands->TabIndex = 7;
 				this->Label_Commands->Text = L"Команда не отправлялась";
 				// 
@@ -503,21 +551,12 @@ namespace ProjectServerW {
 				this->buttonSTART->UseVisualStyleBackColor = true;
 				this->buttonSTART->Click += gcnew System::EventHandler(this, &DataForm::buttonSTART_Click);
 				// 
-				// labelAutoStart
-				// 
-				this->labelAutoStart->AutoSize = true;
-				this->labelAutoStart->Location = System::Drawing::Point(48, 185);
-				this->labelAutoStart->Name = L"labelAutoStart";
-				this->labelAutoStart->Size = System::Drawing::Size(150, 20);
-				this->labelAutoStart->TabIndex = 9;
-				this->labelAutoStart->Text = L"Автозапуск в:";
-				// 
 				// checkBoxAutoStart
 				// 
 				this->checkBoxAutoStart->AutoSize = true;
 				this->checkBoxAutoStart->Location = System::Drawing::Point(48, 215);
 				this->checkBoxAutoStart->Name = L"checkBoxAutoStart";
-				this->checkBoxAutoStart->Size = System::Drawing::Size(100, 24);
+				this->checkBoxAutoStart->Size = System::Drawing::Size(103, 24);
 				this->checkBoxAutoStart->TabIndex = 10;
 				this->checkBoxAutoStart->Text = L"Включен";
 				this->checkBoxAutoStart->UseVisualStyleBackColor = true;
@@ -525,19 +564,23 @@ namespace ProjectServerW {
 				// 
 				// dateTimePickerAutoStart
 				// 
-				this->dateTimePickerAutoStart->Format = System::Windows::Forms::DateTimePickerFormat::Custom;
 				this->dateTimePickerAutoStart->CustomFormat = L"HH:mm";
+				this->dateTimePickerAutoStart->Format = System::Windows::Forms::DateTimePickerFormat::Custom;
 				this->dateTimePickerAutoStart->Location = System::Drawing::Point(160, 215);
 				this->dateTimePickerAutoStart->Name = L"dateTimePickerAutoStart";
 				this->dateTimePickerAutoStart->ShowUpDown = true;
 				this->dateTimePickerAutoStart->Size = System::Drawing::Size(100, 26);
 				this->dateTimePickerAutoStart->TabIndex = 11;
-				this->dateTimePickerAutoStart->Value = System::DateTime::Now;
+				this->dateTimePickerAutoStart->Value = System::DateTime(2025, 11, 12, 19, 29, 7, 631);
 				// 
-				// timerAutoStart
+				// labelAutoStart
 				// 
-				this->timerAutoStart->Interval = 30000; // Проверка каждые 30 секунд
-				this->timerAutoStart->Tick += gcnew System::EventHandler(this, &DataForm::timerAutoStart_Tick);	// Подписывает метод timerAutoStart_Tick на событие Tick таймера.
+				this->labelAutoStart->AutoSize = true;
+				this->labelAutoStart->Location = System::Drawing::Point(48, 185);
+				this->labelAutoStart->Name = L"labelAutoStart";
+				this->labelAutoStart->Size = System::Drawing::Size(113, 20);
+				this->labelAutoStart->TabIndex = 9;
+				this->labelAutoStart->Text = L"Автозапуск в:";
 				// 
 				// buttonBrowse
 				// 
@@ -567,25 +610,10 @@ namespace ProjectServerW {
 				this->labelExcelDirectory->TabIndex = 0;
 				this->labelExcelDirectory->Text = L"Размещение EXCEL файла:";
 				// 
-				// label_Commands_Info
+				// timerAutoStart
 				// 
-				this->label_Commands_Info->AutoSize = true;
-				this->label_Commands_Info->Location = System::Drawing::Point(44, 449);
-				this->label_Commands_Info->Name = L"label_Commands_Info";
-				this->label_Commands_Info->Size = System::Drawing::Size(196, 20);
-				this->label_Commands_Info->TabIndex = 8;
-				this->label_Commands_Info->Text = L"Информация о команде:";
-				// 
-				// button_RESET
-				// 
-				this->button_RESET->Location = System::Drawing::Point(48, 395);
-				this->button_RESET->Name = L"button_RESET";
-				this->button_RESET->RightToLeft = System::Windows::Forms::RightToLeft::Yes;
-				this->button_RESET->Size = System::Drawing::Size(91, 33);
-				this->button_RESET->TabIndex = 9;
-				this->button_RESET->Text = L"СБРОС";
-				this->button_RESET->UseVisualStyleBackColor = true;
-				this->button_RESET->Click += gcnew System::EventHandler(this, &DataForm::button_RESET_Click);
+				this->timerAutoStart->Interval = 30000;
+				this->timerAutoStart->Tick += gcnew System::EventHandler(this, &DataForm::timerAutoStart_Tick);
 				// 
 				// DataForm
 				// 
@@ -696,11 +724,13 @@ namespace ProjectServerW {
 			void EnableButton();
 			bool SendCommand(const struct Command& cmd); // Универсальный метод отправки команды (имя определяется автоматически)
 			bool SendCommand(const struct Command& cmd, System::String^ commandName); // Универсальный метод отправки команды с явным именем
-			void SendStartCommand(); // Метод для отправки команды START клиенту
-			void SendStopCommand(); // Метод для отправки команды STOP клиенту
-			void SendResetCommand(); // Метод для отправки команды RESET клиенту
-			
-			// Методы для обработки ответов от контроллера
+		void SendStartCommand(); // Метод для отправки команды START клиенту
+		void SendStopCommand(); // Метод для отправки команды STOP клиенту
+		void SendResetCommand(); // Метод для отправки команды RESET клиенту
+		void SendVersionRequest(); // Метод для запроса версии прошивки контроллера
+		void UpdateVersionLabelInternal(); // Вспомогательный метод для обновления label_Version из UI потока
+		
+		// Методы для обработки ответов от контроллера
 			static void EnqueueResponse(cli::array<System::Byte>^ response); // Добавление ответа в очередь (вызывается из SServer)
 			bool ReceiveResponse(struct CommandResponse& response, int timeoutMs); // Прием ответа от контроллера с таймаутом
 			bool ReceiveResponse(struct CommandResponse& response); // Прием ответа от контроллера (таймаут по умолчанию 1000 мс)
@@ -745,14 +775,14 @@ namespace ProjectServerW {
 		// Формируем команду "STOP" для отправки клиенту
 		SendStopCommand();
 	}
-	private: System::Void button_RESET_Click(System::Object^ sender, System::EventArgs^ e) {
-		// Формируем команду "RESET" для отправки клиенту
-		SendResetCommand();
-	}
-	
-	// ====================================================================
-	// Обработчики автозапуска по времени (объявления)
-	// ====================================================================
+private: System::Void button_RESET_Click(System::Object^ sender, System::EventArgs^ e) {
+	// Формируем команду "RESET" для отправки клиенту
+	SendResetCommand();
+}
+
+// ====================================================================
+// Обработчики автозапуска по времени (объявления)
+// ====================================================================
 	
 	private: System::Void checkBoxAutoStart_CheckedChanged(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void timerAutoStart_Tick(System::Object^ sender, System::EventArgs^ e);
