@@ -1,4 +1,4 @@
 #pragma once
 
 // Строка версии для отображения
-#define VERSION_STR L"1.3.4"
+#define VERSION_STR L"1.3.5"

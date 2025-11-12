@@ -452,7 +452,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 					ackCmd = CreateTelemetryAckCommand(CmdTelemetry::DATA_OK);
 					
 			} else {
-				// ===== CRC НЕПРАВИЛЬНЫЙ - ПОПЫТКА ВОССТАНОВИТЬ СИНХРОНИЗАЦИЮ =====
+				// ===== CRC НЕПРАВИЛЬНЫЙ - ПРОПУСКАЕМ ВЕСЬ ПАКЕТ =====
 				consecutiveErrors++;  // Увеличиваем счётчик ошибок
 				
 				// ДИАГНОСТИКА: Выводим детальную информацию при ошибке CRC (первые 5 ошибок)
@@ -468,7 +468,8 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 					GlobalLogger::LogMessage(ConvertToStdString(String::Format(
 						"[ОШИБКА CRC #{0}] Expected={1:X4}, Received={2:X4}\n" +
 						"             AccumBytes={3}, ProcessedBytes={4}, PacketSize={5}\n" +
-						"             HEX: {6}", 
+						"             HEX: {6}\n" +
+						"             ПРОПУСКАЕМ ВЕСЬ ПАКЕТ (48 байт)", 
 						consecutiveErrors, dataCRC, DatCRC, accumulatedBytes, processedBytes, bytesInPacket,
 						gcnew String(hexDump.c_str()))));
 				} else if (consecutiveErrors == 6) {
@@ -476,38 +477,15 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				} else {
 					// Только короткое сообщение для последующих ошибок
 					GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-						"Ошибка CRC телеметрии: Expected={0:X4}, Received={1:X4}", 
+						"Ошибка CRC телеметрии: Expected={0:X4}, Received={1:X4}, пропускаем пакет", 
 						dataCRC, DatCRC)));
 				}
 				
-				// ВОССТАНОВЛЕНИЕ СИНХРОНИЗАЦИИ: Ищем следующий Type=0x00
-				if (consecutiveErrors >= 3) {
-					// Ищем следующий байт 0x00 в буфере (потенциальное начало телеметрии)
-					int searchOffset = 1;
-					bool found = false;
-					
-					while (processedBytes + searchOffset < accumulatedBytes && searchOffset < 48) {
-						if (accumulatedBuffer[processedBytes + searchOffset] == 0x00) {
-							// Нашли потенциальное начало пакета
-							found = true;
-							break;
-						}
-						searchOffset++;
-					}
-					
-					if (found && searchOffset > 1) {
-						GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-							"[РЕСИНХРОНИЗАЦИЯ] Пропускаем {0} байт, найден Type=0x00", searchOffset)));
-						processedBytes += searchOffset;
-					} else {
-						// Не нашли или это следующий байт - пропускаем 1 байт
-						GlobalLogger::LogMessage("[РЕСИНХРОНИЗАЦИЯ] Пропускаем 1 байт");
-						processedBytes += 1;
-					}
-					continue;  // Переходим к следующей итерации без отправки подтверждения
-				}
+				// ПРАВИЛЬНАЯ ОБРАБОТКА: Пропускаем ВСЕ 48 байт сбойного пакета телеметрии
+				// Это гарантирует, что следующий парсинг начнётся с начала нового пакета
+				processedBytes += TELEMETRY_PACKET_SIZE;  // Пропускаем весь пакет (48 байт)
 				
-				// Для первых 2 ошибок - отправляем DATA_FALSE как обычно
+				// Отправляем DATA_FALSE контроллеру для информирования об ошибке
 				ackCmd = CreateTelemetryAckCommand(CmdTelemetry::DATA_FALSE);
 			} // конец if (crcValid)
 

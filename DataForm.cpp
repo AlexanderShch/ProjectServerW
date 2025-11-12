@@ -1314,11 +1314,11 @@ void ProjectServerW::DataForm::EnqueueResponse(cli::array<System::Byte>^ respons
         responseAvailable->Release(); // Сигнализируем о доступности ответа
         
         GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-            "Response enqueued: Type=0x{0:X2}, Size={1} bytes", 
+            "Ответ поставлен в очередь на обработку: Type=0x{0:X2}, Size={1} bytes", 
             response[0], response->Length)));
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage(ConvertToStdString("Error enqueueing response: " + ex->Message));
+        GlobalLogger::LogMessage(ConvertToStdString("Ошибка при постановке ответа в очередь: " + ex->Message));
     }
 }
 
@@ -1327,14 +1327,14 @@ bool ProjectServerW::DataForm::ReceiveResponse(CommandResponse& response, int ti
     try {
         // Проверяем, что сокет клиента открыт
         if (clientSocket == INVALID_SOCKET) {
-            GlobalLogger::LogMessage("Error: Client socket is invalid for receiving response");
+            GlobalLogger::LogMessage("Error: Клиентский сокет недопустим для получения ответа");
             return false;
         }
 
         // ===== ОЖИДАНИЕ ОТВЕТА ИЗ ОЧЕРЕДИ =====
         // Ждем появления ответа в очереди с таймаутом
         if (!responseAvailable->WaitOne(timeoutMs)) {
-            String^ msg = "Timeout: No response received from controller";
+            String^ msg = "Timeout: Ответ от контроллера не получен";
             GlobalLogger::LogMessage(ConvertToStdString(msg));
             return false;
         }
@@ -1342,7 +1342,7 @@ bool ProjectServerW::DataForm::ReceiveResponse(CommandResponse& response, int ti
         // Получаем ответ из очереди
         cli::array<System::Byte>^ responseBuffer;
         if (!responseQueue->TryDequeue(responseBuffer)) {
-            String^ msg = "Error: Failed to dequeue response";
+            String^ msg = "Error: Не удалось вывести ответ из очереди";
             GlobalLogger::LogMessage(ConvertToStdString(msg));
             return false;
         }
@@ -1354,14 +1354,14 @@ bool ProjectServerW::DataForm::ReceiveResponse(CommandResponse& response, int ti
 
         // Разбираем полученный ответ
         if (!ParseResponseBuffer(buffer, responseBuffer->Length, response)) {
-            String^ msg = "Error: Failed to parse response from controller";
+            String^ msg = "Error: Не удалось проанализировать ответ от контроллера";
             GlobalLogger::LogMessage(ConvertToStdString(msg));
             return false;
         }
 
         // Логируем успешное получение ответа
         String^ logMsg = String::Format(
-            "Response processed: Type=0x{0:X2}, Code=0x{1:X2}, Status={2}, DataLen={3}",
+            "Ответ обработан: Type=0x{0:X2}, Code=0x{1:X2}, Status={2}, DataLen={3}",
             response.commandType, response.commandCode, 
             gcnew String(GetStatusName(response.status)), response.dataLength);
         GlobalLogger::LogMessage(ConvertToStdString(logMsg));
@@ -1369,7 +1369,7 @@ bool ProjectServerW::DataForm::ReceiveResponse(CommandResponse& response, int ti
         return true;
 
     } catch (Exception^ ex) {
-        String^ errorMsg = "Exception in ReceiveResponse: " + ex->Message;
+        String^ errorMsg = "Исключение в полученном ответе: " + ex->Message;
         GlobalLogger::LogMessage(ConvertToStdString(errorMsg));
         return false;
     }
