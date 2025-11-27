@@ -50,13 +50,37 @@ SServer::~SServer() {
 }
 
 void SServer::startServer() {
-	MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
-	GlobalLogger::Initialize();
-
+	try {
+		MyForm^ form = nullptr;
+		try {
+			form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
+		}
+		catch (Exception^ ex) {
+			GlobalLogger::LogMessage(ConvertToStdString("Error: Cannot access MyForm in startServer: " + ex->Message));
+			return;
+		}
+		
+		if (form == nullptr) {
+			GlobalLogger::LogMessage("Error: MyForm is null in startServer");
+			return;
+		}
+		
+		GlobalLogger::Initialize();
+	
 	if (WSAStartup(MAKEWORD(2, 2), &wData) == 0) {
-		form->SetWSA_TextValue("WSA Startup success");
+		try {
+			form->SetWSA_TextValue("WSA Startup success");
+		}
+		catch (Exception^ ex) {
+			GlobalLogger::LogMessage(ConvertToStdString("Warning: Error updating form in WSA startup: " + ex->Message));
+		}
 	} else {
-		form->SetWSA_TextValue("WSA Startup failed: " + WSAGetLastError());
+		try {
+			form->SetWSA_TextValue("WSA Startup failed: " + WSAGetLastError());
+		}
+		catch (Exception^ ex) {
+			GlobalLogger::LogMessage(ConvertToStdString("Warning: Error updating form in WSA startup failure: " + ex->Message));
+		}
         return;
     }
 
@@ -68,15 +92,35 @@ void SServer::startServer() {
 
 	this_s = socket(AF_INET, SOCK_STREAM, 0);
 	if (this_s == SOCKET_ERROR) {
-		form->SetSocketState_TextValue("Error when creating a socket");
+		try {
+			form->SetSocketState_TextValue("Error when creating a socket");
+		}
+		catch (Exception^ ex) {
+			GlobalLogger::LogMessage(ConvertToStdString("Warning: Error updating form: " + ex->Message));
+		}
 	} else {
-		form->SetSocketState_TextValue("Socket is created");
+		try {
+			form->SetSocketState_TextValue("Socket is created");
+		}
+		catch (Exception^ ex) {
+			GlobalLogger::LogMessage(ConvertToStdString("Warning: Error updating form: " + ex->Message));
+		}
 	}
 
 	if (bind(this_s, (struct sockaddr*)&addr, sizeof(addr)) != SOCKET_ERROR) {
-		form->SetSocketBind_TextValue("Socket successfully binded");
+		try {
+			form->SetSocketBind_TextValue("Socket successfully binded");
+		}
+		catch (Exception^ ex) {
+			GlobalLogger::LogMessage(ConvertToStdString("Warning: Error updating form: " + ex->Message));
+		}
 	}else {
-		form->SetSocketBind_TextValue("Socket bind failed: " + WSAGetLastError());
+		try {
+			form->SetSocketBind_TextValue("Socket bind failed: " + WSAGetLastError());
+		}
+		catch (Exception^ ex) {
+			GlobalLogger::LogMessage(ConvertToStdString("Warning: Error updating form: " + ex->Message));
+		}
         closesocket(this_s);
         return;
     }
@@ -85,28 +129,80 @@ void SServer::startServer() {
 		// Установите текст в textBox_ListPort
 		unsigned short port = ntohs(addr.sin_port);
 		System::String^ portString = port.ToString();
-		form->SetTextValue("Start listenin at port " + portString);
+		try {
+			form->SetTextValue("Start listenin at port " + portString);
+		}
+		catch (Exception^ ex) {
+			GlobalLogger::LogMessage(ConvertToStdString("Warning: Error updating form: " + ex->Message));
+		}
 		GlobalLogger::LogMessage(ConvertToStdString("Start listenin at port " + portString));
 	}
 	
-	if (form->InvokeRequired) {
-		form->Invoke(gcnew Action(form, &MyForm::Refresh));
+	try {
+		if (form->InvokeRequired) {
+			form->Invoke(gcnew Action(form, &MyForm::Refresh));
+		}
+		else {
+			form->Refresh();
+		}
 	}
-	else {
-		form->Refresh();
+	catch (Exception^ ex) {
+		GlobalLogger::LogMessage(ConvertToStdString("Warning: Error refreshing form: " + ex->Message));
 	}
+	
 	handle();
+	}
+	catch (Exception^ ex) {
+		// Top-level CLR exception handler
+		GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+			"FATAL: Unhandled managed exception in startServer: {0}\nStackTrace: {1}",
+			ex->Message, ex->StackTrace)));
+	}
+	catch (const std::exception& ex) {
+		// Top-level native C++ exception handler
+		GlobalLogger::LogMessage(std::string("FATAL: Unhandled native exception in startServer: ") + ex.what());
+	}
+	catch (...) {
+		// Top-level unknown exception handler
+		GlobalLogger::LogMessage("FATAL: Unhandled unknown exception in startServer");
+	}
 }
 
 void SServer::closeServer() {
-	MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
-	closesocket(this_s);
-	WSACleanup();
-	if (form != nullptr && !form->IsDisposed) {
-		form->SetWSA_TextValue("Server was stopped");
-		form->SetSocketState_TextValue(" ");
-		form->SetSocketBind_TextValue(" ");
-		form->SetTextValue(" ");
+	try {
+		MyForm^ form = nullptr;
+		try {
+			form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
+		}
+		catch (Exception^ ex) {
+			GlobalLogger::LogMessage(ConvertToStdString("Warning: Cannot access MyForm in closeServer: " + ex->Message));
+		}
+		
+		closesocket(this_s);
+		WSACleanup();
+		
+		if (form != nullptr && !form->IsDisposed) {
+			try {
+				form->SetWSA_TextValue("Server was stopped");
+				form->SetSocketState_TextValue(" ");
+				form->SetSocketBind_TextValue(" ");
+				form->SetTextValue(" ");
+			}
+			catch (Exception^ ex) {
+				GlobalLogger::LogMessage(ConvertToStdString("Warning: Error updating form in closeServer: " + ex->Message));
+			}
+		}
+	}
+	catch (Exception^ ex) {
+		GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+			"Error in closeServer: {0}\nStackTrace: {1}",
+			ex->Message, ex->StackTrace)));
+	}
+	catch (const std::exception& ex) {
+		GlobalLogger::LogMessage(std::string("Error in closeServer: ") + ex.what());
+	}
+	catch (...) {
+		GlobalLogger::LogMessage("Unknown error in closeServer");
 	}
 }
 
@@ -126,15 +222,52 @@ String^ GetIPString(const SOCKADDR_IN& addr_c) {
 }
 
 void SServer::handle() {
-	while (true)
-	{
-		SOCKET acceptS;
-		SOCKADDR_IN addr_c{};
-		// откроем форму MyForm для вывода сообщений о клиенте и ошибок
-		MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
+	try {
+		GlobalLogger::LogMessage("======================================================================");
+		GlobalLogger::LogMessage("Information: handle() - Вход в основной цикл приема подключений");
+		GlobalLogger::LogMessage("======================================================================");
+		
+		int iterationCount = 0;  // Счетчик итераций для периодического логирования
+		
+		while (true)
+		{
+			try {
+				iterationCount++;
+				SOCKET acceptS;
+				SOCKADDR_IN addr_c{};
+				// откроем форму MyForm для вывода сообщений о клиенте и ошибок
+				MyForm^ form = nullptr;
+				try {
+					form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
+				}
+				catch (Exception^ ex) {
+					GlobalLogger::LogMessage(ConvertToStdString("Error: Cannot access MyForm: " + ex->Message));
+					Sleep(1000);
+					continue;
+				}
+		
+		// Периодическое логирование (каждые 50 итераций = примерно каждые 10 секунд)
+		if (iterationCount % 50 == 0) {
+			String^ formStatus = (form != nullptr) ? 
+				(form->IsDisposed ? "DISPOSED" : "OK") : 
+				"NULL";
+			GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+				"Debug: handle() - Итерация {0}, Статус формы: {1}", 
+				iterationCount, formStatus)));
+		}
 
 		// Проверяем, существует ли форма
-		if (form == nullptr || form->IsDisposed) {
+		if (form == nullptr) {
+			GlobalLogger::LogMessage("======================================================================");
+			GlobalLogger::LogMessage("CRITICAL: handle() - ВЫХОД ИЗ ЦИКЛА: form == nullptr");
+			GlobalLogger::LogMessage("======================================================================");
+			break; // Выходим из цикла, если форма закрыта
+		}
+		
+		if (form->IsDisposed) {
+			GlobalLogger::LogMessage("======================================================================");
+			GlobalLogger::LogMessage("CRITICAL: handle() - ВЫХОД ИЗ ЦИКЛА: form->IsDisposed == true");
+			GlobalLogger::LogMessage("======================================================================");
 			break; // Выходим из цикла, если форма закрыта
 		}
 
@@ -143,7 +276,12 @@ void SServer::handle() {
 			int ClientPort = ntohs(addr_c.sin_port);
 			String^ address = GetIPString(addr_c);
 			if (form != nullptr && !form->IsDisposed) {
-				form->SetClientAddr_TextValue(address);
+				try {
+					form->SetClientAddr_TextValue(address);
+				}
+				catch (Exception^ ex) {
+					GlobalLogger::LogMessage(ConvertToStdString("Warning: Error updating form: " + ex->Message));
+				}
 			}
 
             // Создание нового потока для обработки клиента
@@ -160,23 +298,91 @@ void SServer::handle() {
 
             if (hThread == NULL) {
 				if (form != nullptr && !form->IsDisposed) {
-					form->SetMessage_TextValue("Error: Failed to create thread");
+					try {
+						form->SetMessage_TextValue("Error: Failed to create thread");
+					}
+					catch (Exception^ ex) {
+						GlobalLogger::LogMessage(ConvertToStdString("Warning: Error updating form: " + ex->Message));
+					}
 				}
 				GlobalLogger::LogMessage("Error: Failed to create thread");
 				closesocket(acceptS);
 			} else {
 				if (form != nullptr && !form->IsDisposed) {
-					form->SetMessage_TextValue("Information: New thread was created");
-					// Визуальный разделитель для нового соединения
-					GlobalLogger::LogMessage("");
-					GlobalLogger::LogMessage("================================================================================");
-					GlobalLogger::LogMessage(ConvertToStdString("Information: New thread was created, port " + ClientPort));
+					try {
+						form->SetMessage_TextValue("Information: New thread was created");
+						// Визуальный разделитель для нового соединения
+						GlobalLogger::LogMessage("");
+						GlobalLogger::LogMessage("================================================================================");
+						GlobalLogger::LogMessage(ConvertToStdString("Information: New thread was created, port " + ClientPort));
+					}
+					catch (Exception^ ex) {
+						GlobalLogger::LogMessage(ConvertToStdString("Warning: Error updating form: " + ex->Message));
+					}
 				}
 				CloseHandle(hThread); // Закрытие дескриптора потока
             }
+		} else {
+			// accept() вернул ошибку - возможно, серверный сокет закрыт
+			int error = WSAGetLastError();
+			if (error == WSAENOTSOCK || error == WSAEINTR || error == WSAEINVAL) {
+				// Серверный сокет закрыт или недействителен - выходим из цикла
+				GlobalLogger::LogMessage("======================================================================");
+				GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+					"CRITICAL: handle() - ВЫХОД ИЗ ЦИКЛА: accept() вернул ошибку {0} (серверный сокет закрыт)", error)));
+				GlobalLogger::LogMessage("======================================================================");
+				break;
+			}
+			// Другие ошибки - логируем и продолжаем
+			if (form != nullptr && !form->IsDisposed) {
+				try {
+					form->SetMessage_TextValue("Warning: accept() failed with error " + error);
+				}
+				catch (Exception^ ex) {
+					GlobalLogger::LogMessage(ConvertToStdString("Warning: Error updating form: " + ex->Message));
+				}
+			}
+			GlobalLogger::LogMessage(ConvertToStdString(String::Format("Warning: accept() failed with error {0}, продолжаем работу", error)));
 		}
 		Sleep(200);
+			}
+			catch (Exception^ ex) {
+				// CLR exception in iteration
+				GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+					"CRITICAL: Managed exception in handle() iteration {0}: {1}\nStackTrace: {2}",
+					iterationCount, ex->Message, ex->StackTrace)));
+				Sleep(1000); // Wait before retry
+			}
+			catch (const std::exception& ex) {
+				// Native C++ exception in iteration
+				GlobalLogger::LogMessage(std::string("CRITICAL: Native exception in handle() iteration: ") + ex.what());
+				Sleep(1000); // Wait before retry
+			}
+			catch (...) {
+				// Unknown exception in iteration
+				GlobalLogger::LogMessage("CRITICAL: Unknown exception in handle() iteration");
+				Sleep(1000); // Wait before retry
+			}
 	}
+	}
+	catch (Exception^ ex) {
+		// CLR exception in main loop
+		GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+			"FATAL: Unhandled managed exception in handle(): {0}\nStackTrace: {1}",
+			ex->Message, ex->StackTrace)));
+	}
+	catch (const std::exception& ex) {
+		// Native C++ exception in main loop
+		GlobalLogger::LogMessage(std::string("FATAL: Unhandled native exception in handle(): ") + ex.what());
+	}
+	catch (...) {
+		// Unknown exception in main loop
+		GlobalLogger::LogMessage("FATAL: Unhandled unknown exception in handle()");
+	}
+	
+	GlobalLogger::LogMessage("======================================================================");
+	GlobalLogger::LogMessage("Information: handle() - ВЫХОД ИЗ ОСНОВНОГО ЦИКЛА");
+	GlobalLogger::LogMessage("======================================================================");
 }
 
 // Табличное определение CRC
@@ -191,15 +397,24 @@ static uint16_t MB_GetCRC(char* buf, uint16_t len)
 }
 
 DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
-	SOCKADDR_IN clientAddr = {};
-	int addrLen = sizeof(clientAddr);
-	int clientPort = 0;
-	int SclientPort = 900000; // Порт Sclient
+	try {
+		SOCKADDR_IN clientAddr = {};
+		int addrLen = sizeof(clientAddr);
+		int clientPort = 0;
+		int SclientPort = 900000; // Порт Sclient
 
-	SOCKET clientSocket = (SOCKET)lpParam;
-	int bytesReceived;
-	// откроем форму MyForm для записи сообщений об ошибках
-	MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
+		SOCKET clientSocket = (SOCKET)lpParam;
+		int bytesReceived;
+		// откроем форму MyForm для записи сообщений об ошибках
+		MyForm^ form = nullptr;
+		try {
+			form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
+		}
+		catch (Exception^ ex) {
+			GlobalLogger::LogMessage(ConvertToStdString("Error: Cannot access MyForm in ClientHandler: " + ex->Message));
+			closesocket(clientSocket);
+			return 1;
+		}
 
 	// Получаем информацию о клиенте
 	if (getpeername(clientSocket, (SOCKADDR*)&clientAddr, &addrLen) != SOCKET_ERROR) {
@@ -215,7 +430,16 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		clientAddr.sin_addr.S_un.S_un_b.s_b4);
 
 	// Проверяем, есть ли уже активное соединение от этого IP
-	std::wstring existingGuid = ProjectServerW::DataForm::FindFormByClientIP(clientIPAddress);
+	std::wstring existingGuid;
+	try {
+		existingGuid = ProjectServerW::DataForm::FindFormByClientIP(clientIPAddress);
+	}
+	catch (Exception^ ex) {
+		GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in FindFormByClientIP: " + ex->Message));
+		closesocket(clientSocket);
+		return 1;
+	}
+	
 	if (!existingGuid.empty()) {
 		// Уже есть активное соединение от этого IP
 		String^ warningMsg = "Внимание: Уже существует активное соединение от клиента " + clientIPAddress +
@@ -273,14 +497,15 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 
 	// Бесконечный цикл считывания данных
 	while (true) {
-		// Принимаем данные в конец накопительного буфера
-		int spaceAvailable = sizeof(accumulatedBuffer) - accumulatedBytes;
-		if (spaceAvailable <= 0) {
-			// Буфер переполнен - это ошибка
-			GlobalLogger::LogMessage("Error: Accumulated buffer overflow! Resetting buffer.");
-			accumulatedBytes = 0;
-			continue;
-		}
+		try {
+			// Принимаем данные в конец накопительного буфера
+			int spaceAvailable = sizeof(accumulatedBuffer) - accumulatedBytes;
+			if (spaceAvailable <= 0) {
+				// Буфер переполнен - это ошибка
+				GlobalLogger::LogMessage("Error: Accumulated buffer overflow! Resetting buffer.");
+				accumulatedBytes = 0;
+				continue;
+			}
 		
 		bytesReceived = recv(clientSocket, accumulatedBuffer + accumulatedBytes, spaceAvailable, 0);
 
@@ -420,7 +645,15 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				consecutiveErrors = 0;  // Сбрасываем счётчик ошибок
 				
 				// Найдём форму по идентификатору
-				DataForm^ form2 = DataForm::GetFormByGuid(guid);
+				DataForm^ form2 = nullptr;
+				try {
+					form2 = DataForm::GetFormByGuid(guid);
+				}
+				catch (Exception^ ex) {
+					GlobalLogger::LogMessage(ConvertToStdString("Warning: Exception in GetFormByGuid: " + ex->Message));
+					goto exitMainLoop;
+				}
+				
 					if (form2 != nullptr && !form2->IsDisposed && form2->IsHandleCreated && !form2->Disposing) 
 					{					
 						// Передадим в форму сокет клиента этой формы и IP-адрес
@@ -430,13 +663,18 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 						}
 						// ===== ОБРАБОТКА ТЕЛЕМЕТРИИ =====
 						if (clientPort < SclientPort) {
-							// Создаем копию данных для безопасной передачи в другой поток
-							cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(bytesInPacket);
-							Marshal::Copy(IntPtr(buffer), dataBuffer, 0, bytesInPacket);
-							// Вызываем AddDataToTable через Invoke для выполнения в потоке формы
-							form2->BeginInvoke(gcnew Action<cli::array <System::Byte>^, int, int>
-								(form2, &DataForm::AddDataToTableThreadSafe),
-								dataBuffer, bytesInPacket, clientPort);
+							try {
+								// Создаем копию данных для безопасной передачи в другой поток
+								cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(bytesInPacket);
+								Marshal::Copy(IntPtr(buffer), dataBuffer, 0, bytesInPacket);
+								// Вызываем AddDataToTable через Invoke для выполнения в потоке формы
+								form2->BeginInvoke(gcnew Action<cli::array <System::Byte>^, int, int>
+									(form2, &DataForm::AddDataToTableThreadSafe),
+									dataBuffer, bytesInPacket, clientPort);
+							}
+							catch (Exception^ ex) {
+								GlobalLogger::LogMessage(ConvertToStdString("Warning: Exception in BeginInvoke: " + ex->Message));
+							}
 							// Refresh вызывать отдельно уже не нужно - он будет вызван в AddDataToTableThreadSafe
 						} else {
 							// здесь обработка для другого типа порта
@@ -511,17 +749,69 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 			memmove(accumulatedBuffer, accumulatedBuffer + processedBytes, remainingBytes);
 		}
 		accumulatedBytes = remainingBytes;
+		}
+		catch (Exception^ ex) {
+			// CLR exception in main loop iteration
+			GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+				"CRITICAL: Managed exception in ClientHandler main loop: {0}\nStackTrace: {1}",
+				ex->Message, ex->StackTrace)));
+			Sleep(100); // Небольшая задержка перед следующей попыткой
+		}
+		catch (const std::exception& ex) {
+			// Native C++ exception in main loop iteration
+			GlobalLogger::LogMessage(std::string("CRITICAL: Native exception in ClientHandler main loop: ") + ex.what());
+			Sleep(100);
+		}
+		catch (...) {
+			// Unknown exception in main loop iteration
+			GlobalLogger::LogMessage("CRITICAL: Unknown exception in ClientHandler main loop");
+			Sleep(100);
+		}
 	}	// конец while (основной цикл)
 
 exitMainLoop:  // Метка для выхода из всех циклов
 	// Цикл приёма данных прерван по ошибке приёма, закрываем форрму приёма данных
 	closesocket(clientSocket);
 	// Найдём форму данных по идентификатору и закроем её
-	DataForm::CloseForm(guid);
+	try {
+		DataForm::CloseForm(guid);
+	}
+	catch (Exception^ ex) {
+		GlobalLogger::LogMessage(ConvertToStdString("Warning: Exception in CloseForm: " + ex->Message));
+	}
 	// Закрытие потока формы данных по guid формы
-	ThreadStorage::StopThread(guid);
+	try {
+		ThreadStorage::StopThread(guid);
+	}
+	catch (Exception^ ex) {
+		GlobalLogger::LogMessage(ConvertToStdString("Warning: Exception in StopThread: " + ex->Message));
+	}
+	catch (const std::exception& ex) {
+		GlobalLogger::LogMessage(std::string("Warning: Native exception in StopThread: ") + ex.what());
+	}
 
 	return 0;
+	}
+	catch (Exception^ ex) {
+		// Top-level CLR exception handler
+		GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+			"FATAL: Unhandled managed exception in ClientHandler: {0}\nStackTrace: {1}",
+			ex->Message, ex->StackTrace)));
+		closesocket((SOCKET)lpParam);
+		return 1;
+	}
+	catch (const std::exception& ex) {
+		// Top-level native C++ exception handler
+		GlobalLogger::LogMessage(std::string("FATAL: Unhandled native exception in ClientHandler: ") + ex.what());
+		closesocket((SOCKET)lpParam);
+		return 1;
+	}
+	catch (...) {
+		// Top-level unknown exception handler
+		GlobalLogger::LogMessage("FATAL: Unhandled unknown exception in ClientHandler");
+		closesocket((SOCKET)lpParam);
+		return 1;
+	}
 }
 
 std::string ConvertToStdString(System::String^ managedString) {
