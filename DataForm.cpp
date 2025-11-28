@@ -458,9 +458,11 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         row[bitNames[1][bit]] = bitValue;
     }
 
-    // Добавление строки в таблицу только во время работы дефростера
-    // ВРЕМЕННО ОТКЛЮЧЕНО ДЛЯ ОТЛАДКИ - данные записываются всегда
-    if (workBitDetected)
+    // Добавление строки в таблицу только во время работы контроллера
+    // Сохраняем данные если:
+    // 1. Work = 1 (работа идёт)
+    // 2. Work = 0, но идёт проверка остановки (workBitZeroTimerActive = true)
+    if (workBitDetected || workBitZeroTimerActive)
     {
         table->Rows->Add(row);
     }

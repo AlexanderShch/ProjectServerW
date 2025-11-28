@@ -385,6 +385,38 @@ void SServer::handle() {
 	GlobalLogger::LogMessage("======================================================================");
 }
 
+// =============================================================================
+// SYNC-МАРКЕРЫ для синхронизации пакетов от контроллера
+// =============================================================================
+const uint8_t SYNC_START_1 = 0xAA;
+const uint8_t SYNC_START_2 = 0x55;
+const uint8_t SYNC_END_1   = 0x55;
+const uint8_t SYNC_END_2   = 0xAA;
+
+// Check if sync markers are present at the beginning
+bool HasSyncMarkers(char* buffer, int bufferSize) {
+	if (bufferSize < 2) return false;
+	return ((uint8_t)buffer[0] == SYNC_START_1 && 
+	        (uint8_t)buffer[1] == SYNC_START_2);
+}
+
+// Find sync_start marker in buffer
+int FindSyncMarker(char* buffer, int bufferSize) {
+	for (int i = 0; i < bufferSize - 1; i++) {
+		if ((uint8_t)buffer[i] == SYNC_START_1 && 
+		    (uint8_t)buffer[i+1] == SYNC_START_2) {
+			return i;  // Found packet start
+		}
+	}
+	return -1;  // Not found
+}
+
+// Check sync_end marker
+bool CheckSyncEnd(char* buffer, int offset) {
+	return ((uint8_t)buffer[offset] == SYNC_END_1 &&
+	        (uint8_t)buffer[offset + 1] == SYNC_END_2);
+}
+
 // Табличное определение CRC
 static uint16_t MB_GetCRC(char* buf, uint16_t len)
 {
@@ -474,6 +506,15 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		}
 		// Сохраняем поток формы данных в хранилище с GUID формы в качестве ключа
 		ThreadStorage::StoreThread(guid, formThread);
+		
+		// КРИТИЧНО: Устанавливаем ClientIP сразу после создания формы
+		// для корректной работы проверки существующих подключений
+		DataForm^ newForm = DataForm::GetFormByGuid(guid);
+		if (newForm != nullptr) {
+			newForm->ClientIP = clientIPAddress;
+			GlobalLogger::LogMessage(ConvertToStdString("Information: ClientIP assigned to form: " + clientIPAddress));
+		}
+		
 		GlobalLogger::LogMessage(ConvertToStdString("Information: The DataForm has been opened successfully!"));
 	}
 	catch (const std::exception& e) {	// Обработка исключения, выводим сообщение об ошибке
@@ -493,7 +534,11 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	// Буфер для накопления данных (для обработки нескольких пакетов)
 	char accumulatedBuffer[1024];  // Буфер для накопления данных
 	int accumulatedBytes = 0;      // Количество накопленных байт
-	const int TELEMETRY_PACKET_SIZE = 48;  // Размер одного пакета телеметрии
+	const int TELEMETRY_PACKET_SIZE = 48;  // Размер одного пакета телеметрии (без sync)
+	
+	// Автоопределение режима работы контроллера
+	enum ProtocolMode { MODE_UNKNOWN, MODE_WITH_SYNC, MODE_WITHOUT_SYNC };
+	ProtocolMode protocolMode = MODE_UNKNOWN;
 
 	// Бесконечный цикл считывания данных
 	while (true) {
@@ -552,57 +597,118 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		// Обрабатываем все полные пакеты в буфере
 		int processedBytes = 0;
 		while (accumulatedBytes - processedBytes > 0) {
-			// Указатель на начало текущего пакета
 			char* buffer = accumulatedBuffer + processedBytes;
 			int remainingInBuffer = accumulatedBytes - processedBytes;
 			
-			// Минимум 1 байт для определения типа
-			if (remainingInBuffer < 1) {
-				break; // Недостаточно данных
-			}
-
-			// ===== РАЗЛИЧЕНИЕ ТИПА ПАКЕТА ПО ПЕРВОМУ БАЙТУ =====
-			uint8_t packetType = buffer[0];
-			int bytesInPacket = 0;
+			// Variables for packet processing
+			char* packetData = nullptr;  // Pointer to actual packet data (without sync if present)
+			int bytesInPacket = 0;       // Size of packet data
+			int totalBytesToSkip = 0;    // Total bytes to skip in buffer (including sync markers)
 			
-			// Определяем размер пакета
-			if (packetType == 0x00) {
-				// ОБРАБОТКА АНОМАЛИИ: Контроллер иногда присылает "ответы" с Type=0x00
-				// Проверяем, не 6-байтовый ли это мусорный пакет перед телеметрией
-				if (remainingInBuffer >= 6 && remainingInBuffer >= 54) {
-					// Достаточно данных для проверки
-					// Проверяем: есть ли второй Type=0x00 на позиции 6?
-					if (buffer[6] == 0x00) {
-						// Вероятно, первые 6 байт - мусор, пропускаем их
-						GlobalLogger::LogMessage("[ФИЛЬТР] Обнаружен мусорный 6-байтовый пакет с Type=0x00, пропускаем");
-						processedBytes += 6;
-						continue;  // Начинаем обработку заново со следующего пакета
+			// ===== STEP 1: AUTO-DETECT PROTOCOL MODE =====
+			if (protocolMode == MODE_UNKNOWN && remainingInBuffer >= 4) {
+				if (HasSyncMarkers(buffer, remainingInBuffer)) {
+					protocolMode = MODE_WITH_SYNC;
+					GlobalLogger::LogMessage("[SYNC] Обнаружен новый протокол с sync-маркерами (AA 55)");
+				} else {
+					protocolMode = MODE_WITHOUT_SYNC;
+					GlobalLogger::LogMessage("[SYNC] Используется старый протокол без sync-маркеров");
+				}
+			}
+			
+			// ===== STEP 2: PARSE BASED ON MODE =====
+			if (protocolMode == MODE_WITH_SYNC) {
+				// === MODE WITH SYNC MARKERS ===
+				if (remainingInBuffer < 4) break;  // Need at least: sync(2) + type(1) + something(1)
+				
+				// Check for sync_start
+				if (!HasSyncMarkers(buffer, remainingInBuffer)) {
+					// Missing sync at start - search for it
+					int syncPos = FindSyncMarker(buffer, remainingInBuffer);
+					if (syncPos == -1) {
+						// Keep last 2 bytes (may be partial sync)
+						processedBytes += (remainingInBuffer - 2);
+						GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+							"[SYNC] Sync не найден, пропуск {0} байт", remainingInBuffer - 2)));
+						break;
 					}
+					// Found sync - skip garbage before it
+					GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+						"[SYNC] Sync найден на позиции {0}, пропуск мусора", syncPos)));
+					processedBytes += syncPos;
+					continue;
 				}
 				
-				// Телеметрия - фиксированный размер 48 байт
-				bytesInPacket = TELEMETRY_PACKET_SIZE;
-			} else if (packetType >= 0x01 && packetType <= 0x04) {
-				// Ответ на команду - переменный размер
-				// Минимум 4 байта для чтения DataLen: Type + Code + Status + DataLen
-				if (remainingInBuffer < 4) {
-					break; // Недостаточно данных для определения размера
+				// Have sync_start - read packet type
+				uint8_t packetType = (uint8_t)buffer[2];
+				int dataSize = 0;
+				
+				if (packetType == 0x00) {
+					dataSize = 48;  // Telemetry
+				} else if (packetType >= 0x01 && packetType <= 0x04) {
+					if (remainingInBuffer < 6) break;  // Need DataLen byte
+					dataSize = 4 + (uint8_t)buffer[5] + 2;  // Type+Code+Status+DataLen+Data+CRC
+				} else {
+					// Unknown type - skip sync and continue
+					GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+						"[SYNC] Неизвестный тип 0x{0:X2} после sync", packetType)));
+					processedBytes += 2;
+					continue;
 				}
-				uint8_t dataLen = buffer[3]; // DataLen находится в 4-м байте (индекс 3)
-				bytesInPacket = 4 + dataLen + 2; // Type+Code+Status+DataLen + Data + CRC
+				
+				int fullSize = 2 + dataSize + 2;  // sync_start + data + sync_end
+				if (remainingInBuffer < fullSize) break;  // Wait for complete packet
+				
+				// Check sync_end
+				if (!CheckSyncEnd(buffer, 2 + dataSize)) {
+					GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+						"[SYNC] Нет sync_end, ожидали на позиции {0}", 2 + dataSize)));
+					processedBytes += 2;  // Skip sync_start, search again
+					continue;
+				}
+				
+				// Valid packet with sync markers
+				packetData = buffer + 2;       // Skip sync_start
+				bytesInPacket = dataSize;
+				totalBytesToSkip = fullSize;
+				
+			} else if (protocolMode == MODE_WITHOUT_SYNC) {
+				// === MODE WITHOUT SYNC (OLD PROTOCOL) ===
+				if (remainingInBuffer < 1) break;
+				
+				uint8_t packetType = (uint8_t)buffer[0];
+				
+				if (packetType == 0x00) {
+					// Legacy anomaly handling
+					if (remainingInBuffer >= 54 && buffer[6] == 0x00) {
+						GlobalLogger::LogMessage("[ФИЛЬТР] Мусорный 6-байтовый пакет, пропуск");
+						processedBytes += 6;
+						continue;
+					}
+					bytesInPacket = 48;
+				} else if (packetType >= 0x01 && packetType <= 0x04) {
+					if (remainingInBuffer < 4) break;
+					bytesInPacket = 4 + (uint8_t)buffer[3] + 2;
+				} else {
+					GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+						"Неизвестный тип 0x{0:X2}, пропуск 1 байт", packetType)));
+					processedBytes += 1;
+					continue;
+				}
+				
+				if (remainingInBuffer < bytesInPacket) break;
+				
+				packetData = buffer;
+				totalBytesToSkip = bytesInPacket;
+				
 			} else {
-				// Неизвестный тип - пропускаем 1 байт и продолжаем
-				GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-					"Неизвестный тип пакета: 0x{0:X2}, пропускаем 1 байт", 
-					packetType)));
-				processedBytes += 1;
-				continue;
+				// MODE_UNKNOWN and not enough data
+				break;
 			}
 			
-			// Проверяем, достаточно ли данных для полного пакета
-			if (remainingInBuffer < bytesInPacket) {
-				break; // Пакет неполный, ждем следующего recv()
-			}
+			// ===== STEP 3: PROCESS PACKET =====
+			// Now packetData points to clean packet data (without sync markers)
+			uint8_t packetType = (uint8_t)packetData[0];
 			
 			// ===== ОБРАБОТКА ПАКЕТА В ЗАВИСИМОСТИ ОТ ТИПА =====
 			if (packetType >= 0x01 && packetType <= 0x04) {
@@ -611,7 +717,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				
 				// Создаем управляемый массив для ответа
 				cli::array<System::Byte>^ responseBuffer = gcnew cli::array<System::Byte>(bytesInPacket);
-				Marshal::Copy(IntPtr(buffer), responseBuffer, 0, bytesInPacket);
+				Marshal::Copy(IntPtr(packetData), responseBuffer, 0, bytesInPacket);
 				
 				// Добавляем в очередь ответов
 				DataForm::EnqueueResponse(responseBuffer);
@@ -621,7 +727,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				// Обработка ответа будет выполнена в DataForm.cpp
 				
 				// Переходим к следующему пакету
-				processedBytes += bytesInPacket;
+				processedBytes += totalBytesToSkip;
 			} // конец if (packetType >= 0x01 && packetType <= 0x04)
 			else if (packetType == 0x00) {
 				// ===== ОБРАБОТКА ТЕЛЕМЕТРИИ =====
@@ -630,9 +736,9 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				// Длина посылки вместе с CRC
 				uint8_t LengthOfPackage = 48;
 				// Вычислим CRC16 для первых 46 байт
-				uint16_t dataCRC = MB_GetCRC(buffer, LengthOfPackage - 2);
+				uint16_t dataCRC = MB_GetCRC(packetData, LengthOfPackage - 2);
 				uint16_t DatCRC;
-				memcpy(&DatCRC, &buffer[LengthOfPackage - 2], 2);
+				memcpy(&DatCRC, &packetData[LengthOfPackage - 2], 2);
 				bool crcValid = (DatCRC == dataCRC);
 
 				// Переменные для команды подтверждения (объявляем ДО if/else)
@@ -656,17 +762,16 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				
 					if (form2 != nullptr && !form2->IsDisposed && form2->IsHandleCreated && !form2->Disposing) 
 					{					
-						// Передадим в форму сокет клиента этой формы и IP-адрес
+						// Передадим в форму сокет клиента (IP уже был установлен ранее)
 						if (form2 != nullptr) {
 							form2->ClientSocket = clientSocket;
-							form2->ClientIP = clientIPAddress;
 						}
 						// ===== ОБРАБОТКА ТЕЛЕМЕТРИИ =====
 						if (clientPort < SclientPort) {
 							try {
 								// Создаем копию данных для безопасной передачи в другой поток
 								cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(bytesInPacket);
-								Marshal::Copy(IntPtr(buffer), dataBuffer, 0, bytesInPacket);
+								Marshal::Copy(IntPtr(packetData), dataBuffer, 0, bytesInPacket);
 								// Вызываем AddDataToTable через Invoke для выполнения в потоке формы
 								form2->BeginInvoke(gcnew Action<cli::array <System::Byte>^, int, int>
 									(form2, &DataForm::AddDataToTableThreadSafe),
@@ -698,7 +803,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 					std::string hexDump = "";
 					for (int i = 0; i < min(48, bytesInPacket); i++) {
 						char hex[8];
-						sprintf_s(hex, sizeof(hex), "%02X ", (uint8_t)buffer[i]);
+						sprintf_s(hex, sizeof(hex), "%02X ", (uint8_t)packetData[i]);
 						hexDump += hex;
 						if ((i + 1) % 16 == 0) hexDump += "\n                ";
 					}
@@ -739,7 +844,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				}
 				
 				// Переходим к следующему пакету
-				processedBytes += bytesInPacket;
+				processedBytes += totalBytesToSkip;
 			} // else if (packetType == 0x00)
 		} // конец while (обработка пакетов из буфера)
 		
