@@ -42,12 +42,15 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::Label^ labelVersion;
 
 
+		// Статический мьютекс для защиты от параллельного запуска Excel
+		static System::Threading::Mutex^ excelMutex;
 
-			static System::Threading::Semaphore^ responseAvailable;
+		static System::Threading::Semaphore^ responseAvailable;
 		
 		// Статический конструктор для инициализации статических управляемых членов
 		static DataForm() {
 			responseQueue = gcnew System::Collections::Concurrent::ConcurrentQueue<cli::array<System::Byte>^>();
+			excelMutex = gcnew System::Threading::Mutex(false, "Global\\ProjectServerW_Excel_Mutex");
 			responseAvailable = gcnew System::Threading::Semaphore(0, 100);
 		}
 		

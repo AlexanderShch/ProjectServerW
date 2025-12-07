@@ -471,11 +471,52 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
 
 // 3. Сохраняем таблицу в EXCEL
 void ProjectServerW::DataForm::AddDataToExcel() {
+    // КРИТИЧНО: Защита от параллельного запуска Excel из разных потоков
+    // Excel COM не поддерживает многопоточность!
+    bool mutexAcquired = false;
+    try {
+        // Ожидание освобождения мьютекса (максимум 5 минут = 300 сек)
+        // Анализ логов показал: максимальное время записи ~166 сек (52k строк)
+        // Запас х2 для больших файлов и медленных дисков
+        const int timeoutMs = 5 * 60 * 1000;  // 5 минут
+        mutexAcquired = excelMutex->WaitOne(timeoutMs);
+        
+        if (!mutexAcquired) {
+            GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+                "ERROR: Не удалось получить доступ к Excel (таймаут {0} сек), другой поток уже работает с Excel",
+                timeoutMs / 1000)));
+            MessageBox::Show("Не удалось сохранить данные: Excel занят другим процессом более 5 минут.\n" +
+                           "Возможно, предыдущая запись зависла. Проверьте процессы Excel в диспетчере задач.",
+                "Excel занят", MessageBoxButtons::OK, MessageBoxIcon::Warning);
+            return;
+        }
+        
+        GlobalLogger::LogMessage("Information: Мьютекс Excel получен, начинаем запись");
+    }
+    catch (System::Threading::AbandonedMutexException^ ex) {
+        // КРИТИЧНО: Предыдущий поток завис/крашнулся с мьютексом!
+        // Мьютекс был автоматически освобождён системой, но данные могут быть повреждены
+        GlobalLogger::LogMessage("WARNING: Обнаружен заброшенный мьютекс Excel! Предыдущий поток аварийно завершился.");
+        GlobalLogger::LogMessage(ConvertToStdString("AbandonedMutex details: " + ex->Message));
+        
+        // Мьютекс теперь принадлежит нам, но нужно быть осторожным
+        mutexAcquired = true;
+        
+        MessageBox::Show("Предупреждение: Обнаружена аварийная ситуация при предыдущей записи Excel.\n" +
+                        "Будет выполнена попытка сохранения данных.",
+                        "Восстановление после сбоя", MessageBoxButtons::OK, MessageBoxIcon::Warning);
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("ERROR: Ошибка получения мьютекса Excel: " + ex->Message));
+        return;
+    }
+    
     // Создаём объект Excel в STA-потоке
     ExcelHelper^ excel = nullptr;
-    excel = gcnew ExcelHelper();
-
+    
     try {
+        excel = gcnew ExcelHelper();
+
         // Замеряем время выполнения для мониторинга производительности
         DateTime startTime = DateTime::Now;
         GlobalLogger::LogMessage("Information: Начало записи в Excel...");
@@ -851,10 +892,33 @@ void ProjectServerW::DataForm::AddDataToExcel() {
             if (exportCompletedEvent != nullptr) {
                 exportCompletedEvent->Set();
             }
+            
+            // КРИТИЧНО: Освобождаем мьютекс Excel в любом случае
+            if (mutexAcquired) {
+                try {
+                    excelMutex->ReleaseMutex();
+                    GlobalLogger::LogMessage("Information: Мьютекс Excel освобождён");
+                }
+                catch (Exception^ ex) {
+                    GlobalLogger::LogMessage(ConvertToStdString("ERROR: Ошибка освобождения мьютекса: " + ex->Message));
+                }
+            }
         }
-        catch (...) {}
-    }    
-
+        catch (...) {
+            // Ignore errors in Excel finalization
+            
+            // Освобождаем мьютекс даже при ошибке в finalization
+            if (mutexAcquired) {
+                try {
+                    excelMutex->ReleaseMutex();
+                    GlobalLogger::LogMessage("Information: Мьютекс Excel освобождён (после ошибки в finalization)");
+                }
+                catch (Exception^ ex) {
+                    GlobalLogger::LogMessage(ConvertToStdString("ERROR: Ошибка освобождения мьютекса: " + ex->Message));
+                }
+            }
+        }
+    }
 }
 
 // Отложенная сборка мусора
