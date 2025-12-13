@@ -10,7 +10,7 @@ namespace ProjectServerW {
 	using namespace System::Drawing;
 
 	/// <summary>
-	/// Форма для MyForm
+	/// Описание для MyForm
 	/// </summary>
 	public ref class MyForm : public System::Windows::Forms::Form
 	{
@@ -19,13 +19,13 @@ namespace ProjectServerW {
 		{
 			InitializeComponent();
 			//
-			//TODO: Добавить код для инициализации
+			//TODO: Добавить код инициализации
 			//
 		}
 
 	protected:
 		/// <summary>
-		/// Освободить ресурсы для очистки компонентов.
+		/// Освобождает ресурсы, используемые классом.
 		/// </summary>
 		~MyForm()
 		{
@@ -36,7 +36,7 @@ namespace ProjectServerW {
 		}
 	private: System::Windows::Forms::MenuStrip^ menuStrip1;
 	protected:
-	private: System::Windows::Forms::ToolStripMenuItem^ выходToolStripMenuItem;
+	private: System::Windows::Forms::ToolStripMenuItem^ ФайлToolStripMenuItem;
 	private: System::Windows::Forms::Button^ button_Listen;
 
 	private: System::Windows::Forms::Label^ label_N_port;
@@ -49,22 +49,21 @@ namespace ProjectServerW {
 
 
 
-
 	private:
 		/// <summary>
-		/// Обязательная переменная диспетчера компонентов.
+		/// Требуется переменная конструктора.
 		/// </summary>
 		System::ComponentModel::Container ^components;
 
 #pragma region Windows Form Designer generated code
 		/// <summary>
-		/// Требуемый метод для поддержки диспетчера компонентов — не изменяйте 
+		/// Обязательный метод для поддержки конструктора - не изменяйте
 		/// содержимое этого метода с помощью редактора кода.
 		/// </summary>
 		void InitializeComponent(void)
 		{
 			this->menuStrip1 = (gcnew System::Windows::Forms::MenuStrip());
-			this->выходToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
+			this->ФайлToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
 			this->button_Listen = (gcnew System::Windows::Forms::Button());
 			this->label_N_port = (gcnew System::Windows::Forms::Label());
 			this->SocketState = (gcnew System::Windows::Forms::Label());
@@ -79,19 +78,19 @@ namespace ProjectServerW {
 			// 
 			this->menuStrip1->GripMargin = System::Windows::Forms::Padding(2, 2, 0, 2);
 			this->menuStrip1->ImageScalingSize = System::Drawing::Size(24, 24);
-			this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->выходToolStripMenuItem });
+			this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->ФайлToolStripMenuItem });
 			this->menuStrip1->Location = System::Drawing::Point(0, 0);
 			this->menuStrip1->Name = L"menuStrip1";
 			this->menuStrip1->Size = System::Drawing::Size(786, 36);
 			this->menuStrip1->TabIndex = 0;
 			this->menuStrip1->Text = L"menuStrip1";
 			// 
-			// выходToolStripMenuItem
+			// ФайлToolStripMenuItem
 			// 
-			this->выходToolStripMenuItem->Name = L"выходToolStripMenuItem";
-			this->выходToolStripMenuItem->Size = System::Drawing::Size(80, 32);
-			this->выходToolStripMenuItem->Text = L"Выход";
-			this->выходToolStripMenuItem->Click += gcnew System::EventHandler(this, &MyForm::выходToolStripMenuItem_Click);
+			this->ФайлToolStripMenuItem->Name = L"ФайлToolStripMenuItem";
+			this->ФайлToolStripMenuItem->Size = System::Drawing::Size(80, 32);
+			this->ФайлToolStripMenuItem->Text = L"Файл";
+			this->ФайлToolStripMenuItem->Click += gcnew System::EventHandler(this, &MyForm::ФайлToolStripMenuItem_Click);
 			// 
 			// button_Listen
 			// 
@@ -114,7 +113,7 @@ namespace ProjectServerW {
 			this->label_N_port->Name = L"label_N_port";
 			this->label_N_port->Size = System::Drawing::Size(110, 29);
 			this->label_N_port->TabIndex = 3;
-			this->label_N_port->Text = L"В порту";
+			this->label_N_port->Text = L"Н порт";
 			// 
 			// SocketState
 			// 
@@ -169,7 +168,7 @@ namespace ProjectServerW {
 			this->labelMessage->Name = L"labelMessage";
 			this->labelMessage->Size = System::Drawing::Size(150, 29);
 			this->labelMessage->TabIndex = 8;
-			this->labelMessage->Text = L"Сообщения";
+			this->labelMessage->Text = L"Сообщение";
 			// 
 			// MyForm
 			// 
@@ -186,7 +185,7 @@ namespace ProjectServerW {
 			this->Controls->Add(this->menuStrip1);
 			this->MainMenuStrip = this->menuStrip1;
 			this->Name = L"MyForm";
-			this->Text = L"Сервер на сокете сервер на микроконтроллере";
+			this->Text = L"Сервер на базе сокетов для приложения";
 			this->menuStrip1->ResumeLayout(false);
 			this->menuStrip1->PerformLayout();
 			this->ResumeLayout(false);
@@ -194,7 +193,7 @@ namespace ProjectServerW {
 
 		}
 #pragma endregion
-	private: System::Void выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e);
+	private: System::Void ФайлToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void button_Listen_Click(System::Object^ sender, System::EventArgs^ e);
 	public:	   
 		void SetTextValue(String^ text) {

@@ -42,10 +42,9 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::Label^ labelVersion;
 
 
-		// Статический мьютекс для защиты от параллельного запуска Excel
-		static System::Threading::Mutex^ excelMutex;
-
-		static System::Threading::Semaphore^ responseAvailable;
+			// Critical: Excel COM automation is not safe for concurrent use; this global mutex prevents parallel exports.
+			static System::Threading::Mutex^ excelMutex;
+			static System::Threading::Semaphore^ responseAvailable;
 		
 		// Статический конструктор для инициализации статических управляемых членов
 		static DataForm() {
@@ -62,6 +61,12 @@ namespace ProjectServerW {
 
 		private:
 			System::Data::DataTable^ dataTable;  // Объявление таблицы как члена класса
+			// Critical: DataTable is not thread-safe; lock when copying for Excel while UI is appending rows.
+			System::Object^ dataTableSync;
+			// Critical: explicit lock object for export state (avoid Interlocked overload pitfalls in C++/CLI).
+			System::Object^ excelExportSync;
+			// Critical: prevents starting multiple Excel export threads per form (they would pile up on the global mutex).
+			int excelExportInProgress;
 			Thread^ excelThread;				 // Объявим объект для работы с Excel в отдельном потоке
 			// Массив наименований битовых полей для каждого типа сенсора
 			// Индекс первого уровня - тип сенсора, второго уровня - номер бита
@@ -142,8 +147,12 @@ namespace ProjectServerW {
 				this->FormClosing += gcnew FormClosingEventHandler(this, &DataForm::DataForm_FormClosing);
 				this->FormClosed += gcnew FormClosedEventHandler(this, &DataForm::DataForm_FormClosed);
 				this->HandleDestroyed += gcnew EventHandler(this, &DataForm::DataForm_HandleDestroyed);
-				// Инициализация объекта для синхронизации
+				// Critical: used for export completion signaling (non-blocking shutdown path).
 				exportCompletedEvent = gcnew System::Threading::ManualResetEvent(false);
+				// Critical: protects DataTable from concurrent access between UI updates and background Excel copy.
+				dataTableSync = gcnew System::Object();
+				excelExportSync = gcnew System::Object();
+				excelExportInProgress = 0;
 
 			// Инициализируем путь сохранения из текстового поля
 			excelSavePath = textBoxExcelDirectory->Text;
@@ -758,6 +767,7 @@ private: System::ComponentModel::IContainer^ components;
 
 			void TriggerExcelExport();
 			void CheckExcelButtonStatus(Object^ sender, EventArgs^ e);
+			bool StartExcelExportThread(bool isEmergency);
 		private: System::Void textBoxExcelDirectory_TextChanged(System::Object^ sender, System::EventArgs^ e) {
 		}
 	private: System::Void dataGridView_CellContentClick(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e) {

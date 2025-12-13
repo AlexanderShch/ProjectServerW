@@ -11,11 +11,14 @@ void UnhandledExceptionHandler(Object^ sender, UnhandledExceptionEventArgs^ e) {
 		Exception^ ex = dynamic_cast<Exception^>(e->ExceptionObject);
 		if (ex != nullptr) {
 			GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-				"FATAL UNHANDLED EXCEPTION: {0}\nStackTrace: {1}\nTerminating: {2}",
-				ex->Message, ex->StackTrace, e->IsTerminating)));
+				"FATAL UNHANDLED EXCEPTION: {0}\nTerminating: {1}",
+				ex->ToString(), e->IsTerminating)));
 		}
 		else {
-			GlobalLogger::LogMessage("FATAL UNHANDLED NON-MANAGED EXCEPTION");
+			GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+				"FATAL UNHANDLED NON-MANAGED EXCEPTION: {0}\nTerminating: {1}",
+				(e->ExceptionObject != nullptr ? e->ExceptionObject->ToString() : "null"),
+				e->IsTerminating)));
 		}
 		GlobalLogger::Shutdown();
 	}
@@ -28,8 +31,8 @@ void UnhandledExceptionHandler(Object^ sender, UnhandledExceptionEventArgs^ e) {
 void ThreadExceptionHandler(Object^ sender, System::Threading::ThreadExceptionEventArgs^ e) {
 	try {
 		GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-			"THREAD EXCEPTION: {0}\nStackTrace: {1}",
-			e->Exception->Message, e->Exception->StackTrace)));
+			"THREAD EXCEPTION: {0}",
+			(e->Exception != nullptr ? e->Exception->ToString() : "null"))));
 	}
 	catch (...) {
 		// Last resort - do nothing

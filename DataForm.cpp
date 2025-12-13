@@ -81,16 +81,64 @@ System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System::Obje
 
 System::Void ProjectServerW::DataForm::buttonEXCEL_Click(System::Object^ sender, System::EventArgs^ e)
 {
-    // Отключаем кнопку на время обработки
-    buttonExcel->Enabled = false;
-    // Создаем и запускаем поток
-    excelThread = gcnew Thread(gcnew ThreadStart(this, &DataForm::AddDataToExcel));
-    excelThread->SetApartmentState(ApartmentState::STA);  // Обязательно для Excel!
-    // Важно! Установка как основного, не фонового потока. 
-    // Даем потоку завершиться правильно, блокирует завершение программы до своего завершения
-    excelThread->IsBackground = false; 
-    excelThread->Start();
-    GlobalLogger::LogMessage("Information: Запись в EXCEL по нажатию на кнопку");
+    try {
+        StartExcelExportThread(false);
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in buttonEXCEL_Click: " + ex->ToString()));
+    }
+}
+
+bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency) {
+    try {
+        // Critical: prevent multiple export threads per form (they would only stack up on the global mutex).
+        System::Threading::Monitor::Enter(excelExportSync);
+        try {
+            if (excelExportInProgress != 0) {
+                GlobalLogger::LogMessage("Information: Excel export already in progress (per-form guard)");
+                return false;
+            }
+            excelExportInProgress = 1;
+        }
+        finally {
+            System::Threading::Monitor::Exit(excelExportSync);
+        }
+
+        // Disable the button only for non-emergency exports to avoid touching disposed UI during shutdown.
+        if (!isEmergency) {
+            try {
+                if (buttonExcel != nullptr && !buttonExcel->IsDisposed) {
+                    buttonExcel->Enabled = false;
+                }
+            }
+            catch (...) {}
+        }
+
+        excelThread = gcnew Thread(gcnew ThreadStart(this, &DataForm::AddDataToExcel));
+        excelThread->SetApartmentState(ApartmentState::STA);  // Required for Excel COM automation
+        excelThread->IsBackground = isEmergency;
+        excelThread->Start();
+
+        if (isEmergency) {
+            GlobalLogger::LogMessage("Information: Excel export started (emergency background)");
+        }
+        else {
+            GlobalLogger::LogMessage("Information: Excel export started");
+        }
+
+        return true;
+    }
+    catch (Exception^ ex) {
+        System::Threading::Monitor::Enter(excelExportSync);
+        try {
+            excelExportInProgress = 0;
+        }
+        finally {
+            System::Threading::Monitor::Exit(excelExportSync);
+        }
+        GlobalLogger::LogMessage(ConvertToStdString("Error: Failed to start Excel export thread: " + ex->ToString()));
+        return false;
+    }
 }
 
 System::Void ProjectServerW::DataForm::buttonBrowse_Click(System::Object^ sender, System::EventArgs^ e)
@@ -521,8 +569,15 @@ void ProjectServerW::DataForm::AddDataToExcel() {
         DateTime startTime = DateTime::Now;
         GlobalLogger::LogMessage("Information: Начало записи в Excel...");
 
-        // DataTable не является потокобезопасной структурой, в Excel будем перегонять копию
-        System::Data::DataTable^ copiedTable = dataTable->Copy();
+        // Critical: DataTable is not thread-safe; take a snapshot under a lock.
+        System::Data::DataTable^ copiedTable = nullptr;
+        System::Threading::Monitor::Enter(dataTableSync);
+        try {
+            copiedTable = dataTable->Copy();
+        }
+        finally {
+            System::Threading::Monitor::Exit(dataTableSync);
+        }
         // Последняя строка может быть не заполнена полностью, её удалим
         if (copiedTable->Rows->Count > 0) {
             copiedTable->Rows->RemoveAt(copiedTable->Rows->Count - 1);
@@ -893,6 +948,15 @@ void ProjectServerW::DataForm::AddDataToExcel() {
                 exportCompletedEvent->Set();
             }
             
+            // Critical: allow subsequent exports for this form even if Excel failed.
+            System::Threading::Monitor::Enter(excelExportSync);
+            try {
+                excelExportInProgress = 0;
+            }
+            finally {
+                System::Threading::Monitor::Exit(excelExportSync);
+            }
+
             // КРИТИЧНО: Освобождаем мьютекс Excel в любом случае
             if (mutexAcquired) {
                 try {
@@ -907,6 +971,15 @@ void ProjectServerW::DataForm::AddDataToExcel() {
         catch (...) {
             // Ignore errors in Excel finalization
             
+            // Critical: allow subsequent exports for this form even if finalization failed.
+            System::Threading::Monitor::Enter(excelExportSync);
+            try {
+                excelExportInProgress = 0;
+            }
+            finally {
+                System::Threading::Monitor::Exit(excelExportSync);
+            }
+
             // Освобождаем мьютекс даже при ошибке в finalization
             if (mutexAcquired) {
                 try {
@@ -938,30 +1011,51 @@ void DataForm::DelayedGarbageCollection(Object^ state) {
 
 void DataForm::EnableButton()
 {
-    buttonExcel->Enabled = true;
+    try {
+        if (buttonExcel == nullptr || buttonExcel->IsDisposed) {
+            return;
+        }
+        buttonExcel->Enabled = true;
+    }
+    catch (...) {}
 }
 
 void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size, int port) {
-    // Этот метод выполняется в потоке формы благодаря Invoke
-    // ВАЖНО! Методы, работающие с UI, должны выполняться в потоке, создавшем объект с UI!
-    // Сохраняем порт клиента в форму DataForm
-    this->clientPort = port;
-
-    // Преобразуем управляемый массив байтов в неуправляемый буфер
-    pin_ptr<Byte> pinnedBuffer = &buffer[0];
-    char* rawBuffer = reinterpret_cast<char*>(pinnedBuffer);
-
-    // ===== ОПТИМИЗАЦИЯ ПРОИЗВОДИТЕЛЬНОСТИ =====
-    // Приостанавливаем обновление DataGridView для ускорения
-    dataGridView->SuspendLayout();
-    
     try {
-        // Вызываем стандартный метод добавления данных
-        AddDataToTable(rawBuffer, size, dataTable);
+        // This method runs on the form UI thread via Invoke/BeginInvoke.
+        if (this == nullptr || this->IsDisposed || this->Disposing) {
+            return;
+        }
+        if (dataGridView == nullptr || dataGridView->IsDisposed) {
+            return;
+        }
+
+        // Сохраняем порт клиента в форму DataForm
+        this->clientPort = port;
+
+        // Преобразуем управляемый массив байтов в неуправляемый буфер
+        pin_ptr<Byte> pinnedBuffer = &buffer[0];
+        char* rawBuffer = reinterpret_cast<char*>(pinnedBuffer);
+
+        // Приостанавливаем обновление DataGridView для ускорения
+        dataGridView->SuspendLayout();
+
+        try {
+            // Critical: lock the DataTable against concurrent snapshotting by the Excel thread.
+            System::Threading::Monitor::Enter(dataTableSync);
+            try {
+                AddDataToTable(rawBuffer, size, dataTable);
+            }
+            finally {
+                System::Threading::Monitor::Exit(dataTableSync);
+            }
+        }
+        finally {
+            dataGridView->ResumeLayout(false);
+        }
     }
-    finally {
-        // Возобновляем обновление DataGridView
-        dataGridView->ResumeLayout(false);
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in AddDataToTableThreadSafe: " + ex->ToString()));
     }
 
     // УБРАНО: Автоматическая прокрутка к последней строке
@@ -1005,7 +1099,7 @@ void ProjectServerW::DataForm::LoadSettings() {
         String^ settingsPath = System::IO::Path::Combine(appPath, "ExcelSettings.txt");
         if (System::IO::File::Exists(settingsPath)) {
             // Открываем и читаем файл
-            System::IO::StreamReader^ reader = gcnew System::IO::StreamReader("ExcelSettings.txt");
+            System::IO::StreamReader^ reader = gcnew System::IO::StreamReader(settingsPath);
 
             // Читаем первую строку (путь)
             String^ path = reader->ReadLine();
@@ -1093,9 +1187,8 @@ System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ send
                 // Логируем начало сохранения
                 GlobalLogger::LogMessage("АВАРИЙНОЕ сохранение данных в Excel (потеря связи)... " + ConvertToStdString(excelFileName));
 
-                // Запускаем запись в Excel в отдельном потоке
-                // Форма закроется сразу, не дожидаясь завершения записи
-                DataForm::TriggerExcelExport();
+                // Start background export without touching UI controls; the form can close immediately.
+                StartExcelExportThread(true);
                 
                 // НЕ ЖДЁМ завершения записи - форма закрывается сразу
                 // Это позволяет клиенту переподключиться немедленно
@@ -1164,6 +1257,16 @@ System::Void DataForm::DataForm_HandleDestroyed(Object^ sender, EventArgs^ e)
         delayedExcelTimer->Stop();
         delete delayedExcelTimer;
         delayedExcelTimer = nullptr;
+    }
+
+    // Stop export retry timer to avoid Tick firing after controls are disposed.
+    if (exportTimer != nullptr) {
+        try {
+            exportTimer->Stop();
+            exportTimer->Tick -= gcnew EventHandler(this, &DataForm::CheckExcelButtonStatus);
+        }
+        catch (...) {}
+        exportTimer = nullptr;
     }
 }
 // Перегруженный метод - автоматическое определение имени команды
@@ -1798,26 +1901,23 @@ void ProjectServerW::DataForm::TriggerExcelExport() {
     
     // Теперь мы в потоке UI, можем безопасно обращаться к элементам управления
     try {
-        // Проверка доступности кнопки Excel
-        if (buttonExcel->Enabled) {
-            // Автоматически запустить экспорт в Excel
-            buttonEXCEL_Click(nullptr, nullptr);
-        }
-        else {
-            // Кнопка недоступна, устанавливаем флаг ожидания и запускаем таймер
-            pendingExcelExport = true;
-
-            // Создаем таймер, если он еще не создан
-            if (exportTimer == nullptr) {
-                exportTimer = gcnew System::Windows::Forms::Timer();
-                exportTimer->Interval = 500; // Проверка каждые 500 мс
-                exportTimer->Tick += gcnew EventHandler(this, &DataForm::CheckExcelButtonStatus);
+        // Start export immediately if possible; otherwise, keep the existing retry timer logic.
+        if (StartExcelExportThread(false)) {
+            pendingExcelExport = false;
+            if (exportTimer != nullptr && exportTimer->Enabled) {
+                exportTimer->Stop();
             }
+            return;
+        }
 
-            // Запускаем таймер
-            exportTimer->Start();
-
-            // Выводим сообщение для пользователя
+        pendingExcelExport = true;
+        if (exportTimer == nullptr) {
+            exportTimer = gcnew System::Windows::Forms::Timer();
+            exportTimer->Interval = 500;
+            exportTimer->Tick += gcnew EventHandler(this, &DataForm::CheckExcelButtonStatus);
+        }
+        exportTimer->Start();
+        if (Label_Data != nullptr && !Label_Data->IsDisposed) {
             Label_Data->Text = "Ожидание возможности записи в Excel...";
         }
     }
@@ -1828,18 +1928,20 @@ void ProjectServerW::DataForm::TriggerExcelExport() {
 
 // Обработчик события таймера проверки доступности кнопки экспорта в Excel
 void ProjectServerW::DataForm::CheckExcelButtonStatus(Object^ sender, EventArgs^ e) {
-    // Проверяем, доступна ли кнопка
-    if (buttonExcel->Enabled && pendingExcelExport) {
-        // Останавливаем таймер
+    if (!pendingExcelExport) {
+        return;
+    }
+
+    // Retry until we can actually start (per-form guard + global mutex).
+    if (!StartExcelExportThread(false)) {
+        return;
+    }
+
+    pendingExcelExport = false;
+    if (exportTimer != nullptr && exportTimer->Enabled) {
         exportTimer->Stop();
-
-        // Сбрасываем флаг
-        pendingExcelExport = false;
-
-        // Запускаем экспорт
-        buttonEXCEL_Click(nullptr, nullptr);
-
-        // Обновляем метку
+    }
+    if (Label_Data != nullptr && !Label_Data->IsDisposed) {
         Label_Data->Text = "Данные записываются в Excel...";
     }
 }
