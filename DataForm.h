@@ -30,6 +30,9 @@ namespace ProjectServerW {
 	public ref class DataForm : public System::Windows::Forms::Form
 	{
 		private:
+			// Critical: needed to stop/join the form thread when the form closes itself (e.g., inactivity timeout).
+			System::String^ formGuid;
+
 			SOCKET clientSocket;  // Сокет клиента
 			
 		// Очередь для ответов от контроллера (статические для доступа из SServer)
@@ -43,15 +46,52 @@ namespace ProjectServerW {
 
 
 
+			// Critical: Excel COM automation is not safe for concurrent use; this global mutex prevents parallel exports.
+			static System::Threading::Mutex^ excelGlobalMutex;
 			static System::Threading::Semaphore^ responseAvailable;
+
+			ref class ExcelExportJob sealed {
+			public:
+				System::Data::DataTable^ tableSnapshot;
+				System::String^ saveDirectory;
+				System::DateTime sessionStart;
+				System::DateTime sessionEnd;
+				int clientPort;
+				System::String^ clientIP;
+				System::String^ formGuid;
+				System::WeakReference^ formRef;
+				bool enableButtonOnComplete;
+			};
+
+			// Critical: a single STA worker serializes Excel COM usage and retries if Excel is busy/hung temporarily.
+			static System::Collections::Concurrent::ConcurrentQueue<ExcelExportJob^>^ excelExportQueue;
+			static System::Threading::AutoResetEvent^ excelExportQueueEvent;
+			static System::Threading::Thread^ excelExportWorkerThread;
+			static System::Object^ excelExportWorkerSync;
+			static bool excelExportWorkerStarted;
+			static void EnsureExcelExportWorker();
+			static void ExcelExportWorkerLoop();
+			static void ProcessExcelExportJob(ExcelExportJob^ job);
+			static System::String^ ResolveExcelSaveDirectory(System::String^ preferredDirectory);
 		
 		// Статический конструктор для инициализации статических управляемых членов
 		static DataForm() {
 			responseQueue = gcnew System::Collections::Concurrent::ConcurrentQueue<cli::array<System::Byte>^>();
+			excelGlobalMutex = gcnew System::Threading::Mutex(false, "Global\\ProjectServerW_Excel_Mutex");
 			responseAvailable = gcnew System::Threading::Semaphore(0, 100);
+			excelExportQueue = gcnew System::Collections::Concurrent::ConcurrentQueue<ExcelExportJob^>();
+			excelExportQueueEvent = gcnew System::Threading::AutoResetEvent(false);
+			excelExportWorkerSync = gcnew System::Object();
+			excelExportWorkerThread = nullptr;
+			excelExportWorkerStarted = false;
 		}
 		
 		public:
+			property System::String^ FormGuid {
+				System::String^ get() { return formGuid; }
+				void set(System::String^ value) { formGuid = value; }
+			}
+
 			property SOCKET ClientSocket {
 				SOCKET get() { return clientSocket; }
 				void set(SOCKET value) { clientSocket = value; }
@@ -59,7 +99,18 @@ namespace ProjectServerW {
 
 		private:
 			System::Data::DataTable^ dataTable;  // Объявление таблицы как члена класса
+			// Critical: DataTable is not thread-safe; lock when copying for Excel while UI is appending rows.
+			System::Object^ dataTableSync;
+			// Critical: explicit lock object for export state.
+			System::Object^ excelExportSync;
+			// Critical: prevents starting multiple Excel export threads per form (they would only stack up on the global mutex).
+			int excelExportInProgress;
 			Thread^ excelThread;				 // Объявим объект для работы с Excel в отдельном потоке
+			// Critical: tracks last telemetry receipt; used to decide whether to keep the form alive on reconnects.
+			DateTime lastTelemetryTime;
+			bool hasTelemetry;
+			bool inactivityCloseRequested;
+			System::Windows::Forms::Timer^ inactivityTimer;
 			// Массив наименований битовых полей для каждого типа сенсора
 			// Индекс первого уровня - тип сенсора, второго уровня - номер бита
 			ManualResetEvent^ exportCompletedEvent;
@@ -139,8 +190,23 @@ namespace ProjectServerW {
 				this->FormClosing += gcnew FormClosingEventHandler(this, &DataForm::DataForm_FormClosing);
 				this->FormClosed += gcnew FormClosedEventHandler(this, &DataForm::DataForm_FormClosed);
 				this->HandleDestroyed += gcnew EventHandler(this, &DataForm::DataForm_HandleDestroyed);
-				// Инициализация объекта для синхронизации
+				// Critical: used for export completion signaling (non-blocking shutdown path).
 				exportCompletedEvent = gcnew System::Threading::ManualResetEvent(false);
+				// Critical: protects DataTable from concurrent access between UI updates and background Excel copy.
+				dataTableSync = gcnew System::Object();
+				excelExportSync = gcnew System::Object();
+				excelExportInProgress = 0;
+				formGuid = nullptr;
+				hasTelemetry = false;
+				inactivityCloseRequested = false;
+				lastTelemetryTime = DateTime::MinValue;
+
+				// Critical: device can be power-cycled; if it reconnects within 30 minutes we continue the same table.
+				// If there is no telemetry for 30 minutes, we finalize (export) and close the form.
+				inactivityTimer = gcnew System::Windows::Forms::Timer();
+				inactivityTimer->Interval = 10 * 1000; // 10 seconds
+				inactivityTimer->Tick += gcnew EventHandler(this, &DataForm::OnInactivityTimerTick);
+				inactivityTimer->Start();
 
 			// Инициализируем путь сохранения из текстового поля
 			excelSavePath = textBoxExcelDirectory->Text;
@@ -755,6 +821,8 @@ private: System::ComponentModel::IContainer^ components;
 
 			void TriggerExcelExport();
 			void CheckExcelButtonStatus(Object^ sender, EventArgs^ e);
+			bool StartExcelExportThread(bool isEmergency);
+			void OnInactivityTimerTick(Object^ sender, EventArgs^ e);
 		private: System::Void textBoxExcelDirectory_TextChanged(System::Object^ sender, System::EventArgs^ e) {
 		}
 	private: System::Void dataGridView_CellContentClick(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e) {

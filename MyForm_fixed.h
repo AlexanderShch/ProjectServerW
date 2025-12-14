@@ -10,7 +10,7 @@ namespace ProjectServerW {
 	using namespace System::Drawing;
 
 	/// <summary>
-	/// Ôîğìà äëÿ MyForm
+	/// ˜˜˜˜˜˜˜˜ ˜˜˜ MyForm
 	/// </summary>
 	public ref class MyForm : public System::Windows::Forms::Form
 	{
@@ -19,13 +19,13 @@ namespace ProjectServerW {
 		{
 			InitializeComponent();
 			//
-			//TODO: Äîáàâèòü êîä äëÿ èíèöèàëèçàöèè
+			//TODO: ˜˜˜˜˜˜˜˜ ˜˜˜ ˜˜˜˜˜˜˜˜˜˜˜˜˜
 			//
 		}
 
 	protected:
 		/// <summary>
-		/// Îñâîáîäèòü ğåñóğñû äëÿ î÷èñòêè êîìïîíåíòîâ.
+		/// ˜˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜, ˜˜˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜.
 		/// </summary>
 		~MyForm()
 		{
@@ -36,7 +36,7 @@ namespace ProjectServerW {
 		}
 	private: System::Windows::Forms::MenuStrip^ menuStrip1;
 	protected:
-	private: System::Windows::Forms::ToolStripMenuItem^ âûõîäToolStripMenuItem;
+	private: System::Windows::Forms::ToolStripMenuItem^ ˜˜˜˜ToolStripMenuItem;
 	private: System::Windows::Forms::Button^ button_Listen;
 
 	private: System::Windows::Forms::Label^ label_N_port;
@@ -49,22 +49,21 @@ namespace ProjectServerW {
 
 
 
-
 	private:
 		/// <summary>
-		/// Îáÿçàòåëüíàÿ ïåğåìåííàÿ äèñïåò÷åğà êîìïîíåíòîâ.
+		/// ˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜˜˜˜˜.
 		/// </summary>
 		System::ComponentModel::Container ^components;
 
 #pragma region Windows Form Designer generated code
 		/// <summary>
-		/// Òğåáóåìûé ìåòîä äëÿ ïîääåğæêè äèñïåò÷åğà êîìïîíåíòîâ — íå èçìåíÿéòå 
-		/// ñîäåğæèìîå ıòîãî ìåòîäà ñ ïîìîùüş ğåäàêòîğà êîäà.
+		/// ˜˜˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜ ˜˜˜ ˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜˜˜˜˜ - ˜˜ ˜˜˜˜˜˜˜˜˜
+		/// ˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜ ˜˜˜˜˜˜ ˜ ˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜˜ ˜˜˜˜.
 		/// </summary>
 		void InitializeComponent(void)
 		{
 			this->menuStrip1 = (gcnew System::Windows::Forms::MenuStrip());
-			this->âûõîäToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
+			this->˜˜˜˜ToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
 			this->button_Listen = (gcnew System::Windows::Forms::Button());
 			this->label_N_port = (gcnew System::Windows::Forms::Label());
 			this->SocketState = (gcnew System::Windows::Forms::Label());
@@ -79,19 +78,19 @@ namespace ProjectServerW {
 			// 
 			this->menuStrip1->GripMargin = System::Windows::Forms::Padding(2, 2, 0, 2);
 			this->menuStrip1->ImageScalingSize = System::Drawing::Size(24, 24);
-			this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->âûõîäToolStripMenuItem });
+			this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->˜˜˜˜ToolStripMenuItem });
 			this->menuStrip1->Location = System::Drawing::Point(0, 0);
 			this->menuStrip1->Name = L"menuStrip1";
 			this->menuStrip1->Size = System::Drawing::Size(786, 36);
 			this->menuStrip1->TabIndex = 0;
 			this->menuStrip1->Text = L"menuStrip1";
 			// 
-			// âûõîäToolStripMenuItem
+			// ˜˜˜˜ToolStripMenuItem
 			// 
-			this->âûõîäToolStripMenuItem->Name = L"âûõîäToolStripMenuItem";
-			this->âûõîäToolStripMenuItem->Size = System::Drawing::Size(80, 32);
-			this->âûõîäToolStripMenuItem->Text = L"Âûõîä";
-			this->âûõîäToolStripMenuItem->Click += gcnew System::EventHandler(this, &MyForm::âûõîäToolStripMenuItem_Click);
+			this->˜˜˜˜ToolStripMenuItem->Name = L"˜˜˜˜ToolStripMenuItem";
+			this->˜˜˜˜ToolStripMenuItem->Size = System::Drawing::Size(80, 32);
+			this->˜˜˜˜ToolStripMenuItem->Text = L"˜˜˜˜";
+			this->˜˜˜˜ToolStripMenuItem->Click += gcnew System::EventHandler(this, &MyForm::˜˜˜˜ToolStripMenuItem_Click);
 			// 
 			// button_Listen
 			// 
@@ -101,7 +100,7 @@ namespace ProjectServerW {
 			this->button_Listen->Name = L"button_Listen";
 			this->button_Listen->Size = System::Drawing::Size(204, 53);
 			this->button_Listen->TabIndex = 1;
-			this->button_Listen->Text = L"Ñëóøàòü";
+			this->button_Listen->Text = L"˜˜˜˜˜˜˜";
 			this->button_Listen->UseVisualStyleBackColor = true;
 			this->button_Listen->Click += gcnew System::EventHandler(this, &MyForm::button_Listen_Click);
 			// 
@@ -114,7 +113,7 @@ namespace ProjectServerW {
 			this->label_N_port->Name = L"label_N_port";
 			this->label_N_port->Size = System::Drawing::Size(110, 29);
 			this->label_N_port->TabIndex = 3;
-			this->label_N_port->Text = L"Â ïîğòó";
+			this->label_N_port->Text = L"˜ ˜˜˜˜";
 			// 
 			// SocketState
 			// 
@@ -125,7 +124,7 @@ namespace ProjectServerW {
 			this->SocketState->Name = L"SocketState";
 			this->SocketState->Size = System::Drawing::Size(223, 29);
 			this->SocketState->TabIndex = 4;
-			this->SocketState->Text = L"Ñîñòîÿíèå ñîêåòà";
+			this->SocketState->Text = L"˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜";
 			// 
 			// SocketBind
 			// 
@@ -136,7 +135,7 @@ namespace ProjectServerW {
 			this->SocketBind->Name = L"SocketBind";
 			this->SocketBind->Size = System::Drawing::Size(207, 29);
 			this->SocketBind->TabIndex = 5;
-			this->SocketBind->Text = L"Ïğèâÿçêà ñîêåòà";
+			this->SocketBind->Text = L"˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜";
 			// 
 			// WSAstartup
 			// 
@@ -158,7 +157,7 @@ namespace ProjectServerW {
 			this->ClientAddr->Name = L"ClientAddr";
 			this->ClientAddr->Size = System::Drawing::Size(184, 29);
 			this->ClientAddr->TabIndex = 7;
-			this->ClientAddr->Text = L"Àäğåñ êëèåíòà";
+			this->ClientAddr->Text = L"˜˜˜˜˜ ˜˜˜˜˜˜˜";
 			// 
 			// labelMessage
 			// 
@@ -169,7 +168,7 @@ namespace ProjectServerW {
 			this->labelMessage->Name = L"labelMessage";
 			this->labelMessage->Size = System::Drawing::Size(150, 29);
 			this->labelMessage->TabIndex = 8;
-			this->labelMessage->Text = L"Ñîîáùåíèÿ";
+			this->labelMessage->Text = L"˜˜˜˜˜˜˜˜˜";
 			// 
 			// MyForm
 			// 
@@ -186,7 +185,7 @@ namespace ProjectServerW {
 			this->Controls->Add(this->menuStrip1);
 			this->MainMenuStrip = this->menuStrip1;
 			this->Name = L"MyForm";
-			this->Text = L"Ñåğâåğ íà ñîêåòå ñåğâåğ íà ìèêğîêîíòğîëëåğå";
+			this->Text = L"˜˜˜˜˜˜ ˜˜ ˜˜˜˜ ˜˜˜˜˜˜˜ ˜˜˜ ˜˜˜˜˜˜˜˜˜˜";
 			this->menuStrip1->ResumeLayout(false);
 			this->menuStrip1->PerformLayout();
 			this->ResumeLayout(false);
@@ -194,7 +193,7 @@ namespace ProjectServerW {
 
 		}
 #pragma endregion
-	private: System::Void âûõîäToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e);
+	private: System::Void ˜˜˜˜ToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void button_Listen_Click(System::Object^ sender, System::EventArgs^ e);
 	public:	   
 		void SetTextValue(String^ text) {

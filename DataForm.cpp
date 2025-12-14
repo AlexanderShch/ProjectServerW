@@ -4,6 +4,7 @@
 #include <objbase.h>                // Для CoCreateGuid - генерация уникального идентификатора
 #include <string>
 #include <vcclr.h>  // Для gcnew
+#include <msclr/marshal_cppstd.h>
 
 // Добавьте эту строку для доступа к Process
 using namespace System::Diagnostics;
@@ -81,16 +82,291 @@ System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System::Obje
 
 System::Void ProjectServerW::DataForm::buttonEXCEL_Click(System::Object^ sender, System::EventArgs^ e)
 {
-    // Отключаем кнопку на время обработки
-    buttonExcel->Enabled = false;
-    // Создаем и запускаем поток
-    excelThread = gcnew Thread(gcnew ThreadStart(this, &DataForm::AddDataToExcel));
-    excelThread->SetApartmentState(ApartmentState::STA);  // Обязательно для Excel!
-    // Важно! Установка как основного, не фонового потока. 
-    // Даем потоку завершиться правильно, блокирует завершение программы до своего завершения
-    excelThread->IsBackground = false; 
-    excelThread->Start();
-    GlobalLogger::LogMessage("Information: Запись в EXCEL по нажатию на кнопку");
+    try {
+        StartExcelExportThread(false);
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in buttonEXCEL_Click: " + ex->ToString()));
+    }
+}
+
+bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency) {
+    try {
+        // Critical: prevent duplicate enqueue per form (UI can trigger export from multiple places).
+        System::Threading::Monitor::Enter(excelExportSync);
+        try {
+            if (excelExportInProgress != 0) {
+                GlobalLogger::LogMessage("Information: Excel export already pending/in progress (per-form guard)");
+                return true;
+            }
+            excelExportInProgress = 1;
+        }
+        finally {
+            System::Threading::Monitor::Exit(excelExportSync);
+        }
+
+        EnsureExcelExportWorker();
+
+        // Disable the button only for non-emergency exports to avoid touching disposed UI during shutdown.
+        if (!isEmergency) {
+            try {
+                if (buttonExcel != nullptr && !buttonExcel->IsDisposed) {
+                    buttonExcel->Enabled = false;
+                }
+            }
+            catch (...) {}
+        }
+
+        System::Data::DataTable^ snapshot = nullptr;
+        System::Threading::Monitor::Enter(dataTableSync);
+        try {
+            snapshot = dataTable->Copy();
+        }
+        finally {
+            System::Threading::Monitor::Exit(dataTableSync);
+        }
+
+        if (snapshot != nullptr && snapshot->Rows->Count > 0) {
+            snapshot->Rows->RemoveAt(snapshot->Rows->Count - 1);
+        }
+
+        ExcelExportJob^ job = gcnew ExcelExportJob();
+        job->tableSnapshot = snapshot;
+        job->saveDirectory = excelSavePath;
+        job->sessionStart = dataCollectionStartTime;
+        job->sessionEnd = dataCollectionEndTime;
+        job->clientPort = clientPort;
+        job->clientIP = this->ClientIP;
+        job->formGuid = this->FormGuid;
+        job->formRef = gcnew System::WeakReference(this);
+        job->enableButtonOnComplete = !isEmergency;
+
+        excelExportQueue->Enqueue(job);
+        excelExportQueueEvent->Set();
+
+        if (isEmergency) {
+            GlobalLogger::LogMessage("Information: Excel export queued (emergency background)");
+        }
+        else {
+            GlobalLogger::LogMessage("Information: Excel export queued");
+        }
+
+        return true;
+    }
+    catch (Exception^ ex) {
+        System::Threading::Monitor::Enter(excelExportSync);
+        try {
+            excelExportInProgress = 0;
+        }
+        finally {
+            System::Threading::Monitor::Exit(excelExportSync);
+        }
+        GlobalLogger::LogMessage(ConvertToStdString("Error: Failed to start Excel export thread: " + ex->ToString()));
+        return false;
+    }
+}
+
+void ProjectServerW::DataForm::EnsureExcelExportWorker() {
+    System::Threading::Monitor::Enter(excelExportWorkerSync);
+    try {
+        if (excelExportWorkerStarted && excelExportWorkerThread != nullptr) {
+            return;
+        }
+
+        excelExportWorkerThread = gcnew System::Threading::Thread(gcnew System::Threading::ThreadStart(&ProjectServerW::DataForm::ExcelExportWorkerLoop));
+        excelExportWorkerThread->IsBackground = true;
+        excelExportWorkerThread->SetApartmentState(System::Threading::ApartmentState::STA);
+        excelExportWorkerThread->Start();
+        excelExportWorkerStarted = true;
+    }
+    finally {
+        System::Threading::Monitor::Exit(excelExportWorkerSync);
+    }
+}
+
+void ProjectServerW::DataForm::ExcelExportWorkerLoop() {
+    while (true) {
+        excelExportQueueEvent->WaitOne();
+
+        ExcelExportJob^ job = nullptr;
+        while (excelExportQueue->TryDequeue(job)) {
+            ProcessExcelExportJob(job);
+        }
+    }
+}
+
+System::String^ ProjectServerW::DataForm::ResolveExcelSaveDirectory(System::String^ preferredDirectory) {
+    try {
+        if (!String::IsNullOrEmpty(preferredDirectory) && System::IO::Directory::Exists(preferredDirectory)) {
+            return preferredDirectory;
+        }
+    }
+    catch (...) {}
+
+    System::String^ appPath = System::IO::Path::GetDirectoryName(System::Windows::Forms::Application::ExecutablePath);
+    System::String^ dir = System::IO::Path::Combine(appPath, "SensorData");
+    if (!System::IO::Directory::Exists(dir)) {
+        System::IO::Directory::CreateDirectory(dir);
+    }
+    return dir;
+}
+
+void ProjectServerW::DataForm::ProcessExcelExportJob(ExcelExportJob^ job) {
+    if (job == nullptr || job->tableSnapshot == nullptr) {
+        return;
+    }
+
+    bool mutexAcquired = false;
+    try {
+        const int timeoutMs = 5 * 60 * 1000; // 5 minutes
+        try {
+            mutexAcquired = excelGlobalMutex->WaitOne(timeoutMs);
+        }
+        catch (System::Threading::AbandonedMutexException^) {
+            mutexAcquired = true;
+            GlobalLogger::LogMessage("Warning: Abandoned Excel mutex detected; continuing export.");
+        }
+
+        if (!mutexAcquired) {
+            // Critical: keep retrying via the queue; Excel can be busy for long exports.
+            excelExportQueue->Enqueue(job);
+            excelExportQueueEvent->Set();
+            System::Threading::Thread::Sleep(1000);
+            return;
+        }
+
+        ExcelHelper^ excel = gcnew ExcelHelper();
+        if (!excel->CreateNewWorkbook()) {
+            return;
+        }
+
+        Microsoft::Office::Interop::Excel::Worksheet^ ws = excel->GetWorksheet();
+        Microsoft::Office::Interop::Excel::Application^ excelApp = safe_cast<Microsoft::Office::Interop::Excel::Application^>(ws->Application);
+
+        try {
+            excelApp->ScreenUpdating = false;
+            excelApp->Calculation = Microsoft::Office::Interop::Excel::XlCalculation::xlCalculationManual;
+            excelApp->EnableEvents = false;
+
+            // Info sheet (metadata)
+            try {
+                Microsoft::Office::Interop::Excel::Workbook^ wb = safe_cast<Microsoft::Office::Interop::Excel::Workbook^>(ws->Parent);
+                System::Object^ missing = System::Type::Missing;
+                Microsoft::Office::Interop::Excel::Worksheet^ infoSheet =
+                    safe_cast<Microsoft::Office::Interop::Excel::Worksheet^>(wb->Worksheets->Add(missing, ws, 1, Microsoft::Office::Interop::Excel::XlSheetType::xlWorksheet));
+                infoSheet->Name = "Info";
+
+                DateTime sessionStart = (job->sessionStart == DateTime::MinValue) ? DateTime::Now : job->sessionStart;
+                DateTime sessionEnd = (job->sessionEnd == DateTime::MinValue) ? DateTime::Now : job->sessionEnd;
+
+                infoSheet->Cells[1, 1] = "SessionStart";
+                infoSheet->Cells[1, 2] = sessionStart.ToString("yyyy-MM-dd HH:mm:ss");
+                infoSheet->Cells[2, 1] = "SessionEnd";
+                infoSheet->Cells[2, 2] = sessionEnd.ToString("yyyy-MM-dd HH:mm:ss");
+                infoSheet->Cells[3, 1] = "ClientPort";
+                infoSheet->Cells[3, 2] = job->clientPort.ToString();
+                infoSheet->Cells[4, 1] = "ClientIP";
+                infoSheet->Cells[4, 2] = (job->clientIP != nullptr ? job->clientIP : "");
+                infoSheet->Cells[5, 1] = "FormGuid";
+                infoSheet->Cells[5, 2] = (job->formGuid != nullptr ? job->formGuid : "");
+
+                Marshal::ReleaseComObject(infoSheet);
+                Marshal::ReleaseComObject(wb);
+            }
+            catch (...) {}
+
+            int colCount = job->tableSnapshot->Columns->Count;
+            int rowCount = job->tableSnapshot->Rows->Count;
+
+            cli::array<System::Object^>^ headerArray = gcnew cli::array<System::Object^>(colCount);
+            for (int c = 0; c < colCount; c++) {
+                headerArray[c] = job->tableSnapshot->Columns[c]->ColumnName;
+            }
+            Microsoft::Office::Interop::Excel::Range^ headerRange = ws->Range[ws->Cells[1, 1], ws->Cells[1, colCount]];
+            headerRange->Value2 = headerArray;
+            Marshal::ReleaseComObject(headerRange);
+
+            if (rowCount > 0) {
+                cli::array<System::Object^, 2>^ dataArray = gcnew cli::array<System::Object^, 2>(rowCount, colCount);
+                for (int r = 0; r < rowCount; r++) {
+                    System::Data::DataRow^ dr = job->tableSnapshot->Rows[r];
+                    for (int c = 0; c < colCount; c++) {
+                        dataArray[r, c] = dr[c];
+                    }
+                }
+
+                Microsoft::Office::Interop::Excel::Range^ startCell = safe_cast<Microsoft::Office::Interop::Excel::Range^>(ws->Cells[2, 1]);
+                Microsoft::Office::Interop::Excel::Range^ endCell = safe_cast<Microsoft::Office::Interop::Excel::Range^>(ws->Cells[rowCount + 1, colCount]);
+                Microsoft::Office::Interop::Excel::Range^ dataRange = ws->Range[startCell, endCell];
+                dataRange->Value2 = dataArray;
+                Marshal::ReleaseComObject(startCell);
+                Marshal::ReleaseComObject(endCell);
+                Marshal::ReleaseComObject(dataRange);
+            }
+        }
+        finally {
+            try {
+                excelApp->Calculation = Microsoft::Office::Interop::Excel::XlCalculation::xlCalculationAutomatic;
+                excelApp->ScreenUpdating = true;
+                excelApp->EnableEvents = true;
+            }
+            catch (...) {}
+            Marshal::ReleaseComObject(excelApp);
+        }
+
+        System::String^ dir = ResolveExcelSaveDirectory(job->saveDirectory);
+        if (!dir->EndsWith("\\")) {
+            dir += "\\";
+        }
+
+        DateTime start = (job->sessionStart == DateTime::MinValue) ? DateTime::Now : job->sessionStart;
+        DateTime end = (job->sessionEnd == DateTime::MinValue) ? DateTime::Now : job->sessionEnd;
+        System::String^ finalFileName = String::Format(
+            "WorkData_Start_{0}_End_{1}_Port{2}.xlsx",
+            start.ToString("yyyy-MM-dd_HH-mm-ss"),
+            end.ToString("yyyy-MM-dd_HH-mm-ss"),
+            job->clientPort.ToString());
+
+        excel->SaveAs(dir + finalFileName);
+        excel->Close();
+        delete excel;
+        excel = nullptr;
+
+        GlobalLogger::LogMessage(ConvertToStdString("Information: Excel file saved: " + finalFileName));
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error: Excel export job failed: " + ex->ToString()));
+    }
+    finally {
+        if (mutexAcquired) {
+            try { excelGlobalMutex->ReleaseMutex(); } catch (...) {}
+        }
+
+        try {
+            DataForm^ form = nullptr;
+            if (job != nullptr && job->formRef != nullptr && job->formRef->IsAlive) {
+                form = dynamic_cast<DataForm^>(job->formRef->Target);
+            }
+
+            if (form != nullptr && !form->IsDisposed && !form->Disposing) {
+                System::Threading::Monitor::Enter(form->excelExportSync);
+                try {
+                    form->excelExportInProgress = 0;
+                }
+                finally {
+                    System::Threading::Monitor::Exit(form->excelExportSync);
+                }
+
+                if (job->enableButtonOnComplete) {
+                    try {
+                        form->BeginInvoke(gcnew MethodInvoker(form, &DataForm::EnableButton));
+                    }
+                    catch (...) {}
+                }
+            }
+        }
+        catch (...) {}
+    }
 }
 
 System::Void ProjectServerW::DataForm::buttonBrowse_Click(System::Object^ sender, System::EventArgs^ e)
@@ -132,6 +408,7 @@ void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wst
         int simb_N = StringFromGUID2(guid, guidString, 40);
 
         String^ formId = gcnew String(guidString);
+        form->FormGuid = formId;
 
         // Сохранение формы в карте
         formData_Map[guidString] = form;
@@ -384,11 +661,13 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
                 }
             } else {
                 // Это новый запуск работы (не мигание)
-                // Сохраняем время начала сбора данных
+                // Store the session start time. The final filename will include both start and finish timestamps.
                 dataCollectionStartTime = now;
-                // Создаем имя файла на основе времени начала (окончание добавится позже при записи в Excel)
-                excelFileName = "WorkData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + "_Port" + clientPort.ToString();
-                GlobalLogger::LogMessage(ConvertToStdString("Information: СТАРТ фиксации данных, создано имя файла " + excelFileName));
+                dataCollectionEndTime = DateTime::MinValue;
+                excelFileName = "WorkData_Port" + clientPort.ToString();
+                GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+                    "Information: СТАРТ фиксации данных: {0} (Port {1})",
+                    dataCollectionStartTime.ToString("yyyy-MM-dd HH:mm:ss"), clientPort)));
                 // Сбрасываем флаги при новом запуске работы
                 workBitZeroLogged = false;
                 dataExportedToExcel = false;  // Новый цикл - данные еще не экспортированы
@@ -458,28 +737,62 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         row[bitNames[1][bit]] = bitValue;
     }
 
-    // Добавление строки в таблицу только во время работы дефростера
-    // ВРЕМЕННО ОТКЛЮЧЕНО ДЛЯ ОТЛАДКИ - данные записываются всегда
-    if (workBitDetected)
+    // Добавление строки в таблицу данных во время работы устройства
+    // Добавляем строку если:
+    // 1. Work = 1 (устройство активно работает)
+    // 2. Work = 0, но ещё идёт отслеживание переходного периода (workBitZeroTimerActive = true)
+    //    Это нужно для записи данных во время "мигания" бита Work перед окончательным завершением
+    if (workBitDetected || workBitZeroTimerActive)
     {
         table->Rows->Add(row);
+        
+        // Сбрасываем флаг экспорта, т.к. появились новые данные, которые ещё не записаны в Excel
+        // Это важно для случая, когда после ручной записи продолжают поступать данные
+        dataExportedToExcel = false;
     }
 }
 
 
 // 3. Сохраняем таблицу в EXCEL
 void ProjectServerW::DataForm::AddDataToExcel() {
-    // Создаём объект Excel в STA-потоке
+    // Create Excel COM objects only after acquiring the global mutex.
     ExcelHelper^ excel = nullptr;
-    excel = gcnew ExcelHelper();
 
+    bool mutexAcquired = false;
     try {
+        // Глобальная сериализация экспорта в Excel между всеми DataForm (и даже между процессами).
+        // Excel COM-автоматизация часто нестабильна при параллельных экспортерах.
+        const int timeoutMs = 5 * 60 * 1000; // 5 минут
+        try {
+            mutexAcquired = excelGlobalMutex->WaitOne(timeoutMs);
+        }
+        catch (System::Threading::AbandonedMutexException^) {
+            // Предыдущий владелец "умер" не освободив mutex. В .NET он считается захваченным текущим потоком.
+            mutexAcquired = true;
+            GlobalLogger::LogMessage("Warning: Abandoned Excel mutex detected; continuing export.");
+        }
+
+        if (!mutexAcquired) {
+            GlobalLogger::LogMessage("Error: Не удалось захватить глобальный Excel mutex (таймаут). Экспорт отменён.");
+            return;
+        }
+
+        excel = gcnew ExcelHelper();
+
         // Замеряем время выполнения для мониторинга производительности
         DateTime startTime = DateTime::Now;
         GlobalLogger::LogMessage("Information: Начало записи в Excel...");
 
-        // DataTable не является потокобезопасной структурой, в Excel будем перегонять копию
-        System::Data::DataTable^ copiedTable = dataTable->Copy();
+        // DataTable не является потокобезопасной структурой.
+        // Берём консистентный "снимок" под lock, потому что в это же время UI-поток может добавлять строки.
+        System::Data::DataTable^ copiedTable = nullptr;
+        System::Threading::Monitor::Enter(dataTableSync);
+        try {
+            copiedTable = dataTable->Copy();
+        }
+        finally {
+            System::Threading::Monitor::Exit(dataTableSync);
+        }
         // Последняя строка может быть не заполнена полностью, её удалим
         if (copiedTable->Rows->Count > 0) {
             copiedTable->Rows->RemoveAt(copiedTable->Rows->Count - 1);
@@ -500,6 +813,42 @@ void ProjectServerW::DataForm::AddDataToExcel() {
                 excelApp->Calculation = Microsoft::Office::Interop::Excel::XlCalculation::xlCalculationManual;
                 excelApp->EnableEvents = false;
                 GlobalLogger::LogMessage("Information: Excel оптимизирован для быстрой записи");
+
+            // Write session metadata to a dedicated sheet to avoid shifting headers/data and breaking charts.
+            try {
+                Microsoft::Office::Interop::Excel::Workbook^ wb = safe_cast<Microsoft::Office::Interop::Excel::Workbook^>(ws->Parent);
+                System::Object^ missing = System::Type::Missing;
+
+                Microsoft::Office::Interop::Excel::Worksheet^ infoSheet =
+                    safe_cast<Microsoft::Office::Interop::Excel::Worksheet^>(wb->Worksheets->Add(missing, ws, 1, Microsoft::Office::Interop::Excel::XlSheetType::xlWorksheet));
+                infoSheet->Name = "Info";
+
+                DateTime sessionStart = dataCollectionStartTime;
+                if (sessionStart == DateTime::MinValue) {
+                    sessionStart = DateTime::Now;
+                }
+                DateTime sessionEnd = dataCollectionEndTime;
+                if (sessionEnd == DateTime::MinValue) {
+                    sessionEnd = DateTime::Now;
+                }
+
+                infoSheet->Cells[1, 1] = "SessionStart";
+                infoSheet->Cells[1, 2] = sessionStart.ToString("yyyy-MM-dd HH:mm:ss");
+                infoSheet->Cells[2, 1] = "SessionEnd";
+                infoSheet->Cells[2, 2] = sessionEnd.ToString("yyyy-MM-dd HH:mm:ss");
+                infoSheet->Cells[3, 1] = "ClientPort";
+                infoSheet->Cells[3, 2] = clientPort.ToString();
+                infoSheet->Cells[4, 1] = "ClientIP";
+                infoSheet->Cells[4, 2] = (this->ClientIP != nullptr ? this->ClientIP : "");
+                infoSheet->Cells[5, 1] = "FormGuid";
+                infoSheet->Cells[5, 2] = (this->FormGuid != nullptr ? this->FormGuid : "");
+
+                Marshal::ReleaseComObject(infoSheet);
+                Marshal::ReleaseComObject(wb);
+            }
+            catch (...) {
+                // Ignore metadata sheet errors to avoid breaking export.
+            }
 
             // Заголовки - ОПТИМИЗИРОВАННАЯ ВЕРСИЯ: записываем все заголовки сразу через массив
             cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();
@@ -746,27 +1095,21 @@ void ProjectServerW::DataForm::AddDataToExcel() {
                 filePath += "\\";
             }
 
-            // Добавляем имя файла с текущей датой и временем
-            if (excelFileName != nullptr) {
-                // Добавляем время окончания к имени файла
-                String^ finalFileName = excelFileName;
-                
-                // Если есть время окончания, добавляем его к имени файла
-                if (dataCollectionEndTime != DateTime::MinValue) {
-                    finalFileName += "_End_" + dataCollectionEndTime.ToString("HH-mm-ss");
-                }
-                
-                // Добавляем расширение .xlsx
-                finalFileName += ".xlsx";
-                
-                // Используем имя файла с временем начала и окончания
-                filePath += finalFileName;
+            // Build a deterministic filename with session start and finish timestamps (including the date).
+            DateTime sessionStart = dataCollectionStartTime;
+            if (sessionStart == DateTime::MinValue) {
+                sessionStart = DateTime::Now;
             }
-            else {
-                // Используем стандартное имя с текущей датой и временем
-                DateTime now = DateTime::Now;
-                filePath += "SensorData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + "_Port" + clientPort.ToString() + ".xlsx";
+            DateTime sessionEnd = dataCollectionEndTime;
+            if (sessionEnd == DateTime::MinValue) {
+                sessionEnd = DateTime::Now;
             }
+            String^ finalFileName = String::Format(
+                "WorkData_Start_{0}_End_{1}_Port{2}.xlsx",
+                sessionStart.ToString("yyyy-MM-dd_HH-mm-ss"),
+                sessionEnd.ToString("yyyy-MM-dd_HH-mm-ss"),
+                clientPort.ToString());
+            filePath += finalFileName;
 
             // Сохранение по выбранному пути
             excel->SaveAs(filePath);
@@ -776,7 +1119,13 @@ void ProjectServerW::DataForm::AddDataToExcel() {
             TimeSpan elapsed = endTime.Subtract(startTime);
             GlobalLogger::LogMessage(ConvertToStdString(String::Format(
                 "Information: Файл Excel успешно сохранен: {0}\nВремя записи: {1} секунд ({2} строк)", 
-                excelFileName, elapsed.TotalSeconds.ToString("F2"), copiedTable->Rows->Count)));
+                finalFileName, elapsed.TotalSeconds.ToString("F2"), copiedTable->Rows->Count)));
+
+            // ВАЖНО: НЕ устанавливаем dataExportedToExcel = true здесь!
+            // Причина: во время записи в Excel могли поступить НОВЫЕ данные в исходную таблицу,
+            // которые ещё не записаны. Флаг управляется в других местах:
+            // - При автоматическом экспорте (Work=0, 60 сек) флаг устанавливается ДО вызова записи
+            // - При добавлении новых данных флаг сбрасывается в false
 
             // Освободим память от copiedTable
             delete copiedTable;
@@ -849,8 +1198,39 @@ void ProjectServerW::DataForm::AddDataToExcel() {
             if (exportCompletedEvent != nullptr) {
                 exportCompletedEvent->Set();
             }
+
+            // Critical: allow subsequent exports for this form even if Excel failed.
+            System::Threading::Monitor::Enter(excelExportSync);
+            try {
+                excelExportInProgress = 0;
+            }
+            finally {
+                System::Threading::Monitor::Exit(excelExportSync);
+            }
+
+            // Освобождаем глобальный mutex Excel, если он был захвачен
+            if (mutexAcquired) {
+                try {
+                    excelGlobalMutex->ReleaseMutex();
+                }
+                catch (...) {}
+                mutexAcquired = false;
+            }
         }
-        catch (...) {}
+        catch (...) {
+            // Critical: allow subsequent exports for this form even if finalization failed.
+            System::Threading::Monitor::Enter(excelExportSync);
+            try {
+                excelExportInProgress = 0;
+            }
+            finally {
+                System::Threading::Monitor::Exit(excelExportSync);
+            }
+
+            if (mutexAcquired) {
+                try { excelGlobalMutex->ReleaseMutex(); } catch (...) {}
+            }
+        }
     }    
 
 }
@@ -872,7 +1252,50 @@ void DataForm::DelayedGarbageCollection(Object^ state) {
 
 void DataForm::EnableButton()
 {
-    buttonExcel->Enabled = true;
+    try {
+        if (buttonExcel == nullptr || buttonExcel->IsDisposed) {
+            return;
+        }
+        buttonExcel->Enabled = true;
+    }
+    catch (...) {}
+}
+
+void ProjectServerW::DataForm::OnInactivityTimerTick(Object^ sender, EventArgs^ e) {
+    try {
+        if (inactivityCloseRequested || !hasTelemetry || lastTelemetryTime == DateTime::MinValue) {
+            return;
+        }
+
+        TimeSpan idle = DateTime::Now.Subtract(lastTelemetryTime);
+        if (idle.TotalMinutes < 30) {
+            return;
+        }
+
+        // Critical: finalize the current session file (do not create EmergencyData files).
+        if (dataCollectionEndTime == DateTime::MinValue) {
+            dataCollectionEndTime = DateTime::Now;
+        }
+
+        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+            "Information: No telemetry for {0:F1} minutes. Finalizing and closing DataForm.",
+            idle.TotalMinutes)));
+
+        // Start export first; only then mark as exported and request close to avoid losing the export due to a transient guard.
+        if (!StartExcelExportThread(true)) {
+            GlobalLogger::LogMessage("Warning: Export did not start on inactivity timeout; will retry on next tick.");
+            return;
+        }
+
+        inactivityCloseRequested = true;
+        dataExportedToExcel = true;
+
+        // Allow new sessions to create a new form after timeout.
+        this->Close();
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in OnInactivityTimerTick: " + ex->ToString()));
+    }
 }
 
 void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size, int port) {
@@ -885,17 +1308,40 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
     pin_ptr<Byte> pinnedBuffer = &buffer[0];
     char* rawBuffer = reinterpret_cast<char*>(pinnedBuffer);
 
-    // ===== ОПТИМИЗАЦИЯ ПРОИЗВОДИТЕЛЬНОСТИ =====
-    // Приостанавливаем обновление DataGridView для ускорения
-    dataGridView->SuspendLayout();
-    
     try {
-        // Вызываем стандартный метод добавления данных
-        AddDataToTable(rawBuffer, size, dataTable);
+        if (this == nullptr || this->IsDisposed || this->Disposing) {
+            return;
+        }
+        if (dataGridView == nullptr || dataGridView->IsDisposed) {
+            return;
+        }
+
+        hasTelemetry = true;
+        DateTime telemetryTime = DateTime::Now;
+        lastTelemetryTime = telemetryTime;
+
+        // Critical: if the controller never toggles Work->1 (or we started mid-session), we still need stable session timestamps.
+        if (dataCollectionStartTime == DateTime::MinValue) {
+            dataCollectionStartTime = telemetryTime;
+        }
+
+        dataGridView->SuspendLayout();
+        try {
+            // Critical: keep Add and Snapshot mutually exclusive.
+            System::Threading::Monitor::Enter(dataTableSync);
+            try {
+                AddDataToTable(rawBuffer, size, dataTable);
+            }
+            finally {
+                System::Threading::Monitor::Exit(dataTableSync);
+            }
+        }
+        finally {
+            dataGridView->ResumeLayout(false);
+        }
     }
-    finally {
-        // Возобновляем обновление DataGridView
-        dataGridView->ResumeLayout(false);
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in AddDataToTableThreadSafe: " + ex->ToString()));
     }
 
     // УБРАНО: Автоматическая прокрутка к последней строке
@@ -939,7 +1385,7 @@ void ProjectServerW::DataForm::LoadSettings() {
         String^ settingsPath = System::IO::Path::Combine(appPath, "ExcelSettings.txt");
         if (System::IO::File::Exists(settingsPath)) {
             // Открываем и читаем файл
-            System::IO::StreamReader^ reader = gcnew System::IO::StreamReader("ExcelSettings.txt");
+            System::IO::StreamReader^ reader = gcnew System::IO::StreamReader(settingsPath);
 
             // Читаем первую строку (путь)
             String^ path = reader->ReadLine();
@@ -1017,19 +1463,24 @@ System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ send
                 GlobalLogger::LogMessage("Information: Данные уже были экспортированы в Excel, повторная запись не требуется");
             }
             else {
-                // Данные НЕ были экспортированы - это аварийное сохранение при потере связи
-                // Создаем имя файла, если оно еще не создано
+                // Data was not exported yet. If we are closing due to inactivity timeout, we export to the current session file.
+                // No "EmergencyData" filenames should be created.
                 if (excelFileName == nullptr) {
                     DateTime now = DateTime::Now;
-                    excelFileName = "EmergencyData_" + now.ToString("yyyy-MM-dd_HH-mm-ss") + "_Port" + clientPort.ToString() + ".xlsx";
+                    if (dataCollectionStartTime == DateTime::MinValue) {
+                        dataCollectionStartTime = now;
+                    }
+                    if (dataCollectionEndTime == DateTime::MinValue) {
+                        dataCollectionEndTime = now;
+                    }
+                    excelFileName = "WorkData_Port" + clientPort.ToString();
                 }
 
                 // Логируем начало сохранения
-                GlobalLogger::LogMessage("АВАРИЙНОЕ сохранение данных в Excel (потеря связи)... " + ConvertToStdString(excelFileName));
+                GlobalLogger::LogMessage("Information: Finalizing data to Excel on form close... " + ConvertToStdString(excelFileName));
 
-                // Запускаем запись в Excel в отдельном потоке
-                // Форма закроется сразу, не дожидаясь завершения записи
-                DataForm::TriggerExcelExport();
+                // Start background export without touching UI controls; the form can close immediately.
+                StartExcelExportThread(true);
                 
                 // НЕ ЖДЁМ завершения записи - форма закрывается сразу
                 // Это позволяет клиенту переподключиться немедленно
@@ -1073,6 +1524,16 @@ System::Void DataForm::DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ 
     
     // Закрываем сокет клиента
     closesocket(this->ClientSocket);
+
+    // Critical: the form can close itself (e.g., inactivity timeout). Ensure the owning native thread is joined/removed.
+    try {
+        if (this->FormGuid != nullptr && this->FormGuid->Length > 0) {
+            msclr::interop::marshal_context ctx;
+            std::wstring guidW = ctx.marshal_as<std::wstring>(this->FormGuid);
+            ThreadStorage::StopThread(guidW);
+        }
+    }
+    catch (...) {}
 }
 
 // Обработчик уничтожения дескриптора окна
@@ -1098,6 +1559,25 @@ System::Void DataForm::DataForm_HandleDestroyed(Object^ sender, EventArgs^ e)
         delayedExcelTimer->Stop();
         delete delayedExcelTimer;
         delayedExcelTimer = nullptr;
+    }
+
+    // Stop export retry timer to avoid Tick firing after controls are disposed.
+    if (exportTimer != nullptr) {
+        try {
+            exportTimer->Stop();
+            exportTimer->Tick -= gcnew EventHandler(this, &DataForm::CheckExcelButtonStatus);
+        }
+        catch (...) {}
+        exportTimer = nullptr;
+    }
+
+    if (inactivityTimer != nullptr) {
+        try {
+            inactivityTimer->Stop();
+            inactivityTimer->Tick -= gcnew EventHandler(this, &DataForm::OnInactivityTimerTick);
+        }
+        catch (...) {}
+        inactivityTimer = nullptr;
     }
 }
 // Перегруженный метод - автоматическое определение имени команды
@@ -1732,26 +2212,22 @@ void ProjectServerW::DataForm::TriggerExcelExport() {
     
     // Теперь мы в потоке UI, можем безопасно обращаться к элементам управления
     try {
-        // Проверка доступности кнопки Excel
-        if (buttonExcel->Enabled) {
-            // Автоматически запустить экспорт в Excel
-            buttonEXCEL_Click(nullptr, nullptr);
-        }
-        else {
-            // Кнопка недоступна, устанавливаем флаг ожидания и запускаем таймер
-            pendingExcelExport = true;
-
-            // Создаем таймер, если он еще не создан
-            if (exportTimer == nullptr) {
-                exportTimer = gcnew System::Windows::Forms::Timer();
-                exportTimer->Interval = 500; // Проверка каждые 500 мс
-                exportTimer->Tick += gcnew EventHandler(this, &DataForm::CheckExcelButtonStatus);
+        if (StartExcelExportThread(false)) {
+            pendingExcelExport = false;
+            if (exportTimer != nullptr && exportTimer->Enabled) {
+                exportTimer->Stop();
             }
+            return;
+        }
 
-            // Запускаем таймер
-            exportTimer->Start();
-
-            // Выводим сообщение для пользователя
+        pendingExcelExport = true;
+        if (exportTimer == nullptr) {
+            exportTimer = gcnew System::Windows::Forms::Timer();
+            exportTimer->Interval = 500;
+            exportTimer->Tick += gcnew EventHandler(this, &DataForm::CheckExcelButtonStatus);
+        }
+        exportTimer->Start();
+        if (Label_Data != nullptr && !Label_Data->IsDisposed) {
             Label_Data->Text = "Ожидание возможности записи в Excel...";
         }
     }
@@ -1762,18 +2238,18 @@ void ProjectServerW::DataForm::TriggerExcelExport() {
 
 // Обработчик события таймера проверки доступности кнопки экспорта в Excel
 void ProjectServerW::DataForm::CheckExcelButtonStatus(Object^ sender, EventArgs^ e) {
-    // Проверяем, доступна ли кнопка
-    if (buttonExcel->Enabled && pendingExcelExport) {
-        // Останавливаем таймер
+    if (!pendingExcelExport) {
+        return;
+    }
+    if (!StartExcelExportThread(false)) {
+        return;
+    }
+
+    pendingExcelExport = false;
+    if (exportTimer != nullptr && exportTimer->Enabled) {
         exportTimer->Stop();
-
-        // Сбрасываем флаг
-        pendingExcelExport = false;
-
-        // Запускаем экспорт
-        buttonEXCEL_Click(nullptr, nullptr);
-
-        // Обновляем метку
+    }
+    if (Label_Data != nullptr && !Label_Data->IsDisposed) {
         Label_Data->Text = "Данные записываются в Excel...";
     }
 }

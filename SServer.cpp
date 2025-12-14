@@ -214,51 +214,51 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		clientAddr.sin_addr.S_un.S_un_b.s_b3,
 		clientAddr.sin_addr.S_un.S_un_b.s_b4);
 
+	// GUID формы (используется и для нового подключения, и для реконнекта)
+	std::wstring guid;
+
 	// Проверяем, есть ли уже активное соединение от этого IP
 	std::wstring existingGuid = ProjectServerW::DataForm::FindFormByClientIP(clientIPAddress);
 	if (!existingGuid.empty()) {
-		// Уже есть активное соединение от этого IP
-		String^ warningMsg = "Внимание: Уже существует активное соединение от клиента " + clientIPAddress +
-			". Новое соединение не будет создано.";
+		// Reconnect scenario: device can be power-cycled. Reuse the existing DataForm and continue collecting into the same table.
+		guid = existingGuid;
+		String^ msg = "Information: Повторное подключение клиента " + clientIPAddress + ", переиспользуем существующую форму";
 		if (form != nullptr && !form->IsDisposed) {
-			form->SetMessage_TextValue(warningMsg);
-			GlobalLogger::LogMessage(ConvertToStdString(warningMsg));
+			form->SetMessage_TextValue(msg);
 		}
-		// Закрываем новое соединение
-		closesocket(clientSocket);
-		return 1;
+		GlobalLogger::LogMessage(ConvertToStdString(msg));
 	}
-
-	// Открываем форму DataForm для демонстрации принятых данных в отдельном потоке
-	// Идентификатор формы возвращаем обратно через очередь сообщений
-	std::wstring guid;
-	std::queue<std::wstring> messageQueue;
-	std::mutex mtx;
-	std::condition_variable cv;
-		
-	try {	// открываем форму DataForm в новом потоке, передаём в поток ссылки на очередь сообщений, мьютекс и условную переменную
-		std::thread formThread([&messageQueue, &mtx, &cv]() {
-			ProjectServerW::DataForm::CreateAndShowDataFormInThread(messageQueue, mtx, cv);
-			});
-		// Получение идентификатора формы данных - guid
-		// область видимости нужна для мьютекса, при выходе из области видимости мьютекс разблокируется
-		{
-			std::unique_lock<std::mutex> lock(mtx);
-			cv.wait(lock, [&messageQueue] { return !messageQueue.empty(); });
-			guid = messageQueue.front();
-			messageQueue.pop();
+	else {
+		// Открываем форму DataForm для демонстрации принятых данных в отдельном потоке
+		// Идентификатор формы возвращаем обратно через очередь сообщений
+		std::queue<std::wstring> messageQueue;
+		std::mutex mtx;
+		std::condition_variable cv;
+			
+		try {	// открываем форму DataForm в новом потоке, передаём в поток ссылки на очередь сообщений, мьютекс и условную переменную
+			std::thread formThread([&messageQueue, &mtx, &cv]() {
+				ProjectServerW::DataForm::CreateAndShowDataFormInThread(messageQueue, mtx, cv);
+				});
+			// Получение идентификатора формы данных - guid
+			// область видимости нужна для мьютекса, при выходе из области видимости мьютекс разблокируется
+			{
+				std::unique_lock<std::mutex> lock(mtx);
+				cv.wait(lock, [&messageQueue] { return !messageQueue.empty(); });
+				guid = messageQueue.front();
+				messageQueue.pop();
+			}
+			// Сохраняем поток формы данных в хранилище с GUID формы в качестве ключа
+			ThreadStorage::StoreThread(guid, formThread);
+			GlobalLogger::LogMessage(ConvertToStdString("Information: The DataForm has been opened successfully!"));
 		}
-		// Сохраняем поток формы данных в хранилище с GUID формы в качестве ключа
-		ThreadStorage::StoreThread(guid, formThread);
-		GlobalLogger::LogMessage(ConvertToStdString("Information: The DataForm has been opened successfully!"));
-	}
-	catch (const std::exception& e) {	// Обработка исключения, выводим сообщение об ошибке
-		String^ errorMessage = gcnew String(e.what());
-		if (form != nullptr && !form->IsDisposed) {
-			form->SetMessage_TextValue("Error: Couldn't create a form in a new thread " + errorMessage);
-			GlobalLogger::LogMessage(ConvertToStdString("Error: Couldn't create a DataForm in a new thread " + errorMessage));
+		catch (const std::exception& e) {	// Обработка исключения, выводим сообщение об ошибке
+			String^ errorMessage = gcnew String(e.what());
+			if (form != nullptr && !form->IsDisposed) {
+				form->SetMessage_TextValue("Error: Couldn't create a form in a new thread " + errorMessage);
+				GlobalLogger::LogMessage(ConvertToStdString("Error: Couldn't create a DataForm in a new thread " + errorMessage));
+			}
+			return 1;
 		}
-		return 1;
 	}
 
 	int timeout = 30*60*1000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
@@ -514,12 +514,17 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	}	// конец while (основной цикл)
 
 exitMainLoop:  // Метка для выхода из всех циклов
-	// Цикл приёма данных прерван по ошибке приёма, закрываем форрму приёма данных
+	// Соединение оборвалось. Форму НЕ закрываем: устройство может вернуться в течение 30 минут,
+	// тогда новое подключение переиспользует текущую форму и продолжит заполнение таблицы.
 	closesocket(clientSocket);
-	// Найдём форму данных по идентификатору и закроем её
-	DataForm::CloseForm(guid);
-	// Закрытие потока формы данных по guid формы
-	ThreadStorage::StopThread(guid);
+	// Помечаем сокет формы как недействительный (команды на отправку должны перестать проходить)
+	try {
+		DataForm^ form2 = DataForm::GetFormByGuid(guid);
+		if (form2 != nullptr && !form2->IsDisposed && !form2->Disposing) {
+			form2->ClientSocket = INVALID_SOCKET;
+		}
+	}
+	catch (...) {}
 
 	return 0;
 }
