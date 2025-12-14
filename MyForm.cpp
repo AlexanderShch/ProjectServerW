@@ -2,7 +2,7 @@
 #include "SServer.h"
 #include <thread>
 
-using namespace ProjectServerW;		// ˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜
+using namespace ProjectServerW;		// Project namespace
 SServer server;
 
 // Global exception handler for unhandled exceptions
@@ -115,13 +115,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	}
 }
 
-System::Void ProjectServerW::MyForm::˜˜˜˜˜ToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e)
+System::Void ProjectServerW::MyForm::exitToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e)
 {
-	// ˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜
+	// Stop server before exit to avoid leaving sockets/threads behind.
 	server.closeServer();
-	// ˜˜˜˜ ˜˜˜˜˜ ˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜˜˜˜
+	// Allow background threads to observe shutdown.
 	System::Threading::Thread::Sleep(500);
-	// ˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜˜˜
+	// Exit application.
 	Application::Exit();
 	return System::Void();
 }
