@@ -143,6 +143,7 @@
     <ClCompile Include="Chart.cpp" />
     <ClCompile Include="SServer.cpp" />
     <ClCompile Include="Commands.cpp" />
+    <ClCompile Include="PacketQueueProcessor.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Chart.h" />
@@ -152,6 +153,7 @@
     <ClInclude Include="DataForm.h">
       <FileType>CppForm</FileType>
     </ClInclude>
+    <ClInclude Include="PacketQueueProcessor.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="SServer.h" />
     <ClInclude Include="version.h" />

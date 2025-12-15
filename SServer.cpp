@@ -1,5 +1,6 @@
 #include "SServer.h" // Включает DataForm.h внутри себя
-#include "Commands.h" // Для работы с командами подтверждения
+#include "PacketQueueProcessor.h"
+#include "Commands.h" // MAX_COMMAND_SIZE is used for framed payload length heuristics.
 #include <fstream>
 #include <iostream>
 #include <chrono>
@@ -179,17 +180,6 @@ void SServer::handle() {
 	}
 }
 
-// Табличное определение CRC
-static uint16_t MB_GetCRC(char* buf, uint16_t len)
-{
-	uint16_t crc_16 = 0xffff;
-	for (uint16_t i = 0; i < len; i++)
-	{
-		crc_16 = (crc_16 >> 8) ^ crc16_table[(buf[i] ^ crc_16) & 0xff];
-	}
-	return crc_16;
-}
-
 DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	SOCKADDR_IN clientAddr = {};
 	int addrLen = sizeof(clientAddr);
@@ -261,6 +251,9 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		}
 	}
 
+	// Cache managed GUID once; allocating it per packet would add avoidable pressure in the recv() loop.
+	String^ guidManaged = gcnew String(guid.c_str());
+
 	int timeout = 30*60*1000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
 
 	// Установка тайм-аута для операций чтения (recv)
@@ -270,6 +263,9 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	char accumulatedBuffer[1024];  // Буфер для накопления данных
 	int accumulatedBytes = 0;      // Количество накопленных байт
 	const int TELEMETRY_PACKET_SIZE = 48;  // Размер одного пакета телеметрии
+	// Critical: some devices can switch to framed packets (AA 55 ... 55 AA).
+	// Once framing is detected we permanently parse by markers for this connection.
+	bool useMarkedFrames = false;
 
 	// Бесконечный цикл считывания данных
 	while (true) {
@@ -316,24 +312,131 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		// Добавляем полученные байты к накопленным
 		accumulatedBytes += bytesReceived;
 		
-		// ДИАГНОСТИКА: Логируем recv() (только если есть ошибки)
-		static int consecutiveErrors = 0;
-		if (consecutiveErrors > 0 && consecutiveErrors < 5) {
-			GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-				"[RECV] Получено {0} байт, накоплено {1} байт", 
-				bytesReceived, accumulatedBytes)));
-		}
-		
 		// Обрабатываем все полные пакеты в буфере
 		int processedBytes = 0;
 		while (accumulatedBytes - processedBytes > 0) {
 			// Указатель на начало текущего пакета
 			char* buffer = accumulatedBuffer + processedBytes;
 			int remainingInBuffer = accumulatedBytes - processedBytes;
-			
-			// Минимум 1 байт для определения типа
-			if (remainingInBuffer < 1) {
-				break; // Недостаточно данных
+			if (remainingInBuffer <= 0) {
+				break;
+			}
+
+			// ============================
+			// Framed mode: AA 55 <payload> 55 AA
+			// ============================
+			if (useMarkedFrames) {
+				const uint8_t SYNC_START_0 = 0xAA;
+				const uint8_t SYNC_START_1 = 0x55;
+				const uint8_t SYNC_END_0 = 0x55;
+				const uint8_t SYNC_END_1 = 0xAA;
+
+				// Need at least 2 bytes to detect the header marker.
+				if (remainingInBuffer < 2) {
+					break;
+				}
+
+				// Resync to the header marker (AA 55). Keep one byte to not drop a split marker.
+				if ((uint8_t)buffer[0] != SYNC_START_0 || (uint8_t)buffer[1] != SYNC_START_1) {
+					int headerOffset = -1;
+					for (int i = 0; i + 1 < remainingInBuffer; i++) {
+						if ((uint8_t)buffer[i] == SYNC_START_0 && (uint8_t)buffer[i + 1] == SYNC_START_1) {
+							headerOffset = i;
+							break;
+						}
+					}
+
+					if (headerOffset < 0) {
+						processedBytes += (remainingInBuffer - 1);
+						continue;
+					}
+
+					if (headerOffset > 0) {
+						processedBytes += headerOffset;
+						continue;
+					}
+				}
+
+				// We are aligned to AA 55.
+				// The separator between frames is expected to be SYNC_END + SYNC_START (55 AA AA 55),
+				// but either marker can be damaged. We therefore accept the earliest boundary found:
+				// - a valid SYNC_END (55 AA), OR
+				// - the next SYNC_START (AA 55).
+				int footerPos = -1;
+				int nextHeaderPos = -1;
+				for (int i = 2; i + 1 < remainingInBuffer; i++) {
+					const uint8_t b0 = (uint8_t)buffer[i];
+					const uint8_t b1 = (uint8_t)buffer[i + 1];
+
+					if (footerPos < 0 && b0 == SYNC_END_0 && b1 == SYNC_END_1) {
+						footerPos = i;
+					}
+					if (nextHeaderPos < 0 && b0 == SYNC_START_0 && b1 == SYNC_START_1) {
+						nextHeaderPos = i;
+					}
+
+					if (footerPos >= 0 && nextHeaderPos >= 0) {
+						break;
+					}
+				}
+
+				if (footerPos < 0 && nextHeaderPos < 0) {
+					break; // Wait for more recv() data.
+				}
+
+				// Choose the earliest boundary in the stream:
+				// - SYNC_END ends the current frame
+				// - SYNC_START begins the next frame and can serve as an end boundary if SYNC_END is damaged
+				const bool endByNextHeader = (nextHeaderPos >= 0 && (footerPos < 0 || nextHeaderPos < footerPos));
+				const int endPos = endByNextHeader ? nextHeaderPos : footerPos;
+				const int payloadLen = endPos - 2;
+				if (payloadLen <= 0) {
+					// Empty/degenerate frame: advance to the chosen boundary.
+					processedBytes += endByNextHeader ? nextHeaderPos : (footerPos + 2);
+					continue;
+				}
+
+				uint8_t* payload = reinterpret_cast<uint8_t*>(buffer + 2);
+				const uint8_t framedType = payload[0];
+
+				// Route by explicit type when possible, otherwise use length as an additional signal.
+				// Critical: telemetry routing triggers ACK behavior in the worker; prefer routing to telemetry only when likely.
+				const bool looksLikeTelemetryByLen = (payloadLen == TELEMETRY_PACKET_SIZE);
+				const bool looksLikeCmdResponseByLen = (payloadLen >= 6 && payloadLen <= static_cast<int>(MAX_COMMAND_SIZE));
+
+				const bool isCmdResponseType = (framedType >= 0x01 && framedType <= 0x04);
+				const bool isTelemetryType = (framedType == 0x00);
+
+				if (isCmdResponseType || (!isTelemetryType && looksLikeCmdResponseByLen && !looksLikeTelemetryByLen)) {
+					cli::array<System::Byte>^ responseBuffer = gcnew cli::array<System::Byte>(payloadLen);
+					Marshal::Copy(IntPtr(payload), responseBuffer, 0, payloadLen);
+					DataForm::EnqueueResponse(responseBuffer);
+				}
+				else {
+					cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(payloadLen);
+					Marshal::Copy(IntPtr(payload), dataBuffer, 0, payloadLen);
+					PacketQueueProcessor::EnqueueTelemetry(dataBuffer, payloadLen, clientPort, guidManaged, clientSocket, clientIPAddress);
+				}
+
+				// Consume up to the chosen boundary.
+				// If we end by nextHeaderPos, it becomes the new current position and the next loop sees SYNC_START immediately.
+				processedBytes += endByNextHeader ? nextHeaderPos : (footerPos + 2);
+				continue;
+			}
+
+			// ============================
+			// Unframed mode (legacy): first byte is packet type
+			// ============================
+
+			// Detect a switch to framed packets as early as possible.
+			if (remainingInBuffer >= 2 && (uint8_t)buffer[0] == 0xAA && (uint8_t)buffer[1] == 0x55) {
+				useMarkedFrames = true;
+				continue;
+			}
+
+			// If we have only the first marker byte, wait for the next recv() to avoid skipping a valid header.
+			if (remainingInBuffer == 1 && (uint8_t)buffer[0] == 0xAA) {
+				break;
 			}
 
 			// ===== РАЗЛИЧЕНИЕ ТИПА ПАКЕТА ПО ПЕРВОМУ БАЙТУ =====
@@ -349,7 +452,6 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 					// Проверяем: есть ли второй Type=0x00 на позиции 6?
 					if (buffer[6] == 0x00) {
 						// Вероятно, первые 6 байт - мусор, пропускаем их
-						GlobalLogger::LogMessage("[ФИЛЬТР] Обнаружен мусорный 6-байтовый пакет с Type=0x00, пропускаем");
 						processedBytes += 6;
 						continue;  // Начинаем обработку заново со следующего пакета
 					}
@@ -366,10 +468,16 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				uint8_t dataLen = buffer[3]; // DataLen находится в 4-м байте (индекс 3)
 				bytesInPacket = 4 + dataLen + 2; // Type+Code+Status+DataLen + Data + CRC
 			} else {
-				// Неизвестный тип - пропускаем 1 байт и продолжаем
-				GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-					"Неизвестный тип пакета: 0x{0:X2}, пропускаем 1 байт", 
-					packetType)));
+				// Unknown type: drop a single byte to resync quickly, but do not drop a potential AA 55 header start.
+				if (packetType == 0xAA) {
+					if (remainingInBuffer < 2) {
+						break;
+					}
+					if ((uint8_t)buffer[1] == 0x55) {
+						useMarkedFrames = true;
+						continue;
+					}
+				}
 				processedBytes += 1;
 				continue;
 			}
@@ -390,116 +498,16 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				
 				// Добавляем в очередь ответов
 				DataForm::EnqueueResponse(responseBuffer);
-				GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-					"Ответ получен и помещен в очередь: Type=0x{0:X2}, Size={1} bytes", 
-					packetType, bytesInPacket)));
-				// Обработка ответа будет выполнена в DataForm.cpp
 				
 				// Переходим к следующему пакету
 				processedBytes += bytesInPacket;
 			} // конец if (packetType >= 0x01 && packetType <= 0x04)
 			else if (packetType == 0x00) {
-				// ===== ОБРАБОТКА ТЕЛЕМЕТРИИ =====
-				// Пакеты с Type = 0x00 это телеметрия от контроллера
-				
-				// Длина посылки вместе с CRC
-				uint8_t LengthOfPackage = 48;
-				// Вычислим CRC16 для первых 46 байт
-				uint16_t dataCRC = MB_GetCRC(buffer, LengthOfPackage - 2);
-				uint16_t DatCRC;
-				memcpy(&DatCRC, &buffer[LengthOfPackage - 2], 2);
-				bool crcValid = (DatCRC == dataCRC);
+				// Telemetry processing (CRC, UI dispatch, ACK) is offloaded to a background worker.
+				cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(bytesInPacket);
+				Marshal::Copy(IntPtr(buffer), dataBuffer, 0, bytesInPacket);
+				PacketQueueProcessor::EnqueueTelemetry(dataBuffer, bytesInPacket, clientPort, guidManaged, clientSocket, clientIPAddress);
 
-				// Переменные для команды подтверждения (объявляем ДО if/else)
-				Command ackCmd;
-				uint8_t ackBuffer[MAX_COMMAND_SIZE];
-				size_t ackSize;
-
-			if (crcValid) {
-				// ===== CRC ПРАВИЛЬНЫЙ - ОБРАБАТЫВАЕМ ДАННЫЕ =====
-				consecutiveErrors = 0;  // Сбрасываем счётчик ошибок
-				
-				// Найдём форму по идентификатору
-				DataForm^ form2 = DataForm::GetFormByGuid(guid);
-					if (form2 != nullptr && !form2->IsDisposed && form2->IsHandleCreated && !form2->Disposing) 
-					{					
-						// Передадим в форму сокет клиента этой формы и IP-адрес
-						if (form2 != nullptr) {
-							form2->ClientSocket = clientSocket;
-							form2->ClientIP = clientIPAddress;
-						}
-						// ===== ОБРАБОТКА ТЕЛЕМЕТРИИ =====
-						if (clientPort < SclientPort) {
-							// Создаем копию данных для безопасной передачи в другой поток
-							cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(bytesInPacket);
-							Marshal::Copy(IntPtr(buffer), dataBuffer, 0, bytesInPacket);
-							// Вызываем AddDataToTable через Invoke для выполнения в потоке формы
-							form2->BeginInvoke(gcnew Action<cli::array <System::Byte>^, int, int>
-								(form2, &DataForm::AddDataToTableThreadSafe),
-								dataBuffer, bytesInPacket, clientPort);
-							// Refresh вызывать отдельно уже не нужно - он будет вызван в AddDataToTableThreadSafe
-						} else {
-							// здесь обработка для другого типа порта
-						}
-					}
-					else {
-						// Форма отсутствует, завершаем ВСЁ соединение
-						GlobalLogger::LogMessage("Warning: Форма закрыта во время приёма данных, завершаем соединение");
-						goto exitMainLoop;  // Выходим из ВСЕХ циклов
-					} // конец if (form2 != nullptr...
-
-					// CRC правильный - формируем DATA_OK
-					ackCmd = CreateTelemetryAckCommand(CmdTelemetry::DATA_OK);
-					
-			} else {
-				// ===== CRC НЕПРАВИЛЬНЫЙ - ПРОПУСКАЕМ ВЕСЬ ПАКЕТ =====
-				consecutiveErrors++;  // Увеличиваем счётчик ошибок
-				
-				// ДИАГНОСТИКА: Выводим детальную информацию при ошибке CRC (первые 5 ошибок)
-				if (consecutiveErrors <= 5) {
-					std::string hexDump = "";
-					for (int i = 0; i < min(48, bytesInPacket); i++) {
-						char hex[8];
-						sprintf_s(hex, sizeof(hex), "%02X ", (uint8_t)buffer[i]);
-						hexDump += hex;
-						if ((i + 1) % 16 == 0) hexDump += "\n                ";
-					}
-					
-					GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-						"[ОШИБКА CRC #{0}] Expected={1:X4}, Received={2:X4}\n" +
-						"             AccumBytes={3}, ProcessedBytes={4}, PacketSize={5}\n" +
-						"             HEX: {6}\n" +
-						"             ПРОПУСКАЕМ ВЕСЬ ПАКЕТ (48 байт)", 
-						consecutiveErrors, dataCRC, DatCRC, accumulatedBytes, processedBytes, bytesInPacket,
-						gcnew String(hexDump.c_str()))));
-				} else if (consecutiveErrors == 6) {
-					GlobalLogger::LogMessage("(дальнейшие ошибки CRC не логируются)");
-				} else {
-					// Только короткое сообщение для последующих ошибок
-					GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-						"Ошибка CRC телеметрии: Expected={0:X4}, Received={1:X4}, пропускаем пакет", 
-						dataCRC, DatCRC)));
-				}
-				
-				// ПРАВИЛЬНАЯ ОБРАБОТКА: Пропускаем ВСЕ 48 байт сбойного пакета телеметрии
-				// Это гарантирует, что следующий парсинг начнётся с начала нового пакета
-				processedBytes += TELEMETRY_PACKET_SIZE;  // Пропускаем весь пакет (48 байт)
-				
-				// Отправляем DATA_FALSE контроллеру для информирования об ошибке
-				ackCmd = CreateTelemetryAckCommand(CmdTelemetry::DATA_FALSE);
-			} // конец if (crcValid)
-
-				// ===== ОТПРАВКА ПОДТВЕРЖДЕНИЯ ТЕЛЕМЕТРИИ =====
-				// (выполняется и для DATA_OK, и для DATA_FALSE)
-				ackSize = BuildCommandBuffer(ackCmd, ackBuffer, sizeof(ackBuffer));
-				int bytesSent = send(clientSocket, (char*)ackBuffer, (int)ackSize, 0);
-				
-				if (bytesSent == SOCKET_ERROR) {
-					int error = WSAGetLastError();
-					GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-						"Warning: Ошибка отправки подтверждения клиенту, error: {0}", error)));
-				}
-				
 				// Переходим к следующему пакету
 				processedBytes += bytesInPacket;
 			} // else if (packetType == 0x00)

@@ -1,6 +1,7 @@
 #include "DataForm.h"
 #include "Chart.h"
 #include "Commands.h"               // Для работы с командами управления
+#include "PacketQueueProcessor.h"   // Shared per-socket send gate (telemetry ACKs vs UI commands)
 #include <objbase.h>                // Для CoCreateGuid - генерация уникального идентификатора
 #include <string>
 #include <vcclr.h>  // Для gcnew
@@ -499,14 +500,27 @@ void ThreadStorage::StoreThread(const std::wstring& guid, std::thread& thread) {
 // Останавливаем поток по guid
 void ThreadStorage::StopThread(const std::wstring& guid)
 {
-    std::lock_guard<std::mutex> lock(GetMutex());
+    std::thread threadToStop;
+    {
+        std::lock_guard<std::mutex> lock(GetMutex());
 
-    // Ищем поток
-    auto it = GetThreadMap().find(guid);
-    if (it != GetThreadMap().end() && it->second.joinable()) {
-        it->second.join();  // Ждем завершения
-        GetThreadMap().erase(it);  // Удаляем из карты
+        // Move the thread out of the map first. Holding the mutex while waiting can deadlock shutdown paths.
+        auto it = GetThreadMap().find(guid);
+        if (it == GetThreadMap().end()) {
+            return;
+        }
+
+        threadToStop = std::move(it->second);
+        GetThreadMap().erase(it);
     }
+
+    if (!threadToStop.joinable()) {
+        return;
+    }
+
+    // Closing forms must never block on thread joins. In this app a DataForm is hosted on its own UI thread
+    // (ShowDialog inside std::thread). Joining from any UI-related close path can deadlock the modal loop.
+    threadToStop.detach();
 }
 
 // Функция для определения статической переменной map для потока
@@ -1612,9 +1626,17 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
             return false;
         }
 
-        // Отправляем команду клиенту
-        const int bytesSent = send(clientSocket, reinterpret_cast<const char*>(buffer), 
-                                  static_cast<int>(commandLength), 0);
+        // Critical: serialize send() per socket to prevent byte-stream interleaving with telemetry ACKs.
+        System::Object^ sendGate = PacketQueueProcessor::GetSendGate(clientSocket);
+        System::Threading::Monitor::Enter(sendGate);
+        int bytesSent = SOCKET_ERROR;
+        try {
+            bytesSent = send(clientSocket, reinterpret_cast<const char*>(buffer),
+                static_cast<int>(commandLength), 0);
+        }
+        finally {
+            System::Threading::Monitor::Exit(sendGate);
+        }
 
         if (bytesSent == SOCKET_ERROR) {
             int error = WSAGetLastError();
@@ -1846,83 +1868,6 @@ void ProjectServerW::DataForm::UpdateVersionLabelInternal() {
     if (label_Version != nullptr && !label_Version->IsDisposed) {
         label_Version->Text = pendingVersion;
     }
-}
-
-// ============================
-// Методы для обработки ответов от контроллера
-// ============================
-
-// Добавление ответа в очередь (вызывается из SServer)
-void ProjectServerW::DataForm::EnqueueResponse(cli::array<System::Byte>^ response) {
-    try {
-        responseQueue->Enqueue(response);
-        responseAvailable->Release(); // Сигнализируем о доступности ответа
-        
-        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-            "Ответ поставлен в очередь на обработку: Type=0x{0:X2}, Size={1} bytes", 
-            response[0], response->Length)));
-    }
-    catch (Exception^ ex) {
-        GlobalLogger::LogMessage(ConvertToStdString("Ошибка при постановке ответа в очередь: " + ex->Message));
-    }
-}
-
-// Прием ответа от контроллера
-bool ProjectServerW::DataForm::ReceiveResponse(CommandResponse& response, int timeoutMs) {
-    try {
-        // Проверяем, что сокет клиента открыт
-        if (clientSocket == INVALID_SOCKET) {
-            GlobalLogger::LogMessage("Error: Клиентский сокет недопустим для получения ответа");
-            return false;
-        }
-
-        // ===== ОЖИДАНИЕ ОТВЕТА ИЗ ОЧЕРЕДИ =====
-        // Ждем появления ответа в очереди с таймаутом
-        if (!responseAvailable->WaitOne(timeoutMs)) {
-            String^ msg = "Timeout: Ответ от контроллера не получен";
-            GlobalLogger::LogMessage(ConvertToStdString(msg));
-            return false;
-        }
-
-        // Получаем ответ из очереди
-        cli::array<System::Byte>^ responseBuffer;
-        if (!responseQueue->TryDequeue(responseBuffer)) {
-            String^ msg = "Error: Не удалось вывести ответ из очереди";
-            GlobalLogger::LogMessage(ConvertToStdString(msg));
-            return false;
-        }
-
-        // Копируем данные в неуправляемый буфер
-        uint8_t buffer[64];
-        pin_ptr<System::Byte> pinnedBuffer = &responseBuffer[0];
-        memcpy(buffer, pinnedBuffer, responseBuffer->Length);
-
-        // Разбираем полученный ответ
-        if (!ParseResponseBuffer(buffer, responseBuffer->Length, response)) {
-            String^ msg = "Error: Не удалось проанализировать ответ от контроллера";
-            GlobalLogger::LogMessage(ConvertToStdString(msg));
-            return false;
-        }
-
-        // Логируем успешное получение ответа
-        String^ logMsg = String::Format(
-            "Ответ обработан: Type=0x{0:X2}, Code=0x{1:X2}, Status={2}, DataLen={3}",
-            response.commandType, response.commandCode, 
-            gcnew String(GetStatusName(response.status)), response.dataLength);
-        GlobalLogger::LogMessage(ConvertToStdString(logMsg));
-
-        return true;
-
-    } catch (Exception^ ex) {
-        String^ errorMsg = "Исключение в полученном ответе: " + ex->Message;
-        GlobalLogger::LogMessage(ConvertToStdString(errorMsg));
-        return false;
-    }
-}
-
-// Перегрузка ReceiveResponse с таймаутом по умолчанию
-bool ProjectServerW::DataForm::ReceiveResponse(CommandResponse& response) {
-    return ReceiveResponse(response, 1000); // Таймаут по умолчанию 1000 мс
 }
 
 // Обработка полученного ответа
