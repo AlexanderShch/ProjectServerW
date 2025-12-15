@@ -183,6 +183,7 @@ namespace ProjectServerW {
 			this->Controls->Add(this->menuStrip1);
 			this->MainMenuStrip = this->menuStrip1;
 			this->Name = L"MyForm";
+
 			this->Text = L"Сервер сбора данных";
 			this->menuStrip1->ResumeLayout(false);
 			this->menuStrip1->PerformLayout();

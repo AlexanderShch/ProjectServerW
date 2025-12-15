@@ -732,6 +732,13 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
                 
                 // Выполняем запись в Excel
                 this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));
+
+                // Why: START/STOP commands are synchronous (wait for controller response). Queue START to the UI
+                // message loop to keep telemetry processing short and to allow Excel export to start in parallel.
+                if (autoRestartPending) {
+                    autoRestartPending = false;
+                    this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::ExecuteAutoRestartStart));
+                }
             }
         }
 
@@ -1379,8 +1386,14 @@ void ProjectServerW::DataForm::SaveSettings() {
         String^ settingsPath = System::IO::Path::Combine(appPath, "ExcelSettings.txt");
 
         System::IO::StreamWriter^ writer = gcnew System::IO::StreamWriter(settingsPath);
-        // Записываем путь
+        // Line 1 is kept as the legacy Excel directory for backward compatibility.
         writer->WriteLine(textBoxExcelDirectory->Text);
+
+        // Why: the app is frequently deployed without a full installer; a simple text file is easy to carry/backup.
+        writer->WriteLine("AutoStartEnabled=" + (checkBoxAutoStart->Checked ? "1" : "0"));
+        writer->WriteLine("AutoStartTime=" + dateTimePickerAutoStart->Value.ToString("HH:mm"));
+        writer->WriteLine("AutoRestartEnabled=" + (checkBoxAutoRestart->Checked ? "1" : "0"));
+        writer->WriteLine("AutoRestartTime=" + dateTimePickerAutoRestart->Value.ToString("HH:mm"));
 
         // Закрываем файл
         writer->Close();
@@ -1394,23 +1407,55 @@ void ProjectServerW::DataForm::SaveSettings() {
 
 void ProjectServerW::DataForm::LoadSettings() {
     try {
+        settingsLoading = true;
         // Проверяем существование файла настроек
         String^ appPath = System::IO::Path::GetDirectoryName(System::Windows::Forms::Application::ExecutablePath);
         String^ settingsPath = System::IO::Path::Combine(appPath, "ExcelSettings.txt");
         if (System::IO::File::Exists(settingsPath)) {
-            // Открываем и читаем файл
-            System::IO::StreamReader^ reader = gcnew System::IO::StreamReader(settingsPath);
+            cli::array<String^>^ lines = System::IO::File::ReadAllLines(settingsPath);
+            if (lines != nullptr && lines->Length > 0) {
+                String^ path = lines[0];
+                if (path != nullptr && path->Length > 0) {
+                    textBoxExcelDirectory->Text = path;
+                    excelSavePath = path;
+                }
+            }
 
-            // Читаем первую строку (путь)
-            String^ path = reader->ReadLine();
+            for (int i = 1; i < lines->Length; i++) {
+                String^ line = lines[i];
+                if (String::IsNullOrWhiteSpace(line)) {
+                    continue;
+                }
+                int eq = line->IndexOf('=');
+                if (eq <= 0 || eq >= line->Length - 1) {
+                    continue;
+                }
 
-            // Закрываем файл
-            reader->Close();
+                String^ key = line->Substring(0, eq)->Trim();
+                String^ value = line->Substring(eq + 1)->Trim();
 
-            // Обновляем текстовое поле и переменную пути
-            if (path != nullptr && path->Length > 0) {
-                textBoxExcelDirectory->Text = path;
-                excelSavePath = path;
+                if (key->Equals("AutoStartEnabled", StringComparison::OrdinalIgnoreCase)) {
+                    checkBoxAutoStart->Checked = (value == "1" || value->Equals("true", StringComparison::OrdinalIgnoreCase));
+                }
+                else if (key->Equals("AutoStartTime", StringComparison::OrdinalIgnoreCase)) {
+                    DateTime t = DateTime::ParseExact(
+                        value, "HH:mm",
+                        System::Globalization::CultureInfo::InvariantCulture,
+                        System::Globalization::DateTimeStyles::None);
+                    DateTime baseDate = dateTimePickerAutoStart->Value;
+                    dateTimePickerAutoStart->Value = DateTime(baseDate.Year, baseDate.Month, baseDate.Day, t.Hour, t.Minute, 0);
+                }
+                else if (key->Equals("AutoRestartEnabled", StringComparison::OrdinalIgnoreCase)) {
+                    checkBoxAutoRestart->Checked = (value == "1" || value->Equals("true", StringComparison::OrdinalIgnoreCase));
+                }
+                else if (key->Equals("AutoRestartTime", StringComparison::OrdinalIgnoreCase)) {
+                    DateTime t = DateTime::ParseExact(
+                        value, "HH:mm",
+                        System::Globalization::CultureInfo::InvariantCulture,
+                        System::Globalization::DateTimeStyles::None);
+                    DateTime baseDate = dateTimePickerAutoRestart->Value;
+                    dateTimePickerAutoRestart->Value = DateTime(baseDate.Year, baseDate.Month, baseDate.Day, t.Hour, t.Minute, 0);
+                }
             }
         }
     }
@@ -1418,6 +1463,9 @@ void ProjectServerW::DataForm::LoadSettings() {
         // Обработка ошибок
         MessageBox::Show("Не удалось загрузить настройки: " + ex->Message);
         GlobalLogger::LogMessage(ConvertToStdString("Не удалось загрузить настройки: " + ex->Message));
+    }
+    finally {
+        settingsLoading = false;
     }
 }
 
@@ -2289,5 +2337,143 @@ System::Void ProjectServerW::DataForm::RestoreAutoStartColor(System::Object^ sen
     }
     catch (Exception^ ex) {
         GlobalLogger::LogMessage(ConvertToStdString("Error in RestoreAutoStartColor: " + ex->Message));
+    }
+}
+
+// ????????????????????????????????????????????????????????????????????????????
+// Реализация методов автоперезапуска по времени
+// ????????????????????????????????????????????????????????????????????????????
+
+System::Void ProjectServerW::DataForm::checkBoxAutoRestart_CheckedChanged(System::Object^ sender, System::EventArgs^ e) {
+    if (checkBoxAutoRestart->Checked) {
+        timerAutoRestart->Start();
+        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+            "Information: Автоперезапуск включен на {0}",
+            dateTimePickerAutoRestart->Value.ToString("HH:mm"))));
+
+        labelAutoRestart->ForeColor = System::Drawing::Color::Green;
+    }
+    else {
+        timerAutoRestart->Stop();
+        if (autoRestartInternalUncheck) {
+            autoRestartInternalUncheck = false;
+        }
+        else {
+            autoRestartPending = false;
+        }
+        GlobalLogger::LogMessage("Information: Автоперезапуск отключен");
+
+        labelAutoRestart->ForeColor = System::Drawing::SystemColors::ControlText;
+    }
+    if (!settingsLoading) {
+        SaveSettings();
+    }
+}
+
+System::Void ProjectServerW::DataForm::dateTimePickerAutoStart_ValueChanged(System::Object^ sender, System::EventArgs^ e) {
+    if (!settingsLoading) {
+        SaveSettings();
+    }
+}
+
+System::Void ProjectServerW::DataForm::dateTimePickerAutoRestart_ValueChanged(System::Object^ sender, System::EventArgs^ e) {
+    if (!settingsLoading) {
+        SaveSettings();
+    }
+}
+
+System::Void ProjectServerW::DataForm::timerAutoRestart_Tick(System::Object^ sender, System::EventArgs^ e) {
+    if (!checkBoxAutoRestart->Checked) {
+        return;
+    }
+
+    DateTime now = DateTime::Now;
+    DateTime targetTime = dateTimePickerAutoRestart->Value;
+
+    if (now.Hour != targetTime.Hour || now.Minute != targetTime.Minute) {
+        return;
+    }
+
+    GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+        "Information: Автоперезапуск сработал в {0} (установлено: {1})",
+        now.ToString("HH:mm:ss"),
+        targetTime.ToString("HH:mm"))));
+
+    // If we don't know device state yet (no telemetry), do not consume the schedule.
+    if (!buttonSTOP->Enabled && !buttonSTART->Enabled) {
+        GlobalLogger::LogMessage("Warning: Автоперезапуск: состояние устройства неизвестно (нет телеметрии), ожидание...");
+        return;
+    }
+
+    labelAutoRestart->ForeColor = System::Drawing::Color::Blue;
+
+    // If the device is currently running (STOP is available), issue STOP and wait for stable Work=0.
+    if (buttonSTOP->Enabled) {
+        Label_Commands->Text = "[АВТОПЕРЕЗАПУСК] Отправка команды STOP...";
+        Label_Commands->ForeColor = System::Drawing::Color::Blue;
+
+        SendStopCommand();
+
+        // Only arm the pending START if STOP was accepted (UI indicates STOP is no longer available).
+        if (buttonSTART->Enabled) {
+            autoRestartPending = true;
+            Label_Commands->Text = "[АВТОПЕРЕЗАПУСК] STOP отправлен, ожидание окончания работы...";
+            Label_Commands->ForeColor = System::Drawing::Color::Blue;
+            autoRestartInternalUncheck = true;
+            checkBoxAutoRestart->Checked = false; // one-shot, same UX as AutoStart
+        }
+        else {
+            GlobalLogger::LogMessage("Warning: Автоперезапуск: STOP не подтвердился, автоперезапуск не активирован");
+            Label_Commands->Text = "[!] Автоперезапуск: STOP не выполнен";
+            Label_Commands->ForeColor = System::Drawing::Color::Orange;
+            autoRestartInternalUncheck = true;
+            checkBoxAutoRestart->Checked = false;
+        }
+    }
+    else if (buttonSTART->Enabled) {
+        // Device is already stopped; behave as scheduled start.
+        Label_Commands->Text = "[АВТОПЕРЕЗАПУСК] Устройство уже остановлено, отправка START...";
+        Label_Commands->ForeColor = System::Drawing::Color::Blue;
+
+        SendStartCommand();
+        autoRestartInternalUncheck = true;
+        checkBoxAutoRestart->Checked = false;
+    }
+
+    // Restore color through a short-lived timer to avoid a permanent "armed" look.
+    System::Windows::Forms::Timer^ colorTimer = gcnew System::Windows::Forms::Timer();
+    colorTimer->Interval = 3000;
+    colorTimer->Tick += gcnew EventHandler(this, &DataForm::RestoreAutoRestartColor);
+    colorTimer->Start();
+}
+
+System::Void ProjectServerW::DataForm::RestoreAutoRestartColor(System::Object^ sender, System::EventArgs^ e) {
+    try {
+        System::Windows::Forms::Timer^ timer = safe_cast<System::Windows::Forms::Timer^>(sender);
+        timer->Stop();
+        timer->Tick -= gcnew EventHandler(this, &DataForm::RestoreAutoRestartColor);
+        labelAutoRestart->ForeColor = System::Drawing::SystemColors::ControlText;
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error in RestoreAutoRestartColor: " + ex->Message));
+    }
+}
+
+void ProjectServerW::DataForm::ExecuteAutoRestartStart() {
+    try {
+        if (buttonSTART == nullptr || buttonSTART->IsDisposed) {
+            return;
+        }
+        if (!buttonSTART->Enabled) {
+            GlobalLogger::LogMessage("Warning: Автоперезапуск: START пропущен (программа уже запущена)");
+            return;
+        }
+
+        Label_Commands->Text = "[АВТОПЕРЕЗАПУСК] Автоматический запуск программы...";
+        Label_Commands->ForeColor = System::Drawing::Color::Blue;
+        SendStartCommand();
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in ExecuteAutoRestartStart: " + ex->ToString()));
     }
 }

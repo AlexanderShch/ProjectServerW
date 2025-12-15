@@ -138,6 +138,9 @@ namespace ProjectServerW {
 	bool workBitZeroLogged;          // флаг "уже залогировано сообщение о начале отслеживания нуля" (для избежания повторных записей в лог)
 	bool firstDataReceived;          // флаг "получен первый пакет данных" (для установки начального состояния кнопок)
 	bool dataExportedToExcel;        // флаг "данные уже были экспортированы в Excel" (для предотвращения дублирующей записи при закрытии формы)
+	bool autoRestartPending;         // When true, we have issued a scheduled STOP and will START after a stable Work=0 stop is observed.
+	bool autoRestartInternalUncheck; // Why: one-shot UX unchecks the box; we must not cancel the pending START.
+	bool settingsLoading;            // Why: avoid side-effects (timers/log/save) while applying persisted settings.
 	System::String^ pendingVersion;  // временное хранение версии для обновления UI из другого потока
 	private: System::Windows::Forms::Label^ Label_Data;
 		private: System::Windows::Forms::Label^ LabelDefroster;
@@ -157,6 +160,11 @@ namespace ProjectServerW {
 		private: System::Windows::Forms::DateTimePicker^ dateTimePickerAutoStart;
 		private: System::Windows::Forms::Label^ labelAutoStart;
 		private: System::Windows::Forms::Timer^ timerAutoStart;
+		// Элементы автоперезапуска по времени
+		private: System::Windows::Forms::CheckBox^ checkBoxAutoRestart;
+		private: System::Windows::Forms::DateTimePicker^ dateTimePickerAutoRestart;
+		private: System::Windows::Forms::Label^ labelAutoRestart;
+		private: System::Windows::Forms::Timer^ timerAutoRestart;
 
 		private: System::Windows::Forms::DataGridView^ dataGridView;
 
@@ -218,6 +226,9 @@ namespace ProjectServerW {
 	workBitZeroLogged = false;      // Флаг логирования начала отслеживания нуля
 	firstDataReceived = false;      // Флаг первого приёма данных
 	dataExportedToExcel = false;    // Флаг экспорта данных в Excel
+	autoRestartPending = false;
+	autoRestartInternalUncheck = false;
+	settingsLoading = false;
 	pendingVersion = nullptr;       // Временная версия для обновления UI
 	// Инициализация порта клиента
 	clientPort = 0;
@@ -343,10 +354,14 @@ private: System::ComponentModel::IContainer^ components;
 				this->checkBoxAutoStart = (gcnew System::Windows::Forms::CheckBox());
 				this->dateTimePickerAutoStart = (gcnew System::Windows::Forms::DateTimePicker());
 				this->labelAutoStart = (gcnew System::Windows::Forms::Label());
+				this->checkBoxAutoRestart = (gcnew System::Windows::Forms::CheckBox());
+				this->dateTimePickerAutoRestart = (gcnew System::Windows::Forms::DateTimePicker());
+				this->labelAutoRestart = (gcnew System::Windows::Forms::Label());
 				this->buttonBrowse = (gcnew System::Windows::Forms::Button());
 				this->textBoxExcelDirectory = (gcnew System::Windows::Forms::TextBox());
 				this->labelExcelDirectory = (gcnew System::Windows::Forms::Label());
 				this->timerAutoStart = (gcnew System::Windows::Forms::Timer(this->components));
+				this->timerAutoRestart = (gcnew System::Windows::Forms::Timer(this->components));
 				this->menuStrip1->SuspendLayout();
 				this->tabControl1->SuspendLayout();
 				this->tabPage1->SuspendLayout();
@@ -520,6 +535,9 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage2->Controls->Add(this->checkBoxAutoStart);
 				this->tabPage2->Controls->Add(this->dateTimePickerAutoStart);
 				this->tabPage2->Controls->Add(this->labelAutoStart);
+				this->tabPage2->Controls->Add(this->checkBoxAutoRestart);
+				this->tabPage2->Controls->Add(this->dateTimePickerAutoRestart);
+				this->tabPage2->Controls->Add(this->labelAutoRestart);
 				this->tabPage2->Controls->Add(this->buttonBrowse);
 				this->tabPage2->Controls->Add(this->textBoxExcelDirectory);
 				this->tabPage2->Controls->Add(this->labelExcelDirectory);
@@ -639,6 +657,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->dateTimePickerAutoStart->Size = System::Drawing::Size(100, 26);
 				this->dateTimePickerAutoStart->TabIndex = 11;
 				this->dateTimePickerAutoStart->Value = System::DateTime(2025, 11, 12, 19, 29, 7, 631);
+				this->dateTimePickerAutoStart->ValueChanged += gcnew System::EventHandler(this, &DataForm::dateTimePickerAutoStart_ValueChanged);
 				// 
 				// labelAutoStart
 				// 
@@ -648,6 +667,37 @@ private: System::ComponentModel::IContainer^ components;
 				this->labelAutoStart->Size = System::Drawing::Size(113, 20);
 				this->labelAutoStart->TabIndex = 9;
 				this->labelAutoStart->Text = L"Автозапуск в:";
+				// 
+				// checkBoxAutoRestart
+				// 
+				this->checkBoxAutoRestart->AutoSize = true;
+				this->checkBoxAutoRestart->Location = System::Drawing::Point(48, 300);
+				this->checkBoxAutoRestart->Name = L"checkBoxAutoRestart";
+				this->checkBoxAutoRestart->Size = System::Drawing::Size(103, 24);
+				this->checkBoxAutoRestart->TabIndex = 12;
+				this->checkBoxAutoRestart->Text = L"Включен";
+				this->checkBoxAutoRestart->UseVisualStyleBackColor = true;
+				this->checkBoxAutoRestart->CheckedChanged += gcnew System::EventHandler(this, &DataForm::checkBoxAutoRestart_CheckedChanged);
+				// 
+				// dateTimePickerAutoRestart
+				// 
+				this->dateTimePickerAutoRestart->CustomFormat = L"HH:mm";
+				this->dateTimePickerAutoRestart->Format = System::Windows::Forms::DateTimePickerFormat::Custom;
+				this->dateTimePickerAutoRestart->Location = System::Drawing::Point(160, 300);
+				this->dateTimePickerAutoRestart->Name = L"dateTimePickerAutoRestart";
+				this->dateTimePickerAutoRestart->ShowUpDown = true;
+				this->dateTimePickerAutoRestart->Size = System::Drawing::Size(100, 26);
+				this->dateTimePickerAutoRestart->TabIndex = 13;
+				this->dateTimePickerAutoRestart->ValueChanged += gcnew System::EventHandler(this, &DataForm::dateTimePickerAutoRestart_ValueChanged);
+				// 
+				// labelAutoRestart
+				// 
+				this->labelAutoRestart->AutoSize = true;
+				this->labelAutoRestart->Location = System::Drawing::Point(48, 270);
+				this->labelAutoRestart->Name = L"labelAutoRestart";
+				this->labelAutoRestart->Size = System::Drawing::Size(159, 20);
+				this->labelAutoRestart->TabIndex = 11;
+				this->labelAutoRestart->Text = L"Автоперезапуск в:";
 				// 
 				// buttonBrowse
 				// 
@@ -681,6 +731,11 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				this->timerAutoStart->Interval = 30000;
 				this->timerAutoStart->Tick += gcnew System::EventHandler(this, &DataForm::timerAutoStart_Tick);
+				// 
+				// timerAutoRestart
+				// 
+				this->timerAutoRestart->Interval = 30000;
+				this->timerAutoRestart->Tick += gcnew System::EventHandler(this, &DataForm::timerAutoRestart_Tick);
 				// 
 				// DataForm
 				// 
@@ -821,6 +876,7 @@ private: System::ComponentModel::IContainer^ components;
 			static void InitializeBitFieldNames(gcroot<cli::array<cli::array<String^>^>^>& namesRef);
 
 			void TriggerExcelExport();
+			void ExecuteAutoRestartStart();
 			void CheckExcelButtonStatus(Object^ sender, EventArgs^ e);
 			bool StartExcelExportThread(bool isEmergency);
 			void OnInactivityTimerTick(Object^ sender, EventArgs^ e);
@@ -856,6 +912,11 @@ private: System::Void button_RESET_Click(System::Object^ sender, System::EventAr
 	private: System::Void checkBoxAutoStart_CheckedChanged(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void timerAutoStart_Tick(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void RestoreAutoStartColor(System::Object^ sender, System::EventArgs^ e);
+	private: System::Void dateTimePickerAutoStart_ValueChanged(System::Object^ sender, System::EventArgs^ e);
+	private: System::Void checkBoxAutoRestart_CheckedChanged(System::Object^ sender, System::EventArgs^ e);
+	private: System::Void timerAutoRestart_Tick(System::Object^ sender, System::EventArgs^ e);
+	private: System::Void RestoreAutoRestartColor(System::Object^ sender, System::EventArgs^ e);
+	private: System::Void dateTimePickerAutoRestart_ValueChanged(System::Object^ sender, System::EventArgs^ e);
 	
 };  // Конец класса DataForm
 
