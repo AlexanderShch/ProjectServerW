@@ -644,6 +644,14 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         // Проверяем текущее состояние бита "Work"
         bool currentWorkBitState = (bitField & (1 << workBitIndex)) != 0;
 
+        if (reconnectFixationLogPending) {
+            reconnectFixationLogPending = false;
+            GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+                "Information: Начало фиксации данных после повторного подключения клиента {0} (Port {1})",
+                (this->ClientIP != nullptr ? this->ClientIP : ""),
+                clientPort)));
+        }
+
         // ===== УСТАНОВКА НАЧАЛЬНОГО СОСТОЯНИЯ КНОПОК ПРИ ПЕРВОМ ПРИЁМЕ ДАННЫХ =====
         if (!firstDataReceived) {
             // Это первый пакет данных - устанавливаем начальное состояние кнопок
@@ -1337,9 +1345,18 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
             return;
         }
 
-        hasTelemetry = true;
         DateTime telemetryTime = DateTime::Now;
+        const SOCKET currentSocket = clientSocket;
+        if (hasTelemetry && lastTelemetrySocket != INVALID_SOCKET && currentSocket != INVALID_SOCKET &&
+            currentSocket != lastTelemetrySocket) {
+            // Why: reconnection is already logged in SServer. This flag adds a correlated "data collection start"
+            // log on the first valid telemetry packet of the new TCP connection.
+            reconnectFixationLogPending = true;
+        }
+
+        hasTelemetry = true;
         lastTelemetryTime = telemetryTime;
+        lastTelemetrySocket = currentSocket;
 
         // Critical: if the controller never toggles Work->1 (or we started mid-session), we still need stable session timestamps.
         if (dataCollectionStartTime == DateTime::MinValue) {

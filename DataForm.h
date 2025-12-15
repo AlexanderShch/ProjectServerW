@@ -111,6 +111,8 @@ namespace ProjectServerW {
 			DateTime lastTelemetryTime;
 			bool hasTelemetry;
 			bool inactivityCloseRequested;
+			SOCKET lastTelemetrySocket;        // Why: detect reconnects (new TCP socket) and log data collection resume once per reconnect.
+			bool reconnectFixationLogPending;  // Why: log "start of data collection after reconnect" on the first valid telemetry packet.
 			System::Windows::Forms::Timer^ inactivityTimer;
 			// Массив наименований битовых полей для каждого типа сенсора
 			// Индекс первого уровня - тип сенсора, второго уровня - номер бита
@@ -209,6 +211,8 @@ namespace ProjectServerW {
 				hasTelemetry = false;
 				inactivityCloseRequested = false;
 				lastTelemetryTime = DateTime::MinValue;
+				lastTelemetrySocket = INVALID_SOCKET;
+				reconnectFixationLogPending = false;
 
 				// Critical: device can be power-cycled; if it reconnects within 30 minutes we continue the same table.
 				// If there is no telemetry for 30 minutes, we finalize (export) and close the form.
