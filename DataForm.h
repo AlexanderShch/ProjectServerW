@@ -109,8 +109,11 @@ namespace ProjectServerW {
 			Thread^ excelThread;				 // Объявим объект для работы с Excel в отдельном потоке
 			// Critical: tracks last telemetry receipt; used to decide whether to keep the form alive on reconnects.
 			DateTime lastTelemetryTime;
+			uint16_t lastTelemetryDeviceSeconds; // Why: map device time (seconds since boot) to wall-clock for command audit timestamps.
 			bool hasTelemetry;
 			bool inactivityCloseRequested;
+			DateTime lastCmdInfoProbeTime; // Why: rate-limit automatic GET_CMD_INFO probes.
+			bool cmdInfoProbeInProgress;  // Why: avoid recursive probing when GET_CMD_INFO itself times out.
 			SOCKET lastTelemetrySocket;        // Why: detect reconnects (new TCP socket) and log data collection resume once per reconnect.
 			bool reconnectFixationLogPending;  // Why: log "start of data collection after reconnect" on the first valid telemetry packet.
 			System::Windows::Forms::Timer^ inactivityTimer;
@@ -141,6 +144,7 @@ namespace ProjectServerW {
 	bool firstDataReceived;          // флаг "получен первый пакет данных" (для установки начального состояния кнопок)
 	bool dataExportedToExcel;        // флаг "данные уже были экспортированы в Excel" (для предотвращения дублирующей записи при закрытии формы)
 	bool autoRestartPending;         // When true, we have issued a scheduled STOP and will START after a stable Work=0 stop is observed.
+		DateTime autoRestartStopIssuedTime; // Why: cancel pending auto-restart if Work does not transition within a reasonable window.
 	bool autoRestartInternalUncheck; // Why: one-shot UX unchecks the box; we must not cancel the pending START.
 	bool settingsLoading;            // Why: avoid side-effects (timers/log/save) while applying persisted settings.
 	System::String^ pendingVersion;  // временное хранение версии для обновления UI из другого потока
@@ -154,6 +158,7 @@ namespace ProjectServerW {
 		private: System::Windows::Forms::Label^ LabelProduct;
 		private: System::Windows::Forms::Button^ buttonSTOP;
 		private: System::Windows::Forms::Button^ buttonSTART;
+		private: System::Windows::Forms::Button^ button_CMDINFO;
 		private: System::Windows::Forms::Label^ labelSTOP;
 		private: System::Windows::Forms::Label^ labelSTART;
 		
@@ -211,6 +216,9 @@ namespace ProjectServerW {
 				hasTelemetry = false;
 				inactivityCloseRequested = false;
 				lastTelemetryTime = DateTime::MinValue;
+				lastTelemetryDeviceSeconds = 0;
+				lastCmdInfoProbeTime = DateTime::MinValue;
+				cmdInfoProbeInProgress = false;
 				lastTelemetrySocket = INVALID_SOCKET;
 				reconnectFixationLogPending = false;
 
@@ -231,6 +239,7 @@ namespace ProjectServerW {
 	firstDataReceived = false;      // Флаг первого приёма данных
 	dataExportedToExcel = false;    // Флаг экспорта данных в Excel
 	autoRestartPending = false;
+	autoRestartStopIssuedTime = DateTime::MinValue;
 	autoRestartInternalUncheck = false;
 	settingsLoading = false;
 	pendingVersion = nullptr;       // Временная версия для обновления UI
@@ -349,6 +358,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->label_Version = (gcnew System::Windows::Forms::Label());
 				this->labelVersion = (gcnew System::Windows::Forms::Label());
 			this->button_RESET = (gcnew System::Windows::Forms::Button());
+			this->button_CMDINFO = (gcnew System::Windows::Forms::Button());
 			this->label_Commands_Info = (gcnew System::Windows::Forms::Label());
 				this->Label_Commands = (gcnew System::Windows::Forms::Label());
 				this->labelSTOP = (gcnew System::Windows::Forms::Label());
@@ -530,6 +540,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage2->Controls->Add(this->label_Version);
 				this->tabPage2->Controls->Add(this->labelVersion);
 			this->tabPage2->Controls->Add(this->button_RESET);
+			this->tabPage2->Controls->Add(this->button_CMDINFO);
 			this->tabPage2->Controls->Add(this->label_Commands_Info);
 				this->tabPage2->Controls->Add(this->Label_Commands);
 				this->tabPage2->Controls->Add(this->labelSTOP);
@@ -581,6 +592,16 @@ private: System::ComponentModel::IContainer^ components;
 			this->button_RESET->Text = L"СБРОС";
 			this->button_RESET->UseVisualStyleBackColor = true;
 			this->button_RESET->Click += gcnew System::EventHandler(this, &DataForm::button_RESET_Click);
+			// 
+			// button_CMDINFO
+			// 
+			this->button_CMDINFO->Location = System::Drawing::Point(160, 395);
+			this->button_CMDINFO->Name = L"button_CMDINFO";
+			this->button_CMDINFO->Size = System::Drawing::Size(130, 33);
+			this->button_CMDINFO->TabIndex = 15;
+			this->button_CMDINFO->Text = L"КОМАНДА";
+			this->button_CMDINFO->UseVisualStyleBackColor = true;
+			this->button_CMDINFO->Click += gcnew System::EventHandler(this, &DataForm::button_CMDINFO_Click);
 			// 
 			// label_Commands_Info
 				// 
@@ -853,12 +874,14 @@ private: System::ComponentModel::IContainer^ components;
 		void SendStartCommand(); // Метод для отправки команды START клиенту
 		void SendStopCommand(); // Метод для отправки команды STOP клиенту
 		void SendResetCommand(); // Метод для отправки команды RESET клиенту
+			void SendCommandInfoRequest(); // Метод для запроса статуса обработки последней команды (device-side audit)
 		void SendVersionRequest(); // Метод для запроса версии прошивки контроллера
 		void UpdateVersionLabelInternal(); // Вспомогательный метод для обновления label_Version из UI потока
 		
 		// Методы для обработки ответов от контроллера
 			static void EnqueueResponse(cli::array<System::Byte>^ response); // Добавление ответа в очередь (вызывается из SServer)
 			bool ReceiveResponse(struct CommandResponse& response, int timeoutMs); // Прием ответа от контроллера с таймаутом
+			bool ReceiveResponse(struct CommandResponse& response, int timeoutMs, cli::array<System::Byte>^% rawResponse); // Receive response plus raw frame for diagnostics
 			bool ReceiveResponse(struct CommandResponse& response); // Прием ответа от контроллера (таймаут по умолчанию 1000 мс)
 			void ProcessResponse(const struct CommandResponse& response); // Обработка полученного ответа
 			void RestoreLabelCommandsColor(System::Object^ sender, System::EventArgs^ e); // Восстановление цвета Label_Commands
@@ -870,6 +893,8 @@ private: System::ComponentModel::IContainer^ components;
 			System::Void DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ e);
 			System::Void DataForm_HandleDestroyed(Object^ sender, EventArgs^ e);
 		private: 
+			void ScheduleCommandInfoProbe(System::String^ reason);
+			void ExecuteCommandInfoProbe();
 			void SaveSettings();
 			void LoadSettings();
 			void UpdateDirectoryTextBox(String^ path);
@@ -881,6 +906,19 @@ private: System::ComponentModel::IContainer^ components;
 
 			void TriggerExcelExport();
 			void ExecuteAutoRestartStart();
+			bool TrySendControlCommandFireAndForget(uint8_t controlCode, System::String^ commandName);
+			enum class CommandAckResult {
+				Ok,
+				ErrorResponse,
+				NoResponse,
+				SendFailed
+			};
+			CommandAckResult SendControlCommandWithAck(
+				uint8_t controlCode,
+				System::String^ commandName,
+				int timeoutMs,
+				int retries,
+				CommandResponse% lastResponse);
 			void CheckExcelButtonStatus(Object^ sender, EventArgs^ e);
 			bool StartExcelExportThread(bool isEmergency);
 			void OnInactivityTimerTick(Object^ sender, EventArgs^ e);
@@ -908,6 +946,7 @@ private: System::Void button_RESET_Click(System::Object^ sender, System::EventAr
 	// Формируем команду "RESET" для отправки клиенту
 	SendResetCommand();
 }
+private: System::Void button_CMDINFO_Click(System::Object^ sender, System::EventArgs^ e);
 
 // ====================================================================
 // Обработчики автозапуска по времени (объявления)

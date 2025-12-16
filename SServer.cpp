@@ -254,6 +254,18 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	// Cache managed GUID once; allocating it per packet would add avoidable pressure in the recv() loop.
 	String^ guidManaged = gcnew String(guid.c_str());
 
+	// Critical: FindFormByClientIP() matches by DataForm::ClientIP. If the connection drops before the first telemetry,
+	// ClientIP would remain null (it is normally refreshed from telemetry worker), leading to duplicate empty forms on reconnect.
+	// Set ClientIP/ClientSocket immediately so reconnects reuse the same DataForm even when telemetry hasn't arrived yet.
+	try {
+		DataForm^ df = DataForm::GetFormByGuid(guid);
+		if (df != nullptr && !df->IsDisposed && !df->Disposing) {
+			df->ClientIP = clientIPAddress;
+			df->ClientSocket = clientSocket;
+		}
+	}
+	catch (...) {}
+
 	int timeout = 30*60*1000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
 
 	// Установка тайм-аута для операций чтения (recv)
@@ -521,7 +533,6 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		accumulatedBytes = remainingBytes;
 	}	// конец while (основной цикл)
 
-exitMainLoop:  // Метка для выхода из всех циклов
 	// Соединение оборвалось. Форму НЕ закрываем: устройство может вернуться в течение 30 минут,
 	// тогда новое подключение переиспользует текущую форму и продолжит заполнение таблицы.
 	closesocket(clientSocket);

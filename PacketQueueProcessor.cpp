@@ -3,6 +3,9 @@
 #include "Commands.h"
 
 #include <msclr/marshal_cppstd.h>
+
+#include <sstream>
+#include <iomanip>
 // Marshal is used only to bridge between managed queue payload and existing std::wstring GUID map.
 
 using namespace System;
@@ -10,6 +13,23 @@ using namespace System::Runtime::InteropServices;
 using namespace System::Threading;
 
 namespace ProjectServerW {
+	static std::string BytesToHex(const uint8_t* data, int length)
+	{
+		// Why: log raw frames to diagnose routing/CRC/length issues without attaching binary dumps.
+		if (data == nullptr || length <= 0) {
+			return std::string();
+		}
+
+		std::ostringstream oss;
+		oss << std::hex << std::uppercase << std::setfill('0');
+		for (int i = 0; i < length; i++) {
+			if (i != 0) {
+				oss << ' ';
+			}
+			oss << std::setw(2) << static_cast<unsigned int>(data[i]);
+		}
+		return oss.str();
+	}
 	Object^ PacketQueueProcessor::GetOrCreateSendGate(IntPtr socketKey)
 	{
 		Object^ gate = nullptr;
@@ -190,6 +210,12 @@ namespace ProjectServerW {
 
 	bool DataForm::ReceiveResponse(CommandResponse& response, int timeoutMs)
 	{
+		cli::array<System::Byte>^ ignored = nullptr;
+		return ReceiveResponse(response, timeoutMs, ignored);
+	}
+
+	bool DataForm::ReceiveResponse(CommandResponse& response, int timeoutMs, cli::array<System::Byte>^% rawResponse)
+	{
 		if (clientSocket == INVALID_SOCKET) {
 			return false;
 		}
@@ -204,6 +230,9 @@ namespace ProjectServerW {
 		}
 
 		if (responseBuffer->Length <= 0 || responseBuffer->Length > static_cast<int>(MAX_COMMAND_SIZE)) {
+			// Why: this buffer is already removed from the queue; log it to explain why it was dropped.
+			GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+				"Warning: Dropping invalid response frame (len={0})", responseBuffer->Length)));
 			return false;
 		}
 
@@ -211,7 +240,17 @@ namespace ProjectServerW {
 		pin_ptr<System::Byte> pinnedBuffer = &responseBuffer[0];
 		memcpy(buffer, pinnedBuffer, responseBuffer->Length);
 
-		return ParseResponseBuffer(buffer, static_cast<size_t>(responseBuffer->Length), response);
+		rawResponse = responseBuffer;
+
+		const bool ok = ParseResponseBuffer(buffer, static_cast<size_t>(responseBuffer->Length), response);
+		if (!ok) {
+			GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+				"Warning: Dropping unparseable response frame (len={0}): {1}",
+				responseBuffer->Length,
+				gcnew String(BytesToHex(buffer, responseBuffer->Length).c_str()))));
+			ScheduleCommandInfoProbe("dropped unparseable response frame");
+		}
+		return ok;
 	}
 
 	bool DataForm::ReceiveResponse(CommandResponse& response)

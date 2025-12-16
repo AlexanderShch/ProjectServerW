@@ -33,7 +33,7 @@ SendCommand(cmd);
 
 ```cpp
 // Отправляем команду
-Command cmd = CreateRequestCommand(CmdRequest::GET_STATUS);
+Command cmd = CreateRequestCommand(CmdRequest::GET_CMD_INFO);
 SendCommand(cmd);
 
 // Принимаем ответ
@@ -72,8 +72,8 @@ Command cmd = CreateConfigCommandInt(CmdConfig::SET_INTERVAL, 1000);
 ### Команды запроса (REQUEST)
 
 ```cpp
-// GET_STATUS, GET_VERSION, GET_DATA
-Command cmd = CreateRequestCommand(CmdRequest::GET_STATUS);
+// GET_VERSION, GET_DATA, GET_CMD_INFO
+Command cmd = CreateRequestCommand(CmdRequest::GET_CMD_INFO);
 ```
 
 ---
@@ -100,14 +100,10 @@ if (response.status == CmdStatus::OK) {
 
 ## Извлечение данных из ответа
 
-### Запрос статуса (2 байта)
+### Аудит последней команды (6 байт)
 
 ```cpp
-if (response.dataLength >= 2) {
-    uint16_t status;
-    memcpy(&status, response.data, 2);
-    // Используем status
-}
+// Payload зависит от команды; для GET_CMD_INFO ожидается 6 байт
 ```
 
 ### Запрос версии (строка)
@@ -143,22 +139,6 @@ void DataForm::SendStartCommand() {
     if (SendCommandAndWaitResponse(cmd, response)) {
         buttonSTOPstate_TRUE();
         MessageBox::Show("Программа запущена!");
-    }
-}
-```
-
-### Сценарий 2: Запрос и отображение статуса
-
-```cpp
-void DataForm::ShowDeviceStatus() {
-    Command cmd = CreateRequestCommand(CmdRequest::GET_STATUS);
-    CommandResponse response;
-    
-    if (SendCommandAndWaitResponse(cmd, response)) {
-        uint16_t status;
-        memcpy(&status, response.data, 2);
-        String^ msg = String::Format("Статус: 0x{0:X4}", status);
-        MessageBox::Show(msg);
     }
 }
 ```

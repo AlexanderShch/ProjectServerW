@@ -93,9 +93,9 @@ const char* GetCommandName(const Command& cmd) {
     // Команды запроса
     else if (cmd.commandType == 0x03) { // CmdType::REQUEST
         switch (cmd.commandCode) {
-        case 0x01: return "GET_STATUS";
         case 0x02: return "GET_VERSION";
         case 0x03: return "GET_DATA";
+        case 0x04: return "GET_CMD_INFO";
         default: return "REQUEST_UNKNOWN";
         }
     }

@@ -35,9 +35,9 @@ struct CmdConfig {
 
 // Коды команд запроса (тип REQUEST)
 struct CmdRequest {
-    static const uint8_t GET_STATUS = 0x01;        // Запросить статус
     static const uint8_t GET_VERSION = 0x02;       // Запросить версию прошивки
     static const uint8_t GET_DATA = 0x03;          // Запросить данные
+    static const uint8_t GET_CMD_INFO = 0x04;      // Запросить информацию о последней принятой команде
 };
 
 // Максимальный размер команды

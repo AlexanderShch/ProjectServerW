@@ -609,6 +609,8 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     DataRow^ row = table->NewRow();
     row["RealTime"] = now.ToString("HH:mm:ss");
     row["Time"] = data.Time;
+    // Why: used to convert device-relative time in command audit replies into an approximate wall-clock timestamp.
+    lastTelemetryDeviceSeconds = data.Time;
     row["SQ"] = data.SensorQuantity;
     for (uint8_t i = 0; i < (SQ - 1); i++)
     {
@@ -719,6 +721,21 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
             }
         }
 
+        // Cancel auto-restart pending if STOP does not take effect within a reasonable window.
+        // Why: avoid keeping a stale pending START forever when the device ignores STOP or telemetry is inconsistent.
+        if (autoRestartPending && currentWorkBitState && autoRestartStopIssuedTime != DateTime::MinValue) {
+            TimeSpan waited = now.Subtract(autoRestartStopIssuedTime);
+            if (waited.TotalMinutes >= 5) {
+                autoRestartPending = false;
+                autoRestartStopIssuedTime = DateTime::MinValue;
+                GlobalLogger::LogMessage("Warning: Автоперезапуск отменён: Work не перешёл в 0 за 5 минут после STOP");
+                if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+                    Label_Commands->Text = "[!] Автоперезапуск отменён: нет остановки по Work";
+                    Label_Commands->ForeColor = System::Drawing::Color::Orange;
+                }
+            }
+        }
+
         // Если бит "Work" остаётся в нуле и таймер активен, проверяем, прошла ли минута
         if (!currentWorkBitState && workBitZeroTimerActive) {
             TimeSpan elapsed = now.Subtract(workBitZeroStartTime);
@@ -745,6 +762,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
                 // message loop to keep telemetry processing short and to allow Excel export to start in parallel.
                 if (autoRestartPending) {
                     autoRestartPending = false;
+                    autoRestartStopIssuedTime = DateTime::MinValue;
                     this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::ExecuteAutoRestartStart));
                 }
             }
@@ -1928,6 +1946,105 @@ void ProjectServerW::DataForm::SendVersionRequest() {
     }
 }
 
+void ProjectServerW::DataForm::SendCommandInfoRequest() {
+    // Why: this is a command-processing audit, not device operational state (telemetry).
+    // The firmware is expected to remember the last received command and expose it via this request.
+    Command cmd = CreateRequestCommand(CmdRequest::GET_CMD_INFO);
+    CommandResponse response;
+
+    const DateTime requestTime = DateTime::Now;
+    bool received = false;
+
+    // Retry a couple of times: firmware can be busy right after reconnect/start.
+    for (int attempt = 0; attempt < 2; attempt++) {
+        if (SendCommandAndWaitResponse(cmd, response, "GET_CMD_INFO")) {
+            received = true;
+            break;
+        }
+        if (response.status != CmdStatus::TIMEOUT) {
+            break;
+        }
+    }
+
+    if (received) {
+        return;
+    }
+
+    const bool telemetryRecent = hasTelemetry && lastTelemetryTime != DateTime::MinValue &&
+        DateTime::Now.Subtract(lastTelemetryTime).TotalSeconds < 5;
+
+    if (telemetryRecent) {
+        GlobalLogger::LogMessage("Warning: GET_CMD_INFO: no response, but telemetry is still arriving (firmware may not be ready to answer yet)");
+        if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+            Label_Commands->Text = "[!] GET_CMD_INFO: нет ответа, но телеметрия идёт (прошивка может быть не готова)";
+            Label_Commands->ForeColor = System::Drawing::Color::Orange;
+        }
+        return;
+    }
+
+    TimeSpan waited = DateTime::Now.Subtract(requestTime);
+    GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+        "Warning: GET_CMD_INFO: no response for {0:F1}s; device may be OFF and the connection can be breaking",
+        waited.TotalSeconds)));
+    if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+        Label_Commands->Text = "[!] GET_CMD_INFO: нет ответа (возможно устройство выключено)";
+        Label_Commands->ForeColor = System::Drawing::Color::Orange;
+    }
+}
+
+void ProjectServerW::DataForm::ScheduleCommandInfoProbe(System::String^ reason) {
+    // Why: when a response is dropped or a command times out, ask the device what it last received/processed.
+    // Guarded to avoid recursion and log spam.
+    try {
+        if (this == nullptr || this->IsDisposed || this->Disposing || !this->IsHandleCreated) {
+            return;
+        }
+
+        if (cmdInfoProbeInProgress) {
+            return;
+        }
+
+        DateTime now = DateTime::Now;
+        if (lastCmdInfoProbeTime != DateTime::MinValue) {
+            TimeSpan since = now.Subtract(lastCmdInfoProbeTime);
+            if (since.TotalSeconds < 2) {
+                return;
+            }
+        }
+        lastCmdInfoProbeTime = now;
+
+        GlobalLogger::LogMessage(ConvertToStdString("Information: Scheduling GET_CMD_INFO probe. Reason: " + (reason != nullptr ? reason : "")));
+
+        if (this->InvokeRequired) {
+            this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::ExecuteCommandInfoProbe));
+        }
+        else {
+            ExecuteCommandInfoProbe();
+        }
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in ScheduleCommandInfoProbe: " + ex->Message));
+    }
+}
+
+void ProjectServerW::DataForm::ExecuteCommandInfoProbe() {
+    // Why: run probe on UI thread; it uses synchronous command wait.
+    if (cmdInfoProbeInProgress) {
+        return;
+    }
+
+    cmdInfoProbeInProgress = true;
+    try {
+        SendCommandInfoRequest();
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in ExecuteCommandInfoProbe: " + ex->ToString()));
+    }
+    finally {
+        cmdInfoProbeInProgress = false;
+    }
+}
+
 // Вспомогательный метод для обновления label_Version из UI потока
 void ProjectServerW::DataForm::UpdateVersionLabelInternal() {
     if (label_Version != nullptr && !label_Version->IsDisposed) {
@@ -1955,12 +2072,53 @@ void ProjectServerW::DataForm::ProcessResponse(const CommandResponse& response) 
                 // Обрабатываем данные в зависимости от типа команды
                 if (response.commandType == CmdType::REQUEST) {
                     switch (response.commandCode) {
-                        case CmdRequest::GET_STATUS: {
-                            // Получаем статус (2 байта)
-                            if (response.dataLength >= 2) {
-                                uint16_t status;
-                                memcpy(&status, response.data, 2);
-                                message += String::Format("\nСтатус устройства: 0x{0:X4}", status);
+                        case CmdRequest::GET_CMD_INFO: {
+                            // Expected payload (firmware contract):
+                            // [0] lastCmdType (uint8)
+                            // [1] lastCmdCode (uint8)
+                            // [2..3] lastCmdDeviceTimeSeconds (uint16, same units as telemetry MSGQUEUE_OBJ_t.Time)
+                            // [4] ackSent (uint8, 0/1)
+                            // [5] lastCmdStatus (uint8, CmdStatus)
+                            if (response.dataLength >= 6) {
+                                const uint8_t lastCmdType = response.data[0];
+                                const uint8_t lastCmdCode = response.data[1];
+                                uint16_t lastCmdSeconds = 0;
+                                memcpy(&lastCmdSeconds, &response.data[2], 2);
+                                const uint8_t ackSent = response.data[4];
+                                const uint8_t lastCmdStatus = response.data[5];
+
+                                // Why: device time is relative; map it to wall-clock using the latest telemetry timestamp.
+                                // This is approximate and assumes telemetry and command receiver use the same time base.
+                                DateTime approxWallTime = DateTime::MinValue;
+                                if (hasTelemetry && lastTelemetryTime != DateTime::MinValue) {
+                                    uint16_t cur = lastTelemetryDeviceSeconds;
+                                    uint16_t prev = lastCmdSeconds;
+                                    int delta = static_cast<int>(cur) - static_cast<int>(prev);
+                                    if (delta < 0) {
+                                        // Handle uint16 wrap-around (device seconds counter).
+                                        delta += 65536;
+                                    }
+                                    approxWallTime = lastTelemetryTime.Subtract(TimeSpan::FromSeconds(delta));
+                                }
+
+                                message += String::Format(
+                                    "\nПоследняя команда (устройство): Type=0x{0:X2}, Code=0x{1:X2}"
+                                    "\nВремя устройства: {2} сек"
+                                    "\nACK отправлен: {3}"
+                                    "\nСтатус обработки: 0x{4:X2} ({5})",
+                                    lastCmdType,
+                                    lastCmdCode,
+                                    lastCmdSeconds,
+                                    (ackSent != 0 ? "ДА" : "НЕТ"),
+                                    lastCmdStatus,
+                                    gcnew String(GetStatusName(lastCmdStatus)));
+
+                                if (approxWallTime != DateTime::MinValue) {
+                                    message += "\nПримерное реальное время приёма: " + approxWallTime.ToString("yyyy-MM-dd HH:mm:ss");
+                                }
+                            }
+                            else {
+                                message += "\nGET_CMD_INFO: недостаточно данных ответа";
                             }
                             break;
                         }
@@ -2113,21 +2271,60 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
             return false;
         }
 
-        // Ждем ответ от контроллера
-        if (!ReceiveResponse(response, 2000)) { // Таймаут 2 секунды
-            GlobalLogger::LogMessage("Error: No response received from controller");
-            return false;
-        }
+        // Wait for the matching response and tolerate unrelated responses in the shared queue.
+        // Why: the recv() loop can enqueue responses from earlier commands; rejecting on first mismatch
+        // breaks auto flows and can incorrectly mark a valid command as failed.
+        const bool isCmdInfoRequest = (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_CMD_INFO);
 
-        // Проверяем, что ответ соответствует отправленной команде
-        if (response.commandType != cmd.commandType || 
-            response.commandCode != cmd.commandCode) {
-            String^ errorMsg = String::Format(
-                "Error: Response mismatch. Sent Type=0x{0:X2}, Code=0x{1:X2}; Received Type=0x{2:X2}, Code=0x{3:X2}",
-                cmd.commandType, cmd.commandCode, response.commandType, response.commandCode);
-            MessageBox::Show(errorMsg);
-            GlobalLogger::LogMessage(ConvertToStdString(errorMsg));
-            return false;
+        const int defaultTimeoutMs = 2000;
+        const int totalTimeoutMs = defaultTimeoutMs;
+        DateTime deadline = DateTime::Now.AddMilliseconds(totalTimeoutMs);
+        while (true) {
+            TimeSpan remaining = deadline.Subtract(DateTime::Now);
+            if (remaining.TotalMilliseconds <= 0) {
+                response.commandType = cmd.commandType;
+                response.commandCode = cmd.commandCode;
+                response.status = CmdStatus::TIMEOUT;
+                response.dataLength = 0;
+                GlobalLogger::LogMessage("Error: No response received from controller");
+                if (!isCmdInfoRequest) {
+                    ScheduleCommandInfoProbe(String::Format(
+                        "timeout waiting response Type=0x{0:X2}, Code=0x{1:X2}",
+                        cmd.commandType, cmd.commandCode));
+                }
+                return false;
+            }
+
+            CommandResponse candidate{};
+            cli::array<System::Byte>^ rawCandidate = nullptr;
+            if (!ReceiveResponse(candidate, static_cast<int>(remaining.TotalMilliseconds), rawCandidate)) {
+                continue;
+            }
+
+            if (candidate.commandType != cmd.commandType || candidate.commandCode != cmd.commandCode) {
+                String^ hex = "";
+                if (rawCandidate != nullptr && rawCandidate->Length > 0) {
+                    System::Text::StringBuilder^ sb = gcnew System::Text::StringBuilder(rawCandidate->Length * 3);
+                    for (int i = 0; i < rawCandidate->Length; i++) {
+                        if (i != 0) sb->Append(" ");
+                        sb->Append(rawCandidate[i].ToString("X2"));
+                    }
+                    hex = sb->ToString();
+                }
+
+                GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+                    "Warning: Discarding unrelated response. Expected Type=0x{0:X2}, Code=0x{1:X2}; Got Type=0x{2:X2}, Code=0x{3:X2}; Raw={4}",
+                    cmd.commandType, cmd.commandCode, candidate.commandType, candidate.commandCode, hex)));
+                if (!isCmdInfoRequest) {
+                    ScheduleCommandInfoProbe(String::Format(
+                        "discarded unrelated response while waiting Type=0x{0:X2}, Code=0x{1:X2}",
+                        cmd.commandType, cmd.commandCode));
+                }
+                continue;
+            }
+
+            response = candidate;
+            break;
         }
 
         // Обрабатываем полученный ответ
@@ -2317,8 +2514,20 @@ System::Void ProjectServerW::DataForm::timerAutoStart_Tick(System::Object^ sende
             Label_Commands->Text = "[АВТОЗАПУСК] Автоматический запуск программы...";
             Label_Commands->ForeColor = System::Drawing::Color::Blue;
             
-            // Отправляем команду START
-            SendStartCommand();
+            CommandResponse startResp{};
+            CommandAckResult startResult = SendControlCommandWithAck(CmdProgControl::START, "START", 2000, 2, startResp);
+
+            if (startResult == CommandAckResult::NoResponse) {
+                // Why: controller can start but ACK can be lost; verify via Work bit in telemetry.
+                GlobalLogger::LogMessage("Warning: Автозапуск: START без подтверждения, проверка по биту Work");
+                Label_Commands->Text = "[АВТОЗАПУСК] START без подтверждения, проверка по Work...";
+                Label_Commands->ForeColor = System::Drawing::Color::Orange;
+            }
+            else if (startResult != CommandAckResult::Ok) {
+                GlobalLogger::LogMessage("Warning: Автозапуск: START не выполнен (ошибка ответа/отправки)");
+                Label_Commands->Text = "[!] Автозапуск: START не выполнен";
+                Label_Commands->ForeColor = System::Drawing::Color::Orange;
+            }
             
             // Отключаем автозапуск после выполнения
             checkBoxAutoStart->Checked = false;
@@ -2429,30 +2638,57 @@ System::Void ProjectServerW::DataForm::timerAutoRestart_Tick(System::Object^ sen
         Label_Commands->Text = "[АВТОПЕРЕЗАПУСК] Отправка команды STOP...";
         Label_Commands->ForeColor = System::Drawing::Color::Blue;
 
-        SendStopCommand();
+        CommandResponse stopResp{};
+        CommandAckResult stopResult = SendControlCommandWithAck(CmdProgControl::STOP, "STOP", 2000, 2, stopResp);
 
-        // Only arm the pending START if STOP was accepted (UI indicates STOP is no longer available).
-        if (buttonSTART->Enabled) {
+        if (stopResult == CommandAckResult::Ok) {
             autoRestartPending = true;
-            Label_Commands->Text = "[АВТОПЕРЕЗАПУСК] STOP отправлен, ожидание окончания работы...";
+            autoRestartStopIssuedTime = DateTime::Now;
+            Label_Commands->Text = "[АВТОПЕРЕЗАПУСК] STOP подтверждён, ожидание окончания работы...";
             Label_Commands->ForeColor = System::Drawing::Color::Blue;
-            autoRestartInternalUncheck = true;
-            checkBoxAutoRestart->Checked = false; // one-shot, same UX as AutoStart
+        }
+        else if (stopResult == CommandAckResult::NoResponse) {
+            // Why: controller can execute STOP but ACK can be lost; keep the flow and verify via Work bit.
+            autoRestartPending = true;
+            autoRestartStopIssuedTime = DateTime::Now;
+            GlobalLogger::LogMessage("Warning: Автоперезапуск: STOP без подтверждения, ожидание по биту Work");
+            Label_Commands->Text = "[АВТОПЕРЕЗАПУСК] STOP без подтверждения, ожидание по Work...";
+            Label_Commands->ForeColor = System::Drawing::Color::Orange;
         }
         else {
-            GlobalLogger::LogMessage("Warning: Автоперезапуск: STOP не подтвердился, автоперезапуск не активирован");
+            autoRestartPending = false;
+            autoRestartStopIssuedTime = DateTime::MinValue;
+            GlobalLogger::LogMessage("Warning: Автоперезапуск: STOP не выполнен (ошибка ответа/отправки)");
             Label_Commands->Text = "[!] Автоперезапуск: STOP не выполнен";
             Label_Commands->ForeColor = System::Drawing::Color::Orange;
-            autoRestartInternalUncheck = true;
-            checkBoxAutoRestart->Checked = false;
         }
+
+        autoRestartInternalUncheck = true;
+        checkBoxAutoRestart->Checked = false; // one-shot, same UX as AutoStart
     }
     else if (buttonSTART->Enabled) {
         // Device is already stopped; behave as scheduled start.
         Label_Commands->Text = "[АВТОПЕРЕЗАПУСК] Устройство уже остановлено, отправка START...";
         Label_Commands->ForeColor = System::Drawing::Color::Blue;
 
-        SendStartCommand();
+        CommandResponse startResp{};
+        CommandAckResult startResult = SendControlCommandWithAck(CmdProgControl::START, "START", 2000, 2, startResp);
+
+        if (startResult == CommandAckResult::Ok) {
+            Label_Commands->Text = "[АВТОПЕРЕЗАПУСК] START подтверждён";
+            Label_Commands->ForeColor = System::Drawing::Color::Blue;
+        }
+        else if (startResult == CommandAckResult::NoResponse) {
+            // Why: keep reacting to missing ACK, but allow telemetry Work to confirm actual state.
+            GlobalLogger::LogMessage("Warning: Автоперезапуск: START без подтверждения, ожидание по биту Work");
+            Label_Commands->Text = "[АВТОПЕРЕЗАПУСК] START без подтверждения, проверка по Work...";
+            Label_Commands->ForeColor = System::Drawing::Color::Orange;
+        }
+        else {
+            GlobalLogger::LogMessage("Warning: Автоперезапуск: START не выполнен (ошибка ответа/отправки)");
+            Label_Commands->Text = "[!] Автоперезапуск: START не выполнен";
+            Label_Commands->ForeColor = System::Drawing::Color::Orange;
+        }
         autoRestartInternalUncheck = true;
         checkBoxAutoRestart->Checked = false;
     }
@@ -2492,5 +2728,90 @@ void ProjectServerW::DataForm::ExecuteAutoRestartStart() {
     }
     catch (Exception^ ex) {
         GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in ExecuteAutoRestartStart: " + ex->ToString()));
+    }
+}
+
+bool ProjectServerW::DataForm::TrySendControlCommandFireAndForget(uint8_t controlCode, System::String^ commandName) {
+    // Why: scheduled operations must not depend on a synchronous command response because some firmware builds
+    // can execute START/STOP but skip/lose the ACK. We confirm the actual state via the Work bit telemetry.
+    try {
+        Command cmd = CreateControlCommand(controlCode);
+        return SendCommand(cmd, commandName);
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in TrySendControlCommandFireAndForget: " + ex->Message));
+        return false;
+    }
+}
+
+ProjectServerW::DataForm::CommandAckResult ProjectServerW::DataForm::SendControlCommandWithAck(
+    uint8_t controlCode,
+    System::String^ commandName,
+    int timeoutMs,
+    int retries,
+    CommandResponse% lastResponse)
+{
+    // Why: keep the protocol behavior (wait for ACK and react) but remain resilient when ACK is lost.
+    // Fallback state verification is performed via telemetry Work bit in higher-level logic.
+    lastResponse.commandType = CmdType::PROG_CONTROL;
+    lastResponse.commandCode = controlCode;
+    lastResponse.status = CmdStatus::TIMEOUT;
+    lastResponse.dataLength = 0;
+    bool hadTimeout = false;
+
+    for (int attempt = 0; attempt < retries; attempt++) {
+        Command cmd = CreateControlCommand(controlCode);
+        if (!SendCommand(cmd, commandName)) {
+            return CommandAckResult::SendFailed;
+        }
+
+        CommandResponse response{};
+        cli::array<System::Byte>^ rawResponse = nullptr;
+        if (!ReceiveResponse(response, timeoutMs, rawResponse)) {
+            hadTimeout = true;
+            lastResponse.status = CmdStatus::TIMEOUT;
+            continue;
+        }
+
+        // Some responses can be for other commands; emulate SendCommandAndWaitResponse matching behavior here as well.
+        if (response.commandType != cmd.commandType || response.commandCode != cmd.commandCode) {
+            String^ hex = "";
+            if (rawResponse != nullptr && rawResponse->Length > 0) {
+                System::Text::StringBuilder^ sb = gcnew System::Text::StringBuilder(rawResponse->Length * 3);
+                for (int i = 0; i < rawResponse->Length; i++) {
+                    if (i != 0) sb->Append(" ");
+                    sb->Append(rawResponse[i].ToString("X2"));
+                }
+                hex = sb->ToString();
+            }
+            GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+                "Warning: Discarding unrelated response in SendControlCommandWithAck. Expected Type=0x{0:X2}, Code=0x{1:X2}; Got Type=0x{2:X2}, Code=0x{3:X2}; Raw={4}",
+                cmd.commandType, cmd.commandCode, response.commandType, response.commandCode, hex)));
+            ScheduleCommandInfoProbe(String::Format(
+                "discarded unrelated response while waiting ACK Type=0x{0:X2}, Code=0x{1:X2}",
+                cmd.commandType, cmd.commandCode));
+            lastResponse = response;
+            continue;
+        }
+
+        lastResponse = response;
+        ProcessResponse(response);
+        return (response.status == CmdStatus::OK) ? CommandAckResult::Ok : CommandAckResult::ErrorResponse;
+    }
+
+    if (hadTimeout) {
+        ScheduleCommandInfoProbe(String::Format(
+            "timeout waiting ACK Type=0x{0:X2}, Code=0x{1:X2}",
+            CmdType::PROG_CONTROL, controlCode));
+    }
+    return CommandAckResult::NoResponse;
+}
+
+System::Void ProjectServerW::DataForm::button_CMDINFO_Click(System::Object^ sender, System::EventArgs^ e) {
+    try {
+        SendCommandInfoRequest();
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in button_CMDINFO_Click: " + ex->ToString()));
     }
 }

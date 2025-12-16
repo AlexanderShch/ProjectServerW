@@ -40,7 +40,6 @@
 
 КОДЫ КОМАНД ЗАПРОСА (RequestCommand):
 --------------------------------------
-- GET_STATUS (0x01)  - Запросить текущий статус устройства
 - GET_VERSION (0x02) - Запросить версию прошивки
 - GET_DATA (0x03)  - Запросить данные
 
@@ -92,18 +91,7 @@ void SetMeasurementInterval(int intervalSeconds) {
 }
 
 
-5. ЗАПРОС СТАТУСА УСТРОЙСТВА:
--------------------------------
-void RequestDeviceStatus() {
-    // Создать команду запроса статуса
-    Command cmd = CreateRequestCommand(RequestCommand::GET_STATUS);
-    
-    // Отправить команду
-    SendCommand(cmd, "GET_STATUS");
-}
-
-
-6. ОТПРАВКА КОМАНДЫ С НЕСКОЛЬКИМИ ПАРАМЕТРАМИ:
+5. ОТПРАВКА КОМАНДЫ С НЕСКОЛЬКИМИ ПАРАМЕТРАМИ:
 ------------------------------------------------
 void SendCustomCommand() {
     Command cmd;
