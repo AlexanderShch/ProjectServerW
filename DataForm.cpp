@@ -721,16 +721,20 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
             }
         }
 
-        // Cancel auto-restart pending if STOP does not take effect within a reasonable window.
-        // Why: avoid keeping a stale pending START forever when the device ignores STOP or telemetry is inconsistent.
-        if (autoRestartPending && currentWorkBitState && autoRestartStopIssuedTime != DateTime::MinValue) {
+        // Cancel auto-restart only by a large safety timeout.
+        // Why: after STOP the device may "blink" Work (1<->0) for minutes; readiness is detected by
+        // "no blinking for 60s" (same logic that enables the START button), not by Work being 1 or 0.
+        if (autoRestartPending && autoRestartStopIssuedTime != DateTime::MinValue) {
             TimeSpan waited = now.Subtract(autoRestartStopIssuedTime);
-            if (waited.TotalMinutes >= 5) {
+            const double safetyTimeoutMinutes = 5;
+            if (waited.TotalMinutes >= safetyTimeoutMinutes) {
                 autoRestartPending = false;
                 autoRestartStopIssuedTime = DateTime::MinValue;
-                GlobalLogger::LogMessage("Warning: Автоперезапуск отменён: Work не перешёл в 0 за 5 минут после STOP");
+                GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+                    "Warning: Автоперезапуск отменён: не дождались остановки (нет 60с без моргания Work) за {0} минут после STOP",
+                    safetyTimeoutMinutes)));
                 if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
-                    Label_Commands->Text = "[!] Автоперезапуск отменён: нет остановки по Work";
+                    Label_Commands->Text = "[!] Автоперезапуск отменён: таймаут ожидания остановки";
                     Label_Commands->ForeColor = System::Drawing::Color::Orange;
                 }
             }
