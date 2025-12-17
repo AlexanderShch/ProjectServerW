@@ -65,6 +65,9 @@ size_t BuildCommandBuffer(const Command& cmd, uint8_t* buffer, size_t bufferSize
 // Функция для получения строкового имени команды
 const char* GetCommandName(const Command& cmd);
 
+// Short command type name (e.g. REQUEST, PROG_CONTROL).
+const char* GetCommandTypeName(uint8_t commandType);
+
 // Вспомогательные функции для создания команд
 
 // Создать команду подтверждения телеметрии (без параметров)

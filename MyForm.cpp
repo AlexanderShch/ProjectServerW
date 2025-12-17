@@ -1,5 +1,6 @@
 #include "MyForm.h"
 #include "SServer.h"
+#include "FormExcel.h"
 #include <thread>
 
 using namespace ProjectServerW;		// Project namespace
@@ -78,6 +79,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		Application::EnableVisualStyles();
 		Application::SetCompatibleTextRenderingDefault(false);
 		Application::Run(gcnew MyForm);
+
+		// Ensure queued Excel exports complete before process shutdown.
+		try {
+			const int timeoutMs = 5 * 60 * 1000;
+			GlobalLogger::LogMessage("Information: Waiting for Excel export jobs to complete before shutdown...");
+			if (!ProjectServerW::FormExcel::WaitForAllExports(timeoutMs)) {
+				GlobalLogger::LogMessage("Warning: Excel export jobs did not finish before shutdown timeout.");
+			}
+			else {
+				GlobalLogger::LogMessage("Information: Excel export jobs completed.");
+			}
+		}
+		catch (...) {}
 
 		GlobalLogger::LogMessage("======================================================================");
 		GlobalLogger::LogMessage("Application closing normally...");

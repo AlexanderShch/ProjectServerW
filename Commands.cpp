@@ -107,6 +107,17 @@ const char* GetCommandName(const Command& cmd) {
     return "UNKNOWN_COMMAND";
 }
 
+const char* GetCommandTypeName(uint8_t commandType) {
+    switch (commandType) {
+    case CmdType::TELEMETRY: return "TELEMETRY";
+    case CmdType::PROG_CONTROL: return "PROG_CONTROL";
+    case CmdType::CONFIGURATION: return "CONFIGURATION";
+    case CmdType::REQUEST: return "REQUEST";
+    case CmdType::DEVICE_CONTROL: return "DEVICE_CONTROL";
+    default: return "UNKNOWN_TYPE";
+    }
+}
+
 // ============================
 // Функции для обработки ответов от контроллера
 // ============================

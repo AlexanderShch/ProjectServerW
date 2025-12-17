@@ -141,12 +141,15 @@
     <ClCompile Include="MyForm.cpp" />
     <ClCompile Include="DataForm.cpp" />
     <ClCompile Include="Chart.cpp" />
+    <ClCompile Include="FormExcel.cpp" />
+    <ClCompile Include="CommandsDefroster.cpp" />
     <ClCompile Include="SServer.cpp" />
     <ClCompile Include="Commands.cpp" />
     <ClCompile Include="PacketQueueProcessor.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Chart.h" />
+    <ClInclude Include="FormExcel.h" />
     <ClInclude Include="MyForm.h">
       <FileType>CppForm</FileType>
     </ClInclude>

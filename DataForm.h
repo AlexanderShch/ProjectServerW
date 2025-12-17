@@ -46,45 +46,13 @@ namespace ProjectServerW {
 
 
 
-			// Critical: Excel COM automation is not safe for concurrent use; this global mutex prevents parallel exports.
-			static System::Threading::Mutex^ excelGlobalMutex;
 			static System::Threading::Semaphore^ responseAvailable;
-
-			ref class ExcelExportJob sealed {
-			public:
-				System::Data::DataTable^ tableSnapshot;
-				System::String^ saveDirectory;
-				System::DateTime sessionStart;
-				System::DateTime sessionEnd;
-				int clientPort;
-				System::String^ clientIP;
-				System::String^ formGuid;
-				System::WeakReference^ formRef;
-				bool enableButtonOnComplete;
-			};
-
-			// Critical: a single STA worker serializes Excel COM usage and retries if Excel is busy/hung temporarily.
-			static System::Collections::Concurrent::ConcurrentQueue<ExcelExportJob^>^ excelExportQueue;
-			static System::Threading::AutoResetEvent^ excelExportQueueEvent;
-			static System::Threading::Thread^ excelExportWorkerThread;
-			static System::Object^ excelExportWorkerSync;
-			static bool excelExportWorkerStarted;
-			static void EnsureExcelExportWorker();
-			static void ExcelExportWorkerLoop();
-			static void ProcessExcelExportJob(ExcelExportJob^ job);
-			static System::String^ ResolveExcelSaveDirectory(System::String^ preferredDirectory);
 		
 		// Статический конструктор для инициализации статических управляемых членов
 		static DataForm() {
 			responseQueue = gcnew System::Collections::Concurrent::ConcurrentQueue<cli::array<System::Byte>^>();
-			excelGlobalMutex = gcnew System::Threading::Mutex(false, "Global\\ProjectServerW_Excel_Mutex");
 			// Critical: recv() thread must never observe SemaphoreFullException from EnqueueResponse->Release().
 			responseAvailable = gcnew System::Threading::Semaphore(0, System::Int32::MaxValue);
-			excelExportQueue = gcnew System::Collections::Concurrent::ConcurrentQueue<ExcelExportJob^>();
-			excelExportQueueEvent = gcnew System::Threading::AutoResetEvent(false);
-			excelExportWorkerSync = gcnew System::Object();
-			excelExportWorkerThread = nullptr;
-			excelExportWorkerStarted = false;
 		}
 		
 		public:
@@ -136,8 +104,7 @@ namespace ProjectServerW {
 				DateTime dataCollectionStartTime; // Время начала сбора данных
 				DateTime dataCollectionEndTime;   // Время окончания сбора данных
 			bool workBitDetected;            // Флаг для отслеживания активации бита "Work"
-			bool pendingExcelExport;		  // Флаг ожидания освобождения кнопки записи Excel
-			System::Windows::Forms::Timer^ exportTimer;	// Таймер для проверки освобождения кнопки
+			// Excel export retries are handled inside FormExcel worker (queue + mutex requeue).
 		DateTime workBitZeroStartTime;   // время перехода бита Work в состояние ноль
 		bool workBitZeroTimerActive;     // флаг "запущен таймер отслеживания активности таймера бита Work в нуле"
 	bool workBitZeroLogged;          // флаг "уже залогировано сообщение о начале отслеживания нуля" (для избежания повторных записей в лог)
@@ -357,9 +324,9 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage2 = (gcnew System::Windows::Forms::TabPage());
 				this->label_Version = (gcnew System::Windows::Forms::Label());
 				this->labelVersion = (gcnew System::Windows::Forms::Label());
-			this->button_RESET = (gcnew System::Windows::Forms::Button());
-			this->button_CMDINFO = (gcnew System::Windows::Forms::Button());
-			this->label_Commands_Info = (gcnew System::Windows::Forms::Label());
+				this->button_RESET = (gcnew System::Windows::Forms::Button());
+				this->button_CMDINFO = (gcnew System::Windows::Forms::Button());
+				this->label_Commands_Info = (gcnew System::Windows::Forms::Label());
 				this->Label_Commands = (gcnew System::Windows::Forms::Label());
 				this->labelSTOP = (gcnew System::Windows::Forms::Label());
 				this->labelSTART = (gcnew System::Windows::Forms::Label());
@@ -539,9 +506,9 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				this->tabPage2->Controls->Add(this->label_Version);
 				this->tabPage2->Controls->Add(this->labelVersion);
-			this->tabPage2->Controls->Add(this->button_RESET);
-			this->tabPage2->Controls->Add(this->button_CMDINFO);
-			this->tabPage2->Controls->Add(this->label_Commands_Info);
+				this->tabPage2->Controls->Add(this->button_RESET);
+				this->tabPage2->Controls->Add(this->button_CMDINFO);
+				this->tabPage2->Controls->Add(this->label_Commands_Info);
 				this->tabPage2->Controls->Add(this->Label_Commands);
 				this->tabPage2->Controls->Add(this->labelSTOP);
 				this->tabPage2->Controls->Add(this->labelSTART);
@@ -567,7 +534,7 @@ private: System::ComponentModel::IContainer^ components;
 				// label_Version
 				// 
 				this->label_Version->AutoSize = true;
-				this->label_Version->Location = System::Drawing::Point(234, 355);
+				this->label_Version->Location = System::Drawing::Point(234, 276);
 				this->label_Version->Name = L"label_Version";
 				this->label_Version->Size = System::Drawing::Size(96, 20);
 				this->label_Version->TabIndex = 13;
@@ -576,7 +543,7 @@ private: System::ComponentModel::IContainer^ components;
 				// labelVersion
 				// 
 				this->labelVersion->AutoSize = true;
-				this->labelVersion->Location = System::Drawing::Point(48, 355);
+				this->labelVersion->Location = System::Drawing::Point(48, 276);
 				this->labelVersion->Name = L"labelVersion";
 				this->labelVersion->Size = System::Drawing::Size(172, 20);
 				this->labelVersion->TabIndex = 12;
@@ -584,29 +551,29 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// button_RESET
 				// 
-				this->button_RESET->Location = System::Drawing::Point(48, 395);
+				this->button_RESET->Location = System::Drawing::Point(48, 316);
 				this->button_RESET->Name = L"button_RESET";
 				this->button_RESET->RightToLeft = System::Windows::Forms::RightToLeft::Yes;
 				this->button_RESET->Size = System::Drawing::Size(91, 33);
 				this->button_RESET->TabIndex = 9;
-			this->button_RESET->Text = L"СБРОС";
-			this->button_RESET->UseVisualStyleBackColor = true;
-			this->button_RESET->Click += gcnew System::EventHandler(this, &DataForm::button_RESET_Click);
-			// 
-			// button_CMDINFO
-			// 
-			this->button_CMDINFO->Location = System::Drawing::Point(160, 395);
-			this->button_CMDINFO->Name = L"button_CMDINFO";
-			this->button_CMDINFO->Size = System::Drawing::Size(130, 33);
-			this->button_CMDINFO->TabIndex = 15;
-			this->button_CMDINFO->Text = L"КОМАНДА";
-			this->button_CMDINFO->UseVisualStyleBackColor = true;
-			this->button_CMDINFO->Click += gcnew System::EventHandler(this, &DataForm::button_CMDINFO_Click);
-			// 
-			// label_Commands_Info
+				this->button_RESET->Text = L"СБРОС";
+				this->button_RESET->UseVisualStyleBackColor = true;
+				this->button_RESET->Click += gcnew System::EventHandler(this, &DataForm::button_RESET_Click);
+				// 
+				// button_CMDINFO
+				// 
+				this->button_CMDINFO->Location = System::Drawing::Point(160, 316);
+				this->button_CMDINFO->Name = L"button_CMDINFO";
+				this->button_CMDINFO->Size = System::Drawing::Size(130, 33);
+				this->button_CMDINFO->TabIndex = 15;
+				this->button_CMDINFO->Text = L"КОМАНДА";
+				this->button_CMDINFO->UseVisualStyleBackColor = true;
+				this->button_CMDINFO->Click += gcnew System::EventHandler(this, &DataForm::button_CMDINFO_Click);
+				// 
+				// label_Commands_Info
 				// 
 				this->label_Commands_Info->AutoSize = true;
-				this->label_Commands_Info->Location = System::Drawing::Point(44, 449);
+				this->label_Commands_Info->Location = System::Drawing::Point(339, 322);
 				this->label_Commands_Info->Name = L"label_Commands_Info";
 				this->label_Commands_Info->Size = System::Drawing::Size(196, 20);
 				this->label_Commands_Info->TabIndex = 8;
@@ -615,7 +582,7 @@ private: System::ComponentModel::IContainer^ components;
 				// Label_Commands
 				// 
 				this->Label_Commands->AutoSize = true;
-				this->Label_Commands->Location = System::Drawing::Point(246, 449);
+				this->Label_Commands->Location = System::Drawing::Point(541, 322);
 				this->Label_Commands->Name = L"Label_Commands";
 				this->Label_Commands->Size = System::Drawing::Size(212, 20);
 				this->Label_Commands->TabIndex = 7;
@@ -625,7 +592,7 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				this->labelSTOP->AutoSize = true;
 				this->labelSTOP->BackColor = System::Drawing::Color::Snow;
-				this->labelSTOP->Location = System::Drawing::Point(145, 135);
+				this->labelSTOP->Location = System::Drawing::Point(145, 122);
 				this->labelSTOP->Name = L"labelSTOP";
 				this->labelSTOP->Size = System::Drawing::Size(18, 20);
 				this->labelSTOP->TabIndex = 6;
@@ -635,7 +602,7 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				this->labelSTART->AutoSize = true;
 				this->labelSTART->BackColor = System::Drawing::Color::Snow;
-				this->labelSTART->Location = System::Drawing::Point(145, 89);
+				this->labelSTART->Location = System::Drawing::Point(145, 76);
 				this->labelSTART->Name = L"labelSTART";
 				this->labelSTART->Size = System::Drawing::Size(18, 20);
 				this->labelSTART->TabIndex = 5;
@@ -643,7 +610,7 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// buttonSTOP
 				// 
-				this->buttonSTOP->Location = System::Drawing::Point(48, 129);
+				this->buttonSTOP->Location = System::Drawing::Point(48, 116);
 				this->buttonSTOP->Name = L"buttonSTOP";
 				this->buttonSTOP->Size = System::Drawing::Size(91, 33);
 				this->buttonSTOP->TabIndex = 4;
@@ -653,7 +620,7 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// buttonSTART
 				// 
-				this->buttonSTART->Location = System::Drawing::Point(48, 82);
+				this->buttonSTART->Location = System::Drawing::Point(48, 69);
 				this->buttonSTART->Name = L"buttonSTART";
 				this->buttonSTART->Size = System::Drawing::Size(91, 33);
 				this->buttonSTART->TabIndex = 3;
@@ -696,7 +663,7 @@ private: System::ComponentModel::IContainer^ components;
 				// checkBoxAutoRestart
 				// 
 				this->checkBoxAutoRestart->AutoSize = true;
-				this->checkBoxAutoRestart->Location = System::Drawing::Point(48, 300);
+				this->checkBoxAutoRestart->Location = System::Drawing::Point(339, 215);
 				this->checkBoxAutoRestart->Name = L"checkBoxAutoRestart";
 				this->checkBoxAutoRestart->Size = System::Drawing::Size(103, 24);
 				this->checkBoxAutoRestart->TabIndex = 12;
@@ -708,7 +675,7 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				this->dateTimePickerAutoRestart->CustomFormat = L"HH:mm";
 				this->dateTimePickerAutoRestart->Format = System::Windows::Forms::DateTimePickerFormat::Custom;
-				this->dateTimePickerAutoRestart->Location = System::Drawing::Point(160, 300);
+				this->dateTimePickerAutoRestart->Location = System::Drawing::Point(451, 215);
 				this->dateTimePickerAutoRestart->Name = L"dateTimePickerAutoRestart";
 				this->dateTimePickerAutoRestart->ShowUpDown = true;
 				this->dateTimePickerAutoRestart->Size = System::Drawing::Size(100, 26);
@@ -718,9 +685,9 @@ private: System::ComponentModel::IContainer^ components;
 				// labelAutoRestart
 				// 
 				this->labelAutoRestart->AutoSize = true;
-				this->labelAutoRestart->Location = System::Drawing::Point(48, 270);
+				this->labelAutoRestart->Location = System::Drawing::Point(339, 185);
 				this->labelAutoRestart->Name = L"labelAutoRestart";
-				this->labelAutoRestart->Size = System::Drawing::Size(159, 20);
+				this->labelAutoRestart->Size = System::Drawing::Size(149, 20);
 				this->labelAutoRestart->TabIndex = 11;
 				this->labelAutoRestart->Text = L"Автоперезапуск в:";
 				// 
@@ -854,7 +821,6 @@ private: System::ComponentModel::IContainer^ components;
 			}
 			void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, System::Data::DataTable^ table);
 			void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size, int port);
-			void ProjectServerW::DataForm::AddDataToExcel();
 
 			static cli::array<cli::array<String^>^>^ GetBitFieldNames() {
 				static bool initialized = false;
@@ -869,6 +835,7 @@ private: System::ComponentModel::IContainer^ components;
 			}
 
 			void EnableButton();
+			void OnExcelExportCompleted(bool enableButtonOnComplete);
 			bool SendCommand(const struct Command& cmd); // Универсальный метод отправки команды (имя определяется автоматически)
 			bool SendCommand(const struct Command& cmd, System::String^ commandName); // Универсальный метод отправки команды с явным именем
 		void SendStartCommand(); // Метод для отправки команды START клиенту
@@ -919,7 +886,6 @@ private: System::ComponentModel::IContainer^ components;
 				int timeoutMs,
 				int retries,
 				CommandResponse% lastResponse);
-			void CheckExcelButtonStatus(Object^ sender, EventArgs^ e);
 			bool StartExcelExportThread(bool isEmergency);
 			void OnInactivityTimerTick(Object^ sender, EventArgs^ e);
 		private: System::Void textBoxExcelDirectory_TextChanged(System::Object^ sender, System::EventArgs^ e) {
