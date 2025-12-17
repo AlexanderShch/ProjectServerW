@@ -105,9 +105,8 @@ namespace ProjectServerW {
 				DateTime dataCollectionEndTime;   // Время окончания сбора данных
 			bool workBitDetected;            // Флаг для отслеживания активации бита "Work"
 			// Excel export retries are handled inside FormExcel worker (queue + mutex requeue).
-		DateTime workBitZeroStartTime;   // время перехода бита Work в состояние ноль
-		bool workBitZeroTimerActive;     // флаг "запущен таймер отслеживания активности таймера бита Work в нуле"
-	bool workBitZeroLogged;          // флаг "уже залогировано сообщение о начале отслеживания нуля" (для избежания повторных записей в лог)
+		bool workBitZeroTimerActive;     // флаг "идёт 5-минутная дозапись после Work=0 (финализация только по телеметрии)"
+		bool workStopFinalizeDelayElapsed; // флаг "5 минут после Work=0 прошли, можно финализировать на следующем пакете телеметрии"
 	bool firstDataReceived;          // флаг "получен первый пакет данных" (для установки начального состояния кнопок)
 	bool dataExportedToExcel;        // флаг "данные уже были экспортированы в Excel" (для предотвращения дублирующей записи при закрытии формы)
 	bool autoRestartPending;         // When true, we have issued a scheduled STOP and will START after a stable Work=0 stop is observed.
@@ -202,7 +201,7 @@ namespace ProjectServerW {
 	excelFileName = nullptr;
 	workBitDetected = false;
 	workBitZeroTimerActive = false;
-	workBitZeroLogged = false;      // Флаг логирования начала отслеживания нуля
+	workStopFinalizeDelayElapsed = false;
 	firstDataReceived = false;      // Флаг первого приёма данных
 	dataExportedToExcel = false;    // Флаг экспорта данных в Excel
 	autoRestartPending = false;
@@ -215,6 +214,12 @@ namespace ProjectServerW {
 
 			// Загружаем настройки сразу после инициализации компонентов
 			LoadSettings();
+
+			// Таймер задержки финализации после Work=0: по истечении 5 минут только разрешаем финализацию,
+			// а сам экспорт выполняем на следующем пакете телеметрии (чтобы не финализировать "вслепую").
+			workStopFinalizeTimer = gcnew System::Windows::Forms::Timer();
+			workStopFinalizeTimer->Interval = 5 * 60 * 1000; // 5 minutes
+			workStopFinalizeTimer->Tick += gcnew EventHandler(this, &DataForm::OnWorkStopFinalizeTimerTick);
 
 			// Состояние кнопок START/STOP будет установлено при получении первого пакета данных
 
@@ -294,6 +299,9 @@ namespace ProjectServerW {
 private: System::ComponentModel::IContainer^ components;
 
 		private:
+			// Таймер задержки финализации после Work=0 (5 минут). Экспорт/START делаем только на приходе телеметрии.
+			System::Windows::Forms::Timer^ workStopFinalizeTimer;
+			void OnWorkStopFinalizeTimerTick(Object^ sender, EventArgs^ e);
 			/// <summary>
 			/// Обязательная переменная конструктора.
 			/// </summary>
@@ -762,10 +770,6 @@ private: System::ComponentModel::IContainer^ components;
 		private:
 			int clientPort; // Порт клиента
 			String^ clientIP;   // IP-адрес клиента
-		private:			// Таймер для отложенной записи EXCEL
-			System::Windows::Forms::Timer^ delayedExcelTimer;
-			void OnDelayedExcelTimerTick(Object^ sender, EventArgs^ e);
-
 		public:
 			property int ClientPort{
 				int get() { return clientPort; }

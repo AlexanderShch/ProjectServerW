@@ -496,14 +496,13 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
 
         // Если бит "Work" переходит из 0 в 1 (дефростер is ON)
         if (!workBitDetected && currentWorkBitState) {
-            // Проверяем: это возврат после мигания или новый запуск?
+            // Проверяем: это возврат после попытки остановки или новый запуск?
             if (workBitZeroTimerActive) {
-                // Это мигание лампы - бит вернулся в 1 во время отслеживания
-                // НЕ логируем, только сбрасываем таймер отслеживания
+                // Это отмена отложенной финализации: устройство снова в работе, дозапись после Work=0 не нужна.
                 workBitZeroTimerActive = false;
-                // НЕ сбрасываем workBitZeroLogged - чтобы не логировать повторно при следующем мигании
-                if (delayedExcelTimer != nullptr && delayedExcelTimer->Enabled) {
-                    delayedExcelTimer->Stop();
+                workStopFinalizeDelayElapsed = false;
+                if (workStopFinalizeTimer != nullptr && workStopFinalizeTimer->Enabled) {
+                    workStopFinalizeTimer->Stop();
                 }
             } else {
                 // Это новый запуск работы (не мигание)
@@ -515,7 +514,6 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
                     "Information: СТАРТ фиксации данных: {0} (Port {1})",
                     dataCollectionStartTime.ToString("yyyy-MM-dd HH:mm:ss"), clientPort)));
                 // Сбрасываем флаги при новом запуске работы
-                workBitZeroLogged = false;
                 dataExportedToExcel = false;  // Новый цикл - данные еще не экспортированы
             }
             // Меняем состояние кнопок СТАРТ и СТОП
@@ -524,36 +522,28 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
 
         // Если бит "Work" переходит из 1 в 0 (дефростер is OFF)
         if (workBitDetected && !currentWorkBitState) {
-            // Начинаем отслеживать время, когда бит стал нулём
-            workBitZeroStartTime = now;
+            // Начинаем 5-минутную дозапись после Work=0. Финализацию делаем только на приходе телеметрии.
             workBitZeroTimerActive = true;
-            
-            // Создаем и запускаем таймер для проверки состояния каждую секунду
-            if (delayedExcelTimer == nullptr) {
-                delayedExcelTimer = gcnew System::Windows::Forms::Timer();
-                delayedExcelTimer->Interval = 1000; // Проверяем каждую секунду
-                delayedExcelTimer->Tick += gcnew EventHandler(this, &DataForm::OnDelayedExcelTimerTick);
+            workStopFinalizeDelayElapsed = false;
+            if (workStopFinalizeTimer != nullptr) {
+                workStopFinalizeTimer->Stop();
+                workStopFinalizeTimer->Start();
             }
-            delayedExcelTimer->Start();
-            
-            // Логируем только первый переход в ноль
-            if (!workBitZeroLogged) {
-                GlobalLogger::LogMessage(ConvertToStdString("Information: Бит Work стал нулём, начато отслеживание времени..."));
-                workBitZeroLogged = true;
-            }
+            GlobalLogger::LogMessage("Information: Work=0, старт 5-минутной дозаписи перед финализацией");
         }
 
-        // Отменяем автоперезапуск только по большому страховочному таймауту.
-        // Зачем: после STOP устройство может долго "моргать" Work (1<->0); готовность определяется по
-        // "нет моргания 60с" (та же логика, что включает кнопку START), а не по значению Work=1/0.
+        // Отменяем автоперезапуск только по большому страховочному таймауту с момента начала автоперезапуска.
+        // Зачем: команда STOP может не привести к полноценной остановке (или телеметрия может быть потеряна).
+        // Готовность к START определяется по завершению 5-минутной дозаписи и последующему пакету телеметрии с Work=0.
         if (autoRestartPending && autoRestartStopIssuedTime != DateTime::MinValue) {
             TimeSpan waited = now.Subtract(autoRestartStopIssuedTime);
             const double safetyTimeoutMinutes = 20;
-            if (waited.TotalMinutes >= safetyTimeoutMinutes) {
+            if (waited.TotalMinutes >= safetyTimeoutMinutes) { 
+                // ожидаем уже больше 20 минут после STOP, тогда отменяем автоперезапуск
                 autoRestartPending = false;
                 autoRestartStopIssuedTime = DateTime::MinValue;
                 GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-                    "Warning: Автоперезапуск отменён: не дождались остановки (нет 60с без моргания Work) за {0} минут после STOP",
+                    "Warning: Автоперезапуск отменён: не дождались финализации после Work=0 за {0} минут после STOP",
                     safetyTimeoutMinutes)));
                 if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
                     Label_Commands->Text = "[!] Автоперезапуск отменён: таймаут ожидания остановки";
@@ -563,19 +553,15 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
             }
         }
 
-        // Если бит "Work" остаётся в нуле и таймер активен, проверяем, прошла ли минута
-        if (!currentWorkBitState && workBitZeroTimerActive) {
-            TimeSpan elapsed = now.Subtract(workBitZeroStartTime);
-            if (elapsed.TotalSeconds >= 60) {
-                // Прошло не менее 1 минуты непрерывного нахождения в нуле
+        // Финализация: только по приходу телеметрии, когда Work=0 и прошли 5 минут дозаписи.
+        if (workBitZeroTimerActive && workStopFinalizeDelayElapsed && !currentWorkBitState) {
                 workBitZeroTimerActive = false;
-                workBitZeroLogged = false;  // Сбрасываем флаг логирования
-                delayedExcelTimer->Stop();
+                workStopFinalizeDelayElapsed = false;
                 
                 // Сохраняем время окончания сбора данных
                 dataCollectionEndTime = now;
                 
-                GlobalLogger::LogMessage(ConvertToStdString("Information: СТОП фиксации данных, запись в файл " + excelFileName));
+            GlobalLogger::LogMessage(ConvertToStdString("Information: СТОП фиксации данных (Work=0, +5 минут дозаписи), запись в файл " + excelFileName));
                 // Меняем состояние кнопок СТАРТ и СТОП
                 buttonSTARTstate_TRUE();
                 
@@ -585,13 +571,12 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
                 // Выполняем запись в Excel
                 this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));
 
-                // Зачем: команды START/STOP синхронные (ждём ответ контроллера). Ставим START в UI message loop,
-                // чтобы обработка телеметрии была короткой и чтобы экспорт в Excel мог стартовать параллельно.
+            // Зачем: команды START/STOP синхронные (ждём ответ контроллера). Ставим START в UI message loop,
+            // чтобы обработка телеметрии была короткой и чтобы экспорт в Excel мог стартовать параллельно.
                 if (autoRestartPending) {
                     autoRestartPending = false;
-                    autoRestartStopIssuedTime = DateTime::MinValue;
+                autoRestartStopIssuedTime = DateTime::MinValue;
                     this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::ExecuteAutoRestartStart));
-                }
             }
         }
 
@@ -614,8 +599,8 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     // Добавление строки в таблицу данных во время работы устройства
     // Добавляем строку если:
     // 1. Work = 1 (устройство активно работает)
-    // 2. Work = 0, но ещё идёт отслеживание переходного периода (workBitZeroTimerActive = true)
-    //    Это нужно для записи данных во время "мигания" бита Work перед окончательным завершением
+    // 2. Work = 0, но ещё идёт ожидание финального условия остановки (workBitZeroTimerActive = true)
+    //    Это нужно для записи данных между Work->0 и Open->1
     if (workBitDetected || workBitZeroTimerActive)
     {
         table->Rows->Add(row);
@@ -653,6 +638,22 @@ void DataForm::EnableButton()
         buttonExcel->Enabled = true;
     }
     catch (...) {}
+}
+
+void ProjectServerW::DataForm::OnWorkStopFinalizeTimerTick(Object^ sender, EventArgs^ e) {
+    try {
+        if (workStopFinalizeTimer != nullptr) {
+            workStopFinalizeTimer->Stop();
+        }
+
+        // Зачем: таймер может отработать без новых пакетов телеметрии. Экспорт делаем только на телеметрии,
+        // поэтому здесь лишь разрешаем финализацию на следующем пакете с Work=0.
+        workStopFinalizeDelayElapsed = true;
+        GlobalLogger::LogMessage("Information: 5 минут дозаписи после Work=0 истекли, ожидание телеметрии для финализации");
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in OnWorkStopFinalizeTimerTick: " + ex->ToString()));
+    }
 }
 
 void ProjectServerW::DataForm::OnInactivityTimerTick(Object^ sender, EventArgs^ e) {
@@ -991,13 +992,6 @@ System::Void DataForm::DataForm_HandleDestroyed(Object^ sender, EventArgs^ e)
         // Игнорируем исключения в деструкторе
     }
 
-    // Очищаем таймер
-    if (delayedExcelTimer != nullptr) {
-        delayedExcelTimer->Stop();
-        delete delayedExcelTimer;
-        delayedExcelTimer = nullptr;
-    }
-
     if (inactivityTimer != nullptr) {
         try {
             inactivityTimer->Stop();
@@ -1005,6 +999,15 @@ System::Void DataForm::DataForm_HandleDestroyed(Object^ sender, EventArgs^ e)
         }
         catch (...) {}
         inactivityTimer = nullptr;
+    }
+
+    if (workStopFinalizeTimer != nullptr) {
+        try {
+            workStopFinalizeTimer->Stop();
+            workStopFinalizeTimer->Tick -= gcnew EventHandler(this, &DataForm::OnWorkStopFinalizeTimerTick);
+        }
+        catch (...) {}
+        workStopFinalizeTimer = nullptr;
     }
 }
 
@@ -1028,39 +1031,6 @@ void ProjectServerW::DataForm::buttonSTOPstate_TRUE()
     buttonSTOP->Enabled = true;
     labelSTOP->BackColor = System::Drawing::Color::Snow;
     labelSTOP->Text = "0";
-}
-
-// Обработчик события таймера для отложенной записи в Excel
-void ProjectServerW::DataForm::OnDelayedExcelTimerTick(Object^ sender, EventArgs^ e) {
-    // Проверяем, активен ли таймер отслеживания нуля
-    if (!workBitZeroTimerActive) {
-        delayedExcelTimer->Stop();
-        return;
-    }
-
-    // Вычисляем прошедшее время с момента установки бита Work в ноль
-    DateTime now = DateTime::Now;
-    TimeSpan elapsed = now.Subtract(workBitZeroStartTime);
-    
-    if (elapsed.TotalSeconds >= 60) {
-        // Прошло не менее 1 минуты непрерывного нахождения в нуле
-        workBitZeroTimerActive = false;
-        workBitZeroLogged = false;  // Сбрасываем флаг логирования
-        delayedExcelTimer->Stop();
-        
-        // Сохраняем время окончания сбора данных
-        dataCollectionEndTime = now;
-        
-        GlobalLogger::LogMessage(ConvertToStdString("Information: СТОП фиксации данных (по таймеру), запись в файл " + excelFileName));
-        // Меняем состояние кнопок СТАРТ и СТОП
-        buttonSTARTstate_TRUE();
-        
-        // Устанавливаем флаг, что данные экспортированы (чтобы не дублировать при закрытии формы)
-        dataExportedToExcel = true;
-        
-        // Выполняем запись в Excel
-        this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));
-    }
 }
 
 //  ===========================================================================
