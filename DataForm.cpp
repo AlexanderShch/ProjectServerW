@@ -21,6 +21,7 @@ std::map<std::wstring, gcroot<DataForm^>> formData_Map; // Определение переменно
 typedef struct   // Данные телеметрии (формат STM32)
 {
     uint8_t DataType;           // Байт типа передаваемых данных (0х00 для телеметрии)
+    uint8_t Len;                // Длина полезной части (байты после Len и до CRC), включается в CRC
     uint16_t Time;				// Количество секунд с момента включения
     uint8_t SensorQuantity;		// Количество сенсоров
     uint8_t SensorType[SQ];		// Тип сенсора

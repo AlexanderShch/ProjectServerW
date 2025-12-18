@@ -140,37 +140,79 @@ bool ValidateResponseCRC(const uint8_t* buffer, size_t length) {
 
 // Разбор буфера ответа в структуру CommandResponse
 bool ParseResponseBuffer(const uint8_t* buffer, size_t bufferSize, CommandResponse& response) {
-    // Проверяем минимальный размер буфера
+    // Поддерживаются 2 формата ответа:
+    // 1) Legacy: [Type][Code][Status][DataLen][Data...][CRC]
+    // 2) Новый (в кадре с длиной сразу после Type): [Type][Len][Code][Status][DataLen][Data...][CRC]
+    // Где Len = количество байт после Len и до CRC, CRC считается по всем байтам до CRC (включая Type и Len).
+
+    if (buffer == nullptr) {
+        return false;
+    }
+
+    // Сначала пробуем новый формат.
+    if (bufferSize >= 7) { // Type + Len + Code + Status + DataLen + CRC(2)
+        const uint8_t len = buffer[1];
+        const size_t expectedByLen = static_cast<size_t>(1 + 1 + len + 2);
+        if (expectedByLen == bufferSize) {
+            // Len должен включать: Code + Status + DataLen + Data
+            if (len < 3) {
+                return false;
+            }
+
+            response.commandType = buffer[0];
+            response.commandCode = buffer[2];
+            response.status = buffer[3];
+            response.dataLength = buffer[4];
+
+            const size_t expectedLenField = static_cast<size_t>(3 + response.dataLength);
+            if (expectedLenField != static_cast<size_t>(len)) {
+                return false;
+            }
+
+            if (response.dataLength > sizeof(response.data)) {
+                return false;
+            }
+
+            if (response.dataLength > 0) {
+                memcpy(response.data, &buffer[5], response.dataLength);
+            }
+
+            memcpy(&response.crc, &buffer[bufferSize - 2], 2);
+
+            if (!ValidateResponseCRC(buffer, bufferSize)) {
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    // Legacy формат.
     if (bufferSize < 6) { // Type + Code + Status + DataLen + CRC(2)
         return false;
     }
 
-    // Извлекаем поля заголовка
     size_t offset = 0;
     response.commandType = buffer[offset++];
     response.commandCode = buffer[offset++];
     response.status = buffer[offset++];
     response.dataLength = buffer[offset++];
 
-    // Проверяем, соответствует ли длина данных размеру буфера
-    size_t expectedSize = 4 + static_cast<size_t>(response.dataLength) + 2; // Type + Code + Status + DataLen + Data + CRC
+    size_t expectedSize = 4 + static_cast<size_t>(response.dataLength) + 2;
     if (bufferSize < expectedSize) {
         return false;
     }
 
-    // Копируем данные ответа
     if (response.dataLength > 0) {
         if (response.dataLength > sizeof(response.data)) {
-            return false; // Данные не помещаются в структуру
+            return false;
         }
         memcpy(response.data, &buffer[offset], response.dataLength);
         offset += response.dataLength;
     }
 
-    // Извлекаем CRC
     memcpy(&response.crc, &buffer[offset], 2);
 
-    // Проверяем CRC
     if (!ValidateResponseCRC(buffer, bufferSize)) {
         return false;
     }

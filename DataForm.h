@@ -30,13 +30,14 @@ namespace ProjectServerW {
 	public ref class DataForm : public System::Windows::Forms::Form
 	{
 		private:
-			// Critical: needed to stop/join the form thread when the form closes itself (e.g., inactivity timeout).
+			// Критично: нужно для корректной остановки/ожидания потока формы, когда форма закрывается сама (например, по таймауту).
 			System::String^ formGuid;
 
 			SOCKET clientSocket;  // Сокет клиента
 			
-		// Очередь для ответов от контроллера (статические для доступа из SServer)
-		static System::Collections::Concurrent::ConcurrentQueue<cli::array<System::Byte>^>^ responseQueue;
+		// Очередь/семафор ответов на команды — строго на уровне формы (на уровне устройства).
+		// Причина: при нескольких устройствах общий static-буфер приводит к перемешиванию ответов между формами.
+		System::Collections::Concurrent::ConcurrentQueue<cli::array<System::Byte>^>^ responseQueue;
 		private: System::Windows::Forms::Label^ Label_Commands;
 		private: System::Windows::Forms::Label^ label_Commands_Info;
 		private: System::Windows::Forms::Button^ button_RESET;
@@ -46,14 +47,7 @@ namespace ProjectServerW {
 
 
 
-			static System::Threading::Semaphore^ responseAvailable;
-		
-		// Статический конструктор для инициализации статических управляемых членов
-		static DataForm() {
-			responseQueue = gcnew System::Collections::Concurrent::ConcurrentQueue<cli::array<System::Byte>^>();
-			// Critical: recv() thread must never observe SemaphoreFullException from EnqueueResponse->Release().
-			responseAvailable = gcnew System::Threading::Semaphore(0, System::Int32::MaxValue);
-		}
+			System::Threading::Semaphore^ responseAvailable;
 		
 		public:
 			property System::String^ FormGuid {
@@ -172,13 +166,16 @@ namespace ProjectServerW {
 				this->FormClosing += gcnew FormClosingEventHandler(this, &DataForm::DataForm_FormClosing);
 				this->FormClosed += gcnew FormClosedEventHandler(this, &DataForm::DataForm_FormClosed);
 				this->HandleDestroyed += gcnew EventHandler(this, &DataForm::DataForm_HandleDestroyed);
-				// Critical: used for export completion signaling (non-blocking shutdown path).
+				// Критично: используется для сигнализации завершения экспорта (неблокирующее закрытие).
 				exportCompletedEvent = gcnew System::Threading::ManualResetEvent(false);
-				// Critical: protects DataTable from concurrent access between UI updates and background Excel copy.
+				// Критично: защищает DataTable от гонок между UI-обновлениями и фоновой копией в Excel.
 				dataTableSync = gcnew System::Object();
 				excelExportSync = gcnew System::Object();
 				excelExportInProgress = 0;
 				formGuid = nullptr;
+				// Критично: recv()-поток не должен упираться в SemaphoreFullException при Release().
+				responseQueue = gcnew System::Collections::Concurrent::ConcurrentQueue<cli::array<System::Byte>^>();
+				responseAvailable = gcnew System::Threading::Semaphore(0, System::Int32::MaxValue);
 				hasTelemetry = false;
 				inactivityCloseRequested = false;
 				lastTelemetryTime = DateTime::MinValue;
@@ -188,8 +185,8 @@ namespace ProjectServerW {
 				lastTelemetrySocket = INVALID_SOCKET;
 				reconnectFixationLogPending = false;
 
-				// Critical: device can be power-cycled; if it reconnects within 30 minutes we continue the same table.
-				// If there is no telemetry for 30 minutes, we finalize (export) and close the form.
+				// Критично: устройство может быть выключено/включено; если переподключится в пределах 30 минут — продолжаем ту же таблицу.
+				// Если телеметрии нет 30 минут — финализируем (экспорт) и закрываем форму.
 				inactivityTimer = gcnew System::Windows::Forms::Timer();
 				inactivityTimer->Interval = 10 * 1000; // 10 seconds
 				inactivityTimer->Tick += gcnew EventHandler(this, &DataForm::OnInactivityTimerTick);
@@ -850,7 +847,7 @@ private: System::ComponentModel::IContainer^ components;
 		void UpdateVersionLabelInternal(); // Вспомогательный метод для обновления label_Version из UI потока
 		
 		// Методы для обработки ответов от контроллера
-			static void EnqueueResponse(cli::array<System::Byte>^ response); // Добавление ответа в очередь (вызывается из SServer)
+			void EnqueueResponse(cli::array<System::Byte>^ response); // Добавление ответа в очередь (вызывается из SServer)
 			bool ReceiveResponse(struct CommandResponse& response, int timeoutMs); // Прием ответа от контроллера с таймаутом
 			bool ReceiveResponse(struct CommandResponse& response, int timeoutMs, cli::array<System::Byte>^% rawResponse); // Receive response plus raw frame for diagnostics
 			bool ReceiveResponse(struct CommandResponse& response); // Прием ответа от контроллера (таймаут по умолчанию 1000 мс)

@@ -1,9 +1,15 @@
 #pragma once
 
 // —трока версии дл€ отображени€
-constexpr const wchar_t* VERSION_STR = L"1.3.14";
+constexpr const wchar_t* VERSION_STR = L"1.3.15";
 
 /*
+1.3.15 
+1. изменена очередь команд. “еперь все команды дл€ одного сокета отправл€ютс€ в очередь 
+и обрабатываютс€ в отдельном потоке
+2. изменена структура кадра данных, поступающих от контроллера. Ќовый формат без маркера конца и содержит длину кадра: 
+AA 55 + Type + Len + Data[Len] + CRC16, где CRC считаетс€ по Type+Len+Data. 
+
 1.3.14 Ћогику финализации данных помен€л
 ѕри переходе Work:1?0 на телеметрии запускаетс€ workStopFinalizeTimer на 5 минут, и workBitZeroTimerActive=true Ч строки продолжают добавл€тьс€.
 ѕо истечении таймера в OnWorkStopFinalizeTimerTick ничего не экспортируетс€, только ставитс€ workStopFinalizeDelayElapsed=true.

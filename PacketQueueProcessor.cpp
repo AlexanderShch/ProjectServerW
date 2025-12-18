@@ -4,6 +4,8 @@
 
 #include <msclr/marshal_cppstd.h>
 
+#include <unordered_map>
+#include <string>
 #include <sstream>
 #include <iomanip>
 // Marshal is used only to bridge between managed queue payload and existing std::wstring GUID map.
@@ -13,6 +15,13 @@ using namespace System::Runtime::InteropServices;
 using namespace System::Threading;
 
 namespace ProjectServerW {
+	struct TelemetryDuplicateGuardState
+	{
+		std::string lastBadFrame;
+	};
+
+	static std::unordered_map<UINT_PTR, TelemetryDuplicateGuardState> s_telemetryDuplicateGuardBySocket;
+
 	static std::string BytesToHex(const uint8_t* data, int length)
 	{
 		// Why: log raw frames to diagnose routing/CRC/length issues without attaching binary dumps.
@@ -129,14 +138,29 @@ namespace ProjectServerW {
 				const uint8_t* raw = reinterpret_cast<const uint8_t*>(pinned);
 
 				const bool crcOk = ValidateTelemetryCrc(raw, item->size);
-				const uint8_t ackCode = crcOk ? CmdTelemetry::DATA_OK : CmdTelemetry::DATA_FALSE;
 
-				// ACK is sent regardless of whether UI is still alive; it is part of device protocol behavior.
-				TrySendTelemetryAck(socket, ackCode);
+				//  ритично: контроллер при DATA_FALSE повтор€ет пакет. ≈сли сервер продолжит слать DATA_FALSE на неизменившийс€ пакет,
+				// можно получить бесконечную "карусель" повторов.
+				// ѕолитика сервера: если пакет телеметрии с неверным CRC пришЄл повторно и байты кадра не изменились,
+				// отправл€ем DATA_OK и просто отбрасываем пакет (без доставки в UI).
+				const UINT_PTR socketKey = static_cast<UINT_PTR>(socket);
+				TelemetryDuplicateGuardState& guard = s_telemetryDuplicateGuardBySocket[socketKey];
 
 				if (!crcOk) {
+					const std::string frameBytes(reinterpret_cast<const char*>(raw), static_cast<size_t>(item->size));
+					if (!guard.lastBadFrame.empty() && guard.lastBadFrame == frameBytes) {
+						TrySendTelemetryAck(socket, CmdTelemetry::DATA_OK);
+						guard.lastBadFrame.clear();
+						continue;
+					}
+
+					guard.lastBadFrame = frameBytes;
+					TrySendTelemetryAck(socket, CmdTelemetry::DATA_FALSE);
 					continue;
 				}
+
+				guard.lastBadFrame.clear();
+				TrySendTelemetryAck(socket, CmdTelemetry::DATA_OK);
 
 				if (String::IsNullOrEmpty(item->formGuid)) {
 					continue;
@@ -203,7 +227,7 @@ namespace ProjectServerW {
 			return;
 		}
 
-		// Keep this method strictly O(1): it is called from the recv() loop.
+		//  ритично: метод должен быть строго O(1), потому что вызываетс€ из recv()-цикла.
 		responseQueue->Enqueue(response);
 		responseAvailable->Release();
 	}
