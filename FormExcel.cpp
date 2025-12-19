@@ -5,8 +5,42 @@
 using namespace System;
 using namespace System::Runtime::InteropServices;
 using namespace System::Threading;
+using namespace System::Drawing;
 
 namespace ProjectServerW {
+
+static System::String^ MapTemperatureColumnNameForExcel(System::String^ columnName)
+{
+	if (String::IsNullOrEmpty(columnName)) {
+		return columnName;
+	}
+
+	if (columnName->Equals("T0")) return "T0 дефр.Левый";
+	if (columnName->Equals("T1")) return "T1 дефр.Правый";
+	if (columnName->Equals("T2")) return "T2 дефр.Центр";
+	if (columnName->Equals("T3")) return "T3 прод.Лев";
+	if (columnName->Equals("T4")) return "T4 прод.Пр";
+	if (columnName->Equals("T5")) return "T5 корпус";
+
+	return columnName;
+}
+
+static int GetTemperatureSeriesColorOle(System::String^ tColumnName)
+{
+	// Почему: Excel Interop ожидает OLE_COLOR. Используем ColorTranslator, чтобы не зависеть от порядка RGB/BGR.
+	if (String::IsNullOrEmpty(tColumnName)) {
+		return ColorTranslator::ToOle(Color::Black);
+	}
+
+	if (tColumnName->Equals("T0")) return ColorTranslator::ToOle(Color::FromArgb(0, 128, 0));       // зелёный
+	if (tColumnName->Equals("T1")) return ColorTranslator::ToOle(Color::FromArgb(255, 0, 0));       // красный
+	if (tColumnName->Equals("T2")) return ColorTranslator::ToOle(Color::FromArgb(255, 165, 0));     // оранжевый
+	if (tColumnName->Equals("T3")) return ColorTranslator::ToOle(Color::FromArgb(0, 128, 0));       // зелёный
+	if (tColumnName->Equals("T4")) return ColorTranslator::ToOle(Color::FromArgb(128, 0, 128));     // фиолетовый
+	if (tColumnName->Equals("T5")) return ColorTranslator::ToOle(Color::FromArgb(165, 42, 42));     // коричневый
+
+	return ColorTranslator::ToOle(Color::Black);
+}
 
 FormExcel::FormExcel() {
 	excelGlobalMutex = gcnew Mutex(false, "Global\\ProjectServerW_Excel_Mutex");
@@ -168,7 +202,8 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 
 			cli::array<System::Object^>^ headerArray = gcnew cli::array<System::Object^>(colCount);
 			for (int c = 0; c < colCount; c++) {
-				headerArray[c] = job->tableSnapshot->Columns[c]->ColumnName;
+				System::String^ colName = job->tableSnapshot->Columns[c]->ColumnName;
+				headerArray[c] = MapTemperatureColumnNameForExcel(colName);
 			}
 			Microsoft::Office::Interop::Excel::Range^ headerRange = ws->Range[ws->Cells[1, 1], ws->Cells[1, colCount]];
 			headerRange->Value2 = headerArray;
@@ -237,8 +272,9 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 
 						for (uint8_t i = 0; i < (SQ - 1); i++) {
 							int seriesCol = -1;
+							String^ tColName = nullptr;
 							try {
-								String^ tColName = "T" + Convert::ToString(i);
+								tColName = "T" + Convert::ToString(i);
 								int tIdx = job->tableSnapshot->Columns->IndexOf(tColName);
 								if (tIdx >= 0) seriesCol = tIdx + 1;
 							}
@@ -253,7 +289,22 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 								Microsoft::Office::Interop::Excel::Series^ s = seriesCollection->NewSeries();
 								s->XValues = xRange;
 								s->Values = yRange;
-								s->Name = "T" + Convert::ToString(i);
+								if (tColName != nullptr) {
+									s->Name = MapTemperatureColumnNameForExcel(tColName);
+
+									const int oleColor = GetTemperatureSeriesColorOle(tColName);
+									try {
+										// Для line chart чаще всего хватает Border->Color.
+										s->Border->Color = oleColor;
+									}
+									catch (...) {}
+									try {
+										// На некоторых версиях Interop доступен более “новый” API Format->Line.
+										s->Format->Line->ForeColor->RGB = oleColor;
+										s->Format->Line->Weight = 2.0;
+									}
+									catch (...) {}
+								}
 							}
 							finally {
 								if (yRange != nullptr) Marshal::ReleaseComObject(yRange);
