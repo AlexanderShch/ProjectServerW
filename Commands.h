@@ -108,6 +108,17 @@ inline Command CreateConfigCommandInt(uint8_t commandCode, int32_t value) {
     return cmd;
 }
 
+// Create configuration command with uint16 payload (2 bytes).
+// Why: some firmware endpoints (e.g. SET_INTERVAL) expect uint16, not int32.
+inline Command CreateConfigCommandU16(uint8_t commandCode, uint16_t value) {
+    Command cmd;
+    cmd.commandType = CmdType::CONFIGURATION;
+    cmd.commandCode = commandCode;
+    cmd.dataLength = 2;
+    memcpy(cmd.data, &value, 2);
+    return cmd;
+}
+
 // Создать команду конфигурации с параметром типа float
 inline Command CreateConfigCommandFloat(uint8_t commandCode, float value) {
     Command cmd;

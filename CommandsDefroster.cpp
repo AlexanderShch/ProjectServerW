@@ -285,6 +285,36 @@ void ProjectServerW::DataForm::SendVersionRequest() {
     }
 }
 
+void ProjectServerW::DataForm::SendSetIntervalCommand(int intervalSeconds) {
+    // Why: persist the chosen interval even when the controller is temporarily offline.
+    SaveSettings();
+
+    if (intervalSeconds <= 0) {
+        Label_Commands->Text = "[!] Интервал должен быть больше 0";
+        Label_Commands->ForeColor = System::Drawing::Color::Orange;
+        return;
+    }
+
+    // Why: firmware expects uint16 payload for SET_INTERVAL (2 bytes), not int32.
+    if (intervalSeconds > 65535) {
+        intervalSeconds = 65535;
+    }
+    const uint16_t intervalU16 = static_cast<uint16_t>(intervalSeconds);
+    Command cmd = CreateConfigCommandU16(CmdConfig::SET_INTERVAL, intervalU16);
+    CommandResponse response;
+
+    if (SendCommandAndWaitResponse(cmd, response, "SET_INTERVAL")) {
+        Label_Commands->Text = String::Format("[OK] Интервал измерений: {0} с", intervalSeconds);
+        Label_Commands->ForeColor = System::Drawing::Color::Green;
+        GlobalLogger::LogMessage(ConvertToStdString(Label_Commands->Text));
+
+        System::Windows::Forms::Timer^ colorTimer = gcnew System::Windows::Forms::Timer();
+        colorTimer->Interval = 3000;
+        colorTimer->Tick += gcnew EventHandler(this, &DataForm::RestoreLabelCommandsColor);
+        colorTimer->Start();
+    }
+}
+
 void ProjectServerW::DataForm::SendCommandInfoRequest() {
     // Почему: это аудит обработки команд, а не "состояние устройства" (телеметрия).
     // Ожидается, что прошивка запоминает последнюю принятую команду и отдаёт её по этому запросу.

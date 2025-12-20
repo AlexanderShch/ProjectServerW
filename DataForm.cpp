@@ -771,6 +771,13 @@ void ProjectServerW::DataForm::SaveSettings() {
         writer->WriteLine("AutoStartTime=" + dateTimePickerAutoStart->Value.ToString("HH:mm"));
         writer->WriteLine("AutoRestartEnabled=" + (checkBoxAutoRestart->Checked ? "1" : "0"));
         writer->WriteLine("AutoRestartTime=" + dateTimePickerAutoRestart->Value.ToString("HH:mm"));
+        int intervalSeconds = 10;
+        if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
+            intervalSeconds = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
+        }
+        // Why: keep settings file portable and stable across locale changes.
+        writer->WriteLine("MeasurementIntervalSeconds=" +
+            intervalSeconds.ToString(System::Globalization::CultureInfo::InvariantCulture));
 
         // Закрываем файл
         writer->Close();
@@ -832,6 +839,19 @@ void ProjectServerW::DataForm::LoadSettings() {
                         System::Globalization::DateTimeStyles::None);
                     DateTime baseDate = dateTimePickerAutoRestart->Value;
                     dateTimePickerAutoRestart->Value = DateTime(baseDate.Year, baseDate.Month, baseDate.Day, t.Hour, t.Minute, 0);
+                }
+                else if (key->Equals("MeasurementIntervalSeconds", StringComparison::OrdinalIgnoreCase)) {
+                    int parsed = 0;
+                    if (Int32::TryParse(value, System::Globalization::NumberStyles::Integer,
+                        System::Globalization::CultureInfo::InvariantCulture, parsed)) {
+                        if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
+                            int minVal = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Minimum);
+                            int maxVal = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Maximum);
+                            if (parsed < minVal) parsed = minVal;
+                            if (parsed > maxVal) parsed = maxVal;
+                            numericUpDownMeasurementInterval->Value = System::Decimal(parsed);
+                        }
+                    }
                 }
             }
         }

@@ -132,6 +132,10 @@ namespace ProjectServerW {
 		private: System::Windows::Forms::DateTimePicker^ dateTimePickerAutoRestart;
 		private: System::Windows::Forms::Label^ labelAutoRestart;
 		private: System::Windows::Forms::Timer^ timerAutoRestart;
+		// Measurement interval (seconds)
+		private: System::Windows::Forms::Label^ labelMeasurementInterval;
+		private: System::Windows::Forms::NumericUpDown^ numericUpDownMeasurementInterval;
+		private: System::Windows::Forms::Button^ buttonSaveMeasurementInterval;
 
 		private: System::Windows::Forms::DataGridView^ dataGridView;
 
@@ -343,6 +347,9 @@ private: System::ComponentModel::IContainer^ components;
 				this->checkBoxAutoRestart = (gcnew System::Windows::Forms::CheckBox());
 				this->dateTimePickerAutoRestart = (gcnew System::Windows::Forms::DateTimePicker());
 				this->labelAutoRestart = (gcnew System::Windows::Forms::Label());
+				this->labelMeasurementInterval = (gcnew System::Windows::Forms::Label());
+				this->numericUpDownMeasurementInterval = (gcnew System::Windows::Forms::NumericUpDown());
+				this->buttonSaveMeasurementInterval = (gcnew System::Windows::Forms::Button());
 				this->buttonBrowse = (gcnew System::Windows::Forms::Button());
 				this->textBoxExcelDirectory = (gcnew System::Windows::Forms::TextBox());
 				this->labelExcelDirectory = (gcnew System::Windows::Forms::Label());
@@ -525,6 +532,9 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage2->Controls->Add(this->checkBoxAutoRestart);
 				this->tabPage2->Controls->Add(this->dateTimePickerAutoRestart);
 				this->tabPage2->Controls->Add(this->labelAutoRestart);
+				this->tabPage2->Controls->Add(this->buttonSaveMeasurementInterval);
+				this->tabPage2->Controls->Add(this->numericUpDownMeasurementInterval);
+				this->tabPage2->Controls->Add(this->labelMeasurementInterval);
 				this->tabPage2->Controls->Add(this->buttonBrowse);
 				this->tabPage2->Controls->Add(this->textBoxExcelDirectory);
 				this->tabPage2->Controls->Add(this->labelExcelDirectory);
@@ -696,6 +706,35 @@ private: System::ComponentModel::IContainer^ components;
 				this->labelAutoRestart->TabIndex = 11;
 				this->labelAutoRestart->Text = L"Автоперезапуск в:";
 				// 
+				// labelMeasurementInterval
+				// 
+				this->labelMeasurementInterval->AutoSize = true;
+				this->labelMeasurementInterval->Location = System::Drawing::Point(620, 185);
+				this->labelMeasurementInterval->Name = L"labelMeasurementInterval";
+				this->labelMeasurementInterval->Size = System::Drawing::Size(179, 20);
+				this->labelMeasurementInterval->TabIndex = 14;
+				this->labelMeasurementInterval->Text = L"Интервал измерений, с:";
+				// 
+				// numericUpDownMeasurementInterval
+				// 
+				this->numericUpDownMeasurementInterval->Location = System::Drawing::Point(620, 215);
+				this->numericUpDownMeasurementInterval->Maximum = System::Decimal(86400);
+				this->numericUpDownMeasurementInterval->Minimum = System::Decimal(1);
+				this->numericUpDownMeasurementInterval->Name = L"numericUpDownMeasurementInterval";
+				this->numericUpDownMeasurementInterval->Size = System::Drawing::Size(90, 26);
+				this->numericUpDownMeasurementInterval->TabIndex = 15;
+				this->numericUpDownMeasurementInterval->Value = System::Decimal(10);
+				// 
+				// buttonSaveMeasurementInterval
+				// 
+				this->buttonSaveMeasurementInterval->Location = System::Drawing::Point(720, 213);
+				this->buttonSaveMeasurementInterval->Name = L"buttonSaveMeasurementInterval";
+				this->buttonSaveMeasurementInterval->Size = System::Drawing::Size(110, 30);
+				this->buttonSaveMeasurementInterval->TabIndex = 16;
+				this->buttonSaveMeasurementInterval->Text = L"Сохранить";
+				this->buttonSaveMeasurementInterval->UseVisualStyleBackColor = true;
+				this->buttonSaveMeasurementInterval->Click += gcnew System::EventHandler(this, &DataForm::buttonSaveMeasurementInterval_Click);
+				// 
 				// buttonBrowse
 				// 
 				this->buttonBrowse->Location = System::Drawing::Point(734, 21);
@@ -844,6 +883,7 @@ private: System::ComponentModel::IContainer^ components;
 		void SendResetCommand(); // Метод для отправки команды RESET клиенту
 			void SendCommandInfoRequest(); // Метод для запроса статуса обработки последней команды (device-side audit)
 		void SendVersionRequest(); // Метод для запроса версии прошивки контроллера
+		void SendSetIntervalCommand(int intervalSeconds); // Set measurement interval (seconds)
 		void UpdateVersionLabelInternal(); // Вспомогательный метод для обновления label_Version из UI потока
 		
 		// Методы для обработки ответов от контроллера
@@ -912,6 +952,10 @@ private: System::ComponentModel::IContainer^ components;
 private: System::Void button_RESET_Click(System::Object^ sender, System::EventArgs^ e) {
 	// Формируем команду "RESET" для отправки клиенту
 	SendResetCommand();
+}
+private: System::Void buttonSaveMeasurementInterval_Click(System::Object^ sender, System::EventArgs^ e) {
+	int intervalSeconds = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
+	SendSetIntervalCommand(intervalSeconds);
 }
 private: System::Void button_CMDINFO_Click(System::Object^ sender, System::EventArgs^ e);
 
