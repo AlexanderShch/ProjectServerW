@@ -1,7 +1,7 @@
 #pragma once
 
 // Строка версии для отображения
-constexpr const wchar_t* VERSION_STR = L"1.4.2";
+constexpr const wchar_t* VERSION_STR = L"1.4.3";
 
 /*
 1.4.2 добавлена команда установки интервала передачи данных

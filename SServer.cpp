@@ -209,10 +209,11 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 
 	// Проверяем, есть ли уже активное соединение от этого IP
 	std::wstring existingGuid = ProjectServerW::DataForm::FindFormByClientIP(clientIPAddress);
+	const bool isReconnect = !existingGuid.empty();
 	if (!existingGuid.empty()) {
 		// Reconnect scenario: device can be power-cycled. Reuse the existing DataForm and continue collecting into the same table.
 		guid = existingGuid;
-		String^ msg = "Information: Повторное подключение клиента " + clientIPAddress + ", переиспользуем существующую форму";
+		String^ msg = "Information: Reconnect " + clientIPAddress;
 		if (form != nullptr && !form->IsDisposed) {
 			form->SetMessage_TextValue(msg);
 		}
@@ -261,13 +262,33 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	try {
 		df = DataForm::GetFormByGuid(guid);
 		if (df != nullptr && !df->IsDisposed && !df->Disposing) {
+			const SOCKET prevSocket = df->ClientSocket;
+			if (prevSocket != INVALID_SOCKET && prevSocket != clientSocket) {
+				// Причина: новое подключение с тем же IP должно мгновенно "выбивать" старый recv()-поток,
+				// иначе он может висеть до SO_RCVTIMEO и держать ресурсы/путать диагностику.
+				// Важно: closesocket(prevSocket) здесь не делаем, чтобы избежать двойного closesocket
+				// (старый recv()-поток сам закроет свой сокет на выходе).
+				shutdown(prevSocket, SD_BOTH);
+				GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+					"Information: Reconnect: drop old socket {0}",
+					clientIPAddress)));
+			}
+
 			df->ClientIP = clientIPAddress;
 			df->ClientSocket = clientSocket;
+
+			if (isReconnect && df->IsHandleCreated) {
+				// Важно: команды отправляем из UI-потока формы (они синхронно ждут ответ и обновляют UI).
+				df->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(df, &DataForm::OnReconnectSendStartupCommands));
+			}
 		}
 	}
 	catch (...) {}
 
-	int timeout = 30*60*1000;	// Тайм-аут в миллисекундах (1000 мс = 1 секунда), если сообщения нет, то соединение разрывается
+	// Причина: SO_RCVTIMEO используется как "тик", чтобы recv()-поток мог выйти, если этот сокет уже не актуален
+	// (например, пришло переподключение и форма получила новый ClientSocket). Закрытие формы по истечении 5 минут
+	// без телеметрии делает DataForm::inactivityTimer.
+	int timeout = 5 * 60 * 1000;	// 5 минут
 
 	// Установка тайм-аута для операций чтения (recv)
 	setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
@@ -306,10 +327,22 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		if (bytesReceived == SOCKET_ERROR) {
 			int error = WSAGetLastError();
 			if (error == WSAETIMEDOUT) {
-				if (form != nullptr && !form->IsDisposed) {
-					form->SetMessage_TextValue("Attention: Recv timed out");
-					GlobalLogger::LogMessage("Attention: Recv timed out");
+				// Причина: таймаут здесь используется как "тик" — даём шанс выйти, если этот сокет уже не актуален
+				// (например, пришло переподключение и форма получила новый ClientSocket).
+				try {
+					DataForm^ currentForm = DataForm::GetFormByGuid(guid);
+					if (currentForm == nullptr || currentForm->IsDisposed || currentForm->Disposing) {
+						break;
+					}
+					if (currentForm->ClientSocket != clientSocket) {
+						break;
+					}
 				}
+				catch (...) {
+					break;
+				}
+
+				continue;
 			}
 			else {
 				if (form != nullptr && !form->IsDisposed) {
@@ -478,7 +511,11 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	try {
 		DataForm^ form2 = DataForm::GetFormByGuid(guid);
 		if (form2 != nullptr && !form2->IsDisposed && !form2->Disposing) {
-			form2->ClientSocket = INVALID_SOCKET;
+			// Важно: не трогаем форму, если за время работы этого потока пришло переподключение
+			// и форма уже указывает на новый сокет.
+			if (form2->ClientSocket == clientSocket) {
+				form2->ClientSocket = INVALID_SOCKET;
+			}
 		}
 	}
 	catch (...) {}

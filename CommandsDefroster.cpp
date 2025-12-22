@@ -194,6 +194,10 @@ void ProjectServerW::DataForm::SendResetCommand() {
         Label_Commands->ForeColor = System::Drawing::Color::Blue;
         GlobalLogger::LogMessage("Information: Команда RESET успешно выполнена контроллером");
 
+        // Важно: после RESET контроллер перезагружается и некоторое время не читает UART4.
+        // Поэтому планируем отложенную отправку GET_VERSION и SET_INTERVAL с повторами.
+        SchedulePostResetInit();
+
         // Восстанавливаем цвет через 3 секунды с помощью таймера
         System::Windows::Forms::Timer^ colorTimer = gcnew System::Windows::Forms::Timer();
         colorTimer->Interval = 3000;
@@ -228,7 +232,7 @@ void ProjectServerW::DataForm::SendResetCommand() {
 }
 
 // Метод для запроса версии прошивки контроллера
-void ProjectServerW::DataForm::SendVersionRequest() {
+bool ProjectServerW::DataForm::SendVersionRequest() {
     // Создаем команду GET_VERSION
     Command cmd;
     cmd.commandType = CmdType::REQUEST;
@@ -262,10 +266,12 @@ void ProjectServerW::DataForm::SendVersionRequest() {
             Label_Commands->Text = "Версия прошивки получена: " + version;
             Label_Commands->ForeColor = System::Drawing::Color::Green;
             GlobalLogger::LogMessage(ConvertToStdString("Information: Версия прошивки контроллера: " + version));
+            return true;
         }
         else {
             Label_Commands->Text = "Версия получена, но данные пусты";
             Label_Commands->ForeColor = System::Drawing::Color::Orange;
+            return false;
         }
 
         // Восстанавливаем цвет через 3 секунды в обратном таймере
@@ -282,17 +288,18 @@ void ProjectServerW::DataForm::SendVersionRequest() {
 
         Label_Commands->Text = "[!] Не удалось получить версию прошивки";
         Label_Commands->ForeColor = System::Drawing::Color::Red;
+        return false;
     }
 }
 
-void ProjectServerW::DataForm::SendSetIntervalCommand(int intervalSeconds) {
+bool ProjectServerW::DataForm::SendSetIntervalCommand(int intervalSeconds) {
     // Why: persist the chosen interval even when the controller is temporarily offline.
     SaveSettings();
 
     if (intervalSeconds <= 0) {
         Label_Commands->Text = "[!] Интервал должен быть больше 0";
         Label_Commands->ForeColor = System::Drawing::Color::Orange;
-        return;
+        return false;
     }
 
     // Why: firmware expects uint16 payload for SET_INTERVAL (2 bytes), not int32.
@@ -312,7 +319,9 @@ void ProjectServerW::DataForm::SendSetIntervalCommand(int intervalSeconds) {
         colorTimer->Interval = 3000;
         colorTimer->Tick += gcnew EventHandler(this, &DataForm::RestoreLabelCommandsColor);
         colorTimer->Start();
+        return true;
     }
+    return false;
 }
 
 void ProjectServerW::DataForm::SendCommandInfoRequest() {

@@ -55,9 +55,29 @@ namespace ProjectServerW {
 				void set(System::String^ value) { formGuid = value; }
 			}
 
+			// Вызывается при переподключении клиента (reuse формы по IP).
+			// Важно: запускать только в UI-потоке формы (через BeginInvoke), т.к. внутри есть UI и синхронное ожидание ответа.
+			void OnReconnectSendStartupCommands();
+
 			property SOCKET ClientSocket {
 				SOCKET get() { return clientSocket; }
-				void set(SOCKET value) { clientSocket = value; }
+				void set(SOCKET value) {
+					// Важно: setter вызывается из разных потоков (recv, telemetry worker, UI).
+					// Поэтому здесь нельзя трогать UI (Timer/Close/Invoke). Только фиксируем состояние соединения.
+					const SOCKET prev = clientSocket;
+					clientSocket = value;
+
+					// Если сокет потерян — запоминаем момент, от которого считаем 30 минут ожидания "своего" клиента.
+					// Если сокет снова валиден — сбрасываем ожидание.
+					if (value == INVALID_SOCKET) {
+						if (prev != INVALID_SOCKET) {
+							System::Threading::Interlocked::Exchange(disconnectedSinceTicks, System::DateTime::Now.Ticks);
+						}
+					}
+					else {
+						System::Threading::Interlocked::Exchange(disconnectedSinceTicks, 0);
+					}
+				}
 			}
 
 		private:
@@ -79,6 +99,17 @@ namespace ProjectServerW {
 			SOCKET lastTelemetrySocket;        // Why: detect reconnects (new TCP socket) and log data collection resume once per reconnect.
 			bool reconnectFixationLogPending;  // Why: log "start of data collection after reconnect" on the first valid telemetry packet.
 			System::Windows::Forms::Timer^ inactivityTimer;
+			// Время, когда форма перешла в режим ожидания переподключения (после потери сокета).
+			// Храним ticks для безопасного чтения/записи через Interlocked из разных потоков.
+			long long disconnectedSinceTicks;
+			// Защита от повторной отправки стартовых команд на одном и том же TCP-сокете.
+			SOCKET lastStartupCommandsSocket;
+			// Инициализация после RESET: контроллер перезагружается и некоторое время не читает UART4.
+			// Поэтому отправляем GET_VERSION + SET_INTERVAL с задержкой и повторами, пока не начнёт отвечать.
+			bool postResetInitPending;
+			System::DateTime postResetInitDeadline;
+			int postResetInitAttempt;
+			System::Windows::Forms::Timer^ postResetInitTimer;
 			// Массив наименований битовых полей для каждого типа сенсора
 			// Индекс первого уровня - тип сенсора, второго уровня - номер бита
 			ManualResetEvent^ exportCompletedEvent;
@@ -188,6 +219,12 @@ namespace ProjectServerW {
 				cmdInfoProbeInProgress = false;
 				lastTelemetrySocket = INVALID_SOCKET;
 				reconnectFixationLogPending = false;
+				disconnectedSinceTicks = 0;
+				lastStartupCommandsSocket = INVALID_SOCKET;
+				postResetInitPending = false;
+				postResetInitDeadline = DateTime::MinValue;
+				postResetInitAttempt = 0;
+				postResetInitTimer = nullptr;
 
 				// Критично: устройство может быть выключено/включено; если переподключится в пределах 30 минут — продолжаем ту же таблицу.
 				// Если телеметрии нет 30 минут — финализируем (экспорт) и закрываем форму.
@@ -882,8 +919,8 @@ private: System::ComponentModel::IContainer^ components;
 		void SendStopCommand(); // Метод для отправки команды STOP клиенту
 		void SendResetCommand(); // Метод для отправки команды RESET клиенту
 			void SendCommandInfoRequest(); // Метод для запроса статуса обработки последней команды (device-side audit)
-		void SendVersionRequest(); // Метод для запроса версии прошивки контроллера
-		void SendSetIntervalCommand(int intervalSeconds); // Set measurement interval (seconds)
+		bool SendVersionRequest(); // Метод для запроса версии прошивки контроллера
+		bool SendSetIntervalCommand(int intervalSeconds); // Set measurement interval (seconds)
 		void UpdateVersionLabelInternal(); // Вспомогательный метод для обновления label_Version из UI потока
 		
 		// Методы для обработки ответов от контроллера
@@ -903,6 +940,8 @@ private: System::ComponentModel::IContainer^ components;
 		private: 
 			void ScheduleCommandInfoProbe(System::String^ reason);
 			void ExecuteCommandInfoProbe();
+			void SchedulePostResetInit();
+			void OnPostResetInitTimerTick(System::Object^ sender, System::EventArgs^ e);
 			void SaveSettings();
 			void LoadSettings();
 			void UpdateDirectoryTextBox(String^ path);

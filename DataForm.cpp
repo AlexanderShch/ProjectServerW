@@ -493,6 +493,14 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
             
             // Автоматически запрашиваем версию прошивки контроллера после первого пакета
             SendVersionRequest();
+
+            // После запроса версии синхронизируем интервал измерений из настроек.
+            // Почему: устройство могло быть перезапущено/перепрошито и вернуться к дефолту, а UI ожидает применение настроек при подключении.
+            int intervalSeconds = 10;
+            if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
+                intervalSeconds = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
+            }
+            SendSetIntervalCommand(intervalSeconds);
         }
 
         // Если бит "Work" переходит из 0 в 1 (дефростер is ON)
@@ -659,18 +667,61 @@ void ProjectServerW::DataForm::OnWorkStopFinalizeTimerTick(Object^ sender, Event
 
 void ProjectServerW::DataForm::OnInactivityTimerTick(Object^ sender, EventArgs^ e) {
     try {
-        if (inactivityCloseRequested || !hasTelemetry || lastTelemetryTime == DateTime::MinValue) {
+        if (inactivityCloseRequested) {
             return;
         }
 
-        TimeSpan idle = DateTime::Now.Subtract(lastTelemetryTime);
+        DateTime now = DateTime::Now;
+
+        // 1) Режим ожидания переподключения "своего" клиента (по IP) после потери сокета.
+        // Требование: если форма открыта и за 30 минут не пришёл клиент с тем же IP — закрыть форму,
+        // чтобы новый клиент с другим IP получал новую форму, а "чужая" форма не зависала бесконечно.
+        if (ClientSocket == INVALID_SOCKET && !String::IsNullOrEmpty(ClientIP)) {
+            const long long ticks = System::Threading::Interlocked::Read(disconnectedSinceTicks);
+            if (ticks != 0) {
+                DateTime disconnectedSince(ticks);
+                TimeSpan waited = now.Subtract(disconnectedSince);
+                if (waited.TotalMinutes >= 30) {
+                    GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+                        "Information: Нет переподключения клиента {0} {1:F1} минут. Закрываем ожидающую DataForm.",
+                        ClientIP,
+                        waited.TotalMinutes)));
+
+                    // Если телеметрии не было — экспортировать нечего, просто закрываем.
+                    if (!hasTelemetry) {
+                        this->Close();
+                        return;
+                    }
+
+                    // Иначе используем тот же путь, что и для таймаута неактивности: экспорт + закрытие.
+                    // Сначала запускаем экспорт; затем помечаем как экспортированное и просим закрытие,
+                    // чтобы не потерять экспорт из-за временного guard.
+                    if (!StartExcelExportThread(true)) {
+                        GlobalLogger::LogMessage("Warning: Экспорт не стартовал по таймауту ожидания переподключения; повторим на следующем тике.");
+                        return;
+                    }
+
+                    inactivityCloseRequested = true;
+                    dataExportedToExcel = true;
+                    this->Close();
+                    return;
+                }
+            }
+        }
+
+        // 2) Таймаут по отсутствию телеметрии (для активной ранее сессии).
+        if (!hasTelemetry || lastTelemetryTime == DateTime::MinValue) {
+            return;
+        }
+
+        TimeSpan idle = now.Subtract(lastTelemetryTime);
         if (idle.TotalMinutes < 30) {
             return;
         }
 
         // Критично: финализируем текущий файл сессии (не создаём EmergencyData-файлы).
         if (dataCollectionEndTime == DateTime::MinValue) {
-            dataCollectionEndTime = DateTime::Now;
+            dataCollectionEndTime = now;
         }
 
         GlobalLogger::LogMessage(ConvertToStdString(String::Format(
@@ -691,6 +742,126 @@ void ProjectServerW::DataForm::OnInactivityTimerTick(Object^ sender, EventArgs^ 
     }
     catch (Exception^ ex) {
         GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in OnInactivityTimerTick: " + ex->ToString()));
+    }
+}
+
+void ProjectServerW::DataForm::OnReconnectSendStartupCommands() {
+    try {
+        if (this == nullptr || this->IsDisposed || this->Disposing || !this->IsHandleCreated) {
+            return;
+        }
+
+        if (ClientSocket == INVALID_SOCKET) {
+            return;
+        }
+
+        // Защита: при бурстах переподключений не спамим одинаковыми командами на один и тот же сокет.
+        // Важно: фиксируем сокет только после успешного выполнения обоих команд, чтобы разрешить повтор,
+        // если устройство ещё не готово читать UART4.
+        if (lastStartupCommandsSocket == ClientSocket) {
+            return;
+        }
+
+        // Запрашиваем версию и настраиваем интервал измерений из UI-настроек.
+        const bool okVersion = SendVersionRequest();
+
+        int intervalSeconds = 10;
+        if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
+            intervalSeconds = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
+        }
+        const bool okInterval = SendSetIntervalCommand(intervalSeconds);
+
+        if (okVersion && okInterval) {
+            lastStartupCommandsSocket = ClientSocket;
+            postResetInitPending = false;
+        }
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in OnReconnectSendStartupCommands: " + ex->ToString()));
+    }
+    catch (...) {
+        GlobalLogger::LogMessage("Error: Unknown exception in OnReconnectSendStartupCommands");
+    }
+}
+
+void ProjectServerW::DataForm::SchedulePostResetInit() {
+    if (this == nullptr || this->IsDisposed || this->Disposing) {
+        return;
+    }
+
+    postResetInitPending = true;
+    postResetInitAttempt = 0;
+    postResetInitDeadline = DateTime::Now.AddSeconds(60);
+
+    // Важно: даже если сокет после RESET не поменялся, мы должны повторно отправить версию/интервал.
+    lastStartupCommandsSocket = INVALID_SOCKET;
+
+    if (postResetInitTimer == nullptr) {
+        postResetInitTimer = gcnew System::Windows::Forms::Timer();
+        postResetInitTimer->Tick += gcnew EventHandler(this, &DataForm::OnPostResetInitTimerTick);
+    }
+
+    postResetInitTimer->Stop();
+    postResetInitTimer->Interval = 7000; // 7 секунд на перезапуск контроллера до чтения UART4
+    postResetInitTimer->Start();
+}
+
+void ProjectServerW::DataForm::OnPostResetInitTimerTick(System::Object^ sender, System::EventArgs^ e) {
+    try {
+        if (postResetInitTimer != nullptr) {
+            postResetInitTimer->Stop();
+        }
+
+        if (!postResetInitPending) {
+            return;
+        }
+
+        if (this == nullptr || this->IsDisposed || this->Disposing || !this->IsHandleCreated) {
+            postResetInitPending = false;
+            return;
+        }
+
+        DateTime now = DateTime::Now;
+        if (postResetInitDeadline != DateTime::MinValue && now >= postResetInitDeadline) {
+            postResetInitPending = false;
+            return;
+        }
+
+        if (ClientSocket == INVALID_SOCKET) {
+            // Ждём переподключение TCP (контроллер может перезагружаться через мост/АП).
+            if (postResetInitTimer != nullptr) {
+                postResetInitTimer->Interval = 2000;
+                postResetInitTimer->Start();
+            }
+            return;
+        }
+
+        postResetInitAttempt++;
+
+        const bool okVersion = SendVersionRequest();
+        int intervalSeconds = 10;
+        if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
+            intervalSeconds = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
+        }
+        const bool okInterval = SendSetIntervalCommand(intervalSeconds);
+
+        if (okVersion && okInterval) {
+            postResetInitPending = false;
+            lastStartupCommandsSocket = ClientSocket;
+            return;
+        }
+
+        // Повторяем до дедлайна; контроллер может поднять UART позже, чем TCP.
+        if (postResetInitTimer != nullptr) {
+            postResetInitTimer->Interval = 5000;
+            postResetInitTimer->Start();
+        }
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in OnPostResetInitTimerTick: " + ex->ToString()));
+    }
+    catch (...) {
+        GlobalLogger::LogMessage("Error: Unknown exception in OnPostResetInitTimerTick");
     }
 }
 
