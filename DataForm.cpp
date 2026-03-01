@@ -1044,6 +1044,285 @@ void ProjectServerW::DataForm::UpdateDirectoryTextBox(String^ path) {
     }
 }
 
+// Default table: Parameter -> (WarmUp, Plateau, Finish) from attached spec. Each Default goes into column matching Phase.
+void ProjectServerW::DataForm::LoadDataGridView1Defaults() {
+    if (dataGridView1 == nullptr || dataGridView1->IsDisposed) return;
+    dataGridView1->Rows->Clear();
+    cli::array<Object^>^ row = gcnew cli::array<Object^>(4);
+    row[0] = "fishHotMax_C";         row[1] = "20";   row[2] = "20";   row[3] = "20";   dataGridView1->Rows->Add(row);
+    row[0] = "supplySet_C";          row[1] = "30";   row[2] = "26";   row[3] = "22";   dataGridView1->Rows->Add(row);
+    row[0] = "supplyMax_C";          row[1] = "35";   row[2] = "30";   row[3] = "26";   dataGridView1->Rows->Add(row);
+    row[0] = "fishDeltaMax_C";       row[1] = "6";    row[2] = "5";    row[3] = "4";    dataGridView1->Rows->Add(row);
+    row[0] = "fishHotRateMax_Cps";  row[1] = "0.02"; row[2] = "0.015"; row[3] = "0.01"; dataGridView1->Rows->Add(row);
+    row[0] = "returnTargetRH_percent"; row[1] = "85"; row[2] = "92"; row[3] = "85"; dataGridView1->Rows->Add(row);
+}
+
+// Default table: Parameter2, Description, Value from attached config parameters.
+void ProjectServerW::DataForm::LoadDataGridView2Defaults() {
+    if (dataGridView2 == nullptr || dataGridView2->IsDisposed) return;
+    dataGridView2->Rows->Clear();
+    dataGridView2->Rows->Add("Sensor0 use in defrost", "Use sensor 0 in algorithm", "1");
+    dataGridView2->Rows->Add("Sensor1 use in defrost", "Use sensor 1 in algorithm", "1");
+    dataGridView2->Rows->Add("Sensor2 use in defrost", "Use sensor 2 in algorithm", "1");
+    dataGridView2->Rows->Add("Sensor3 use in defrost", "Use sensor 3 in algorithm", "1");
+    dataGridView2->Rows->Add("Sensor4 use in defrost", "Use sensor 4 in algorithm", "1");
+    dataGridView2->Rows->Add("Sensor5 use in defrost", "Use sensor 5 in algorithm", "1");
+    dataGridView2->Rows->Add("Sensor6 use in defrost", "Use sensor 6 in algorithm", "1");
+    dataGridView2->Rows->Add("leftRightTrimGain", "Heater trim per degC difference", "0.08");
+    dataGridView2->Rows->Add("leftRightTrimMaxEq", "Max trim B± heater equivalent", "0.6");
+    dataGridView2->Rows->Add("wDeadband_kgkg", "Humidity deadband", "0.0008");
+    dataGridView2->Rows->Add("outDamperTimer_s", "Damper open time", "10");
+    dataGridView2->Rows->Add("outFanDelay_s", "Fan delay after damper open", "5");
+    dataGridView2->Rows->Add("tenMinHold_s", "Heater min hold between switches", "10");
+    dataGridView2->Rows->Add("injMinHold_s", "Injector min hold between switches", "5");
+    dataGridView2->Rows->Add("outHold_s", "Damper and exhaust fan min hold", "15");
+}
+
+void ProjectServerW::DataForm::LoadDataGridView2FromFile() {
+    if (dataGridView2 == nullptr || dataGridView2->IsDisposed) return;
+    try {
+        String^ appPath = System::IO::Path::GetDirectoryName(System::Windows::Forms::Application::ExecutablePath);
+        String^ settingsPath = System::IO::Path::Combine(appPath, "ExcelSettings.txt");
+        if (!System::IO::File::Exists(settingsPath)) {
+            LoadDataGridView2Defaults();
+            dataGridView2Dirty = false;
+            return;
+        }
+        cli::array<String^>^ lines = System::IO::File::ReadAllLines(settingsPath);
+        bool inSection = false;
+        dataGridView2->Rows->Clear();
+        for (int i = 0; i < lines->Length; i++) {
+            String^ line = lines[i]->Trim();
+            if (line->Equals("[DataGridView2]", StringComparison::OrdinalIgnoreCase)) {
+                inSection = true;
+                continue;
+            }
+            if (inSection) {
+                if (line->StartsWith("[")) break;
+                if (String::IsNullOrEmpty(line)) continue;
+                cli::array<String^>^ parts = line->Split('\t');
+                if (parts->Length >= 3) {
+                    dataGridView2->Rows->Add(parts[0]->Trim(), parts[1]->Trim(), parts[2]->Trim());
+                }
+            }
+        }
+        if (dataGridView2->Rows->Count == 0) {
+            LoadDataGridView2Defaults();
+        }
+    }
+    catch (Exception^) {
+        LoadDataGridView2Defaults();
+    }
+    dataGridView2Dirty = false;
+}
+
+void ProjectServerW::DataForm::SaveDataGridView2ToFile() {
+    if (dataGridView2 == nullptr || dataGridView2->IsDisposed) return;
+    try {
+        String^ appPath = System::IO::Path::GetDirectoryName(System::Windows::Forms::Application::ExecutablePath);
+        String^ settingsPath = System::IO::Path::Combine(appPath, "ExcelSettings.txt");
+        cli::array<String^>^ allLines = System::IO::File::Exists(settingsPath) ? System::IO::File::ReadAllLines(settingsPath) : gcnew cli::array<String^>(0);
+        System::Collections::Generic::List<String^>^ outLines = gcnew System::Collections::Generic::List<String^>();
+        bool sectionReplaced = false;
+        for (int i = 0; i < allLines->Length; i++) {
+            String^ line = allLines[i];
+            String^ trimmed = line->Trim();
+            if (trimmed->Equals("[DataGridView2]", StringComparison::OrdinalIgnoreCase)) {
+                outLines->Add("[DataGridView2]");
+                for (int r = 0; r < dataGridView2->Rows->Count; r++) {
+                    DataGridViewRow^ row = dataGridView2->Rows[r];
+                    if (row->IsNewRow) continue;
+                    Object^ v0 = row->Cells["Parameter2"]->Value;
+                    Object^ v1 = row->Cells["Description"]->Value;
+                    Object^ v2 = row->Cells["Value"]->Value;
+                    String^ s0 = v0 != nullptr ? v0->ToString() : "";
+                    String^ s1 = v1 != nullptr ? v1->ToString() : "";
+                    String^ s2 = v2 != nullptr ? v2->ToString() : "";
+                    outLines->Add(s0 + "\t" + s1 + "\t" + s2);
+                }
+                sectionReplaced = true;
+                i++;
+                while (i < allLines->Length && !allLines[i]->Trim()->StartsWith("[")) i++;
+                i--;
+                continue;
+            }
+            outLines->Add(line);
+        }
+        if (!sectionReplaced) {
+            outLines->Add("[DataGridView2]");
+            for (int r = 0; r < dataGridView2->Rows->Count; r++) {
+                DataGridViewRow^ row = dataGridView2->Rows[r];
+                if (row->IsNewRow) continue;
+                Object^ v0 = row->Cells["Parameter2"]->Value;
+                Object^ v1 = row->Cells["Description"]->Value;
+                Object^ v2 = row->Cells["Value"]->Value;
+                String^ s0 = v0 != nullptr ? v0->ToString() : "";
+                String^ s1 = v1 != nullptr ? v1->ToString() : "";
+                String^ s2 = v2 != nullptr ? v2->ToString() : "";
+                outLines->Add(s0 + "\t" + s1 + "\t" + s2);
+            }
+        }
+        System::IO::File::WriteAllLines(settingsPath, outLines->ToArray());
+        dataGridView2Dirty = false;
+    }
+    catch (Exception^ ex) {
+        MessageBox::Show("Не удалось сохранить данные таблицы: " + ex->Message);
+    }
+}
+
+void ProjectServerW::DataForm::LoadDataGridView1FromFile() {
+    if (dataGridView1 == nullptr || dataGridView1->IsDisposed) return;
+    try {
+        String^ appPath = System::IO::Path::GetDirectoryName(System::Windows::Forms::Application::ExecutablePath);
+        String^ settingsPath = System::IO::Path::Combine(appPath, "ExcelSettings.txt");
+        if (!System::IO::File::Exists(settingsPath)) {
+            LoadDataGridView1Defaults();
+            return;
+        }
+        cli::array<String^>^ lines = System::IO::File::ReadAllLines(settingsPath);
+        bool inSection = false;
+        dataGridView1->Rows->Clear();
+        for (int i = 0; i < lines->Length; i++) {
+            String^ line = lines[i]->Trim();
+            if (line->Equals("[DataGridView1]", StringComparison::OrdinalIgnoreCase)) {
+                inSection = true;
+                continue;
+            }
+            if (inSection) {
+                if (line->StartsWith("[")) break;
+                if (String::IsNullOrEmpty(line)) continue;
+                cli::array<String^>^ parts = line->Split('\t');
+                if (parts->Length >= 4) {
+                    dataGridView1->Rows->Add(parts[0]->Trim(), parts[1]->Trim(), parts[2]->Trim(), parts[3]->Trim());
+                }
+            }
+        }
+        if (dataGridView1->Rows->Count == 0) {
+            LoadDataGridView1Defaults();
+        }
+    }
+    catch (Exception^) {
+        LoadDataGridView1Defaults();
+    }
+    dataGridView1Dirty = false;
+}
+
+void ProjectServerW::DataForm::SaveDataGridView1ToFile() {
+    if (dataGridView1 == nullptr || dataGridView1->IsDisposed) return;
+    try {
+        String^ appPath = System::IO::Path::GetDirectoryName(System::Windows::Forms::Application::ExecutablePath);
+        String^ settingsPath = System::IO::Path::Combine(appPath, "ExcelSettings.txt");
+        cli::array<String^>^ allLines = System::IO::File::Exists(settingsPath) ? System::IO::File::ReadAllLines(settingsPath) : gcnew cli::array<String^>(0);
+        System::Collections::Generic::List<String^>^ outLines = gcnew System::Collections::Generic::List<String^>();
+        bool sectionReplaced = false;
+        for (int i = 0; i < allLines->Length; i++) {
+            String^ line = allLines[i];
+            String^ trimmed = line->Trim();
+            if (trimmed->Equals("[DataGridView1]", StringComparison::OrdinalIgnoreCase)) {
+                outLines->Add("[DataGridView1]");
+                for (int r = 0; r < dataGridView1->Rows->Count; r++) {
+                    DataGridViewRow^ row = dataGridView1->Rows[r];
+                    if (row->IsNewRow) continue;
+                    Object^ v0 = row->Cells["Parameter"]->Value;
+                    Object^ v1 = row->Cells["WarmUP"]->Value;
+                    Object^ v2 = row->Cells["Plateau"]->Value;
+                    Object^ v3 = row->Cells["Finish"]->Value;
+                    String^ s0 = v0 != nullptr ? v0->ToString() : "";
+                    String^ s1 = v1 != nullptr ? v1->ToString() : "";
+                    String^ s2 = v2 != nullptr ? v2->ToString() : "";
+                    String^ s3 = v3 != nullptr ? v3->ToString() : "";
+                    outLines->Add(s0 + "\t" + s1 + "\t" + s2 + "\t" + s3);
+                }
+                sectionReplaced = true;
+                i++;
+                while (i < allLines->Length && !allLines[i]->Trim()->StartsWith("[")) i++;
+                i--;
+                continue;
+            }
+            outLines->Add(line);
+        }
+        if (!sectionReplaced) {
+            outLines->Add("[DataGridView1]");
+            for (int r = 0; r < dataGridView1->Rows->Count; r++) {
+                DataGridViewRow^ row = dataGridView1->Rows[r];
+                if (row->IsNewRow) continue;
+                Object^ v0 = row->Cells["Parameter"]->Value;
+                Object^ v1 = row->Cells["WarmUP"]->Value;
+                Object^ v2 = row->Cells["Plateau"]->Value;
+                Object^ v3 = row->Cells["Finish"]->Value;
+                String^ s0 = v0 != nullptr ? v0->ToString() : "";
+                String^ s1 = v1 != nullptr ? v1->ToString() : "";
+                String^ s2 = v2 != nullptr ? v2->ToString() : "";
+                String^ s3 = v3 != nullptr ? v3->ToString() : "";
+                outLines->Add(s0 + "\t" + s1 + "\t" + s2 + "\t" + s3);
+            }
+        }
+        System::IO::File::WriteAllLines(settingsPath, outLines->ToArray());
+        dataGridView1Dirty = false;
+    }
+    catch (Exception^ ex) {
+        MessageBox::Show("Не удалось сохранить данные таблицы: " + ex->Message);
+    }
+}
+
+// On entering tabPage3: load both grids from file. On leaving: ask to save if either grid was changed.
+System::Void ProjectServerW::DataForm::tabControl1_SelectedIndexChanged(System::Object^ sender, System::EventArgs^ e) {
+    TabControl^ tc = safe_cast<TabControl^>(sender);
+    if (tabControl1PrevTab == tabPage3 && tc->SelectedTab != tabPage3) {
+        if (dataGridView1Dirty || dataGridView2Dirty) {
+            System::Windows::Forms::DialogResult dr = MessageBox::Show(
+                "Сохранить изменения в ExcelSettings.txt?",
+                "Параметры",
+                MessageBoxButtons::YesNoCancel,
+                MessageBoxIcon::Question);
+            if (dr == System::Windows::Forms::DialogResult::Yes) {
+                SaveDataGridView1ToFile();
+                SaveDataGridView2ToFile();
+            }
+            else if (dr == System::Windows::Forms::DialogResult::Cancel) {
+                tc->SelectedTab = tabPage3;
+                tabControl1PrevTab = tabPage3;
+                return;
+            }
+        }
+        dataGridView1Dirty = false;
+        dataGridView2Dirty = false;
+    }
+    if (tc->SelectedTab == tabPage3) {
+        LoadDataGridView1FromFile();
+        LoadDataGridView2FromFile();
+    }
+    tabControl1PrevTab = tc->SelectedTab;
+}
+
+System::Void ProjectServerW::DataForm::dataGridView1_CellValueChanged(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e) {
+    if (e->RowIndex >= 0 && !dataGridView1->Rows[e->RowIndex]->IsNewRow)
+        dataGridView1Dirty = true;
+}
+
+System::Void ProjectServerW::DataForm::dataGridView1_RowChanged(System::Object^ sender, System::Windows::Forms::DataGridViewRowEventArgs^ e) {
+    dataGridView1Dirty = true;
+}
+
+System::Void ProjectServerW::DataForm::dataGridView2_CellValueChanged(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e) {
+    if (e->RowIndex >= 0 && dataGridView2 != nullptr && !dataGridView2->IsDisposed && e->RowIndex < dataGridView2->Rows->Count && !dataGridView2->Rows[e->RowIndex]->IsNewRow)
+        dataGridView2Dirty = true;
+}
+
+System::Void ProjectServerW::DataForm::dataGridView2_RowChanged(System::Object^ sender, System::Windows::Forms::DataGridViewRowEventArgs^ e) {
+    dataGridView2Dirty = true;
+}
+
+System::Void ProjectServerW::DataForm::buttonLoadFromFile_Click(System::Object^ sender, System::EventArgs^ e) {
+    LoadDataGridView1FromFile();
+    LoadDataGridView2FromFile();
+}
+
+System::Void ProjectServerW::DataForm::buttonSaveToFile_Click(System::Object^ sender, System::EventArgs^ e) {
+    SaveDataGridView1ToFile();
+    SaveDataGridView2ToFile();
+}
+
 //*******************************************************************************************
 // Реализация метода инициализации названий битовых полей
 void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::array<String^>^>^>& namesRef) {
