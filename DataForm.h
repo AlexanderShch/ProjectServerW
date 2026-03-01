@@ -1,4 +1,5 @@
 #pragma once
+#include "Commands.h"   // первым: Command, CommandResponse, DefrostParamValue — полные определения до любых заголовков, использующих их в объявлениях
 #include "SServer.h"
 
 #include <mutex>
@@ -9,10 +10,6 @@
 
 // Количество датчиков: TH дефростера (0-2) + датчики продукта (3, 4) + T корпуса (5) + MB_IO (6)
 constexpr uint8_t SQ = 7;
-
-// Forward declaration для избежания циклических зависимостей
-struct Command;
-struct CommandResponse;
 
 namespace ProjectServerW {
 
@@ -54,8 +51,8 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::DataGridViewTextBoxColumn^ Parameter2;
 	private: System::Windows::Forms::DataGridViewTextBoxColumn^ Description;
 	private: System::Windows::Forms::DataGridViewTextBoxColumn^ Value;
-	private: System::Windows::Forms::Button^ button3;
-	private: System::Windows::Forms::Button^ button2;
+	private: System::Windows::Forms::Button^ buttonWriteParameters;
+	private: System::Windows::Forms::Button^ buttonReadParameters;
 	private: System::Windows::Forms::Label^ label1;
 	private: System::Windows::Forms::Button^ buttonSaveToFile;
 
@@ -423,8 +420,8 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage3 = (gcnew System::Windows::Forms::TabPage());
 				this->buttonLoadFromFile = (gcnew System::Windows::Forms::Button());
 				this->label2 = (gcnew System::Windows::Forms::Label());
-				this->button3 = (gcnew System::Windows::Forms::Button());
-				this->button2 = (gcnew System::Windows::Forms::Button());
+				this->buttonWriteParameters = (gcnew System::Windows::Forms::Button());
+				this->buttonReadParameters = (gcnew System::Windows::Forms::Button());
 				this->label1 = (gcnew System::Windows::Forms::Label());
 				this->buttonSaveToFile = (gcnew System::Windows::Forms::Button());
 				this->dataGridView2 = (gcnew System::Windows::Forms::DataGridView());
@@ -856,8 +853,8 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				this->tabPage3->Controls->Add(this->buttonLoadFromFile);
 				this->tabPage3->Controls->Add(this->label2);
-				this->tabPage3->Controls->Add(this->button3);
-				this->tabPage3->Controls->Add(this->button2);
+				this->tabPage3->Controls->Add(this->buttonWriteParameters);
+				this->tabPage3->Controls->Add(this->buttonReadParameters);
 				this->tabPage3->Controls->Add(this->label1);
 				this->tabPage3->Controls->Add(this->buttonSaveToFile);
 				this->tabPage3->Controls->Add(this->dataGridView2);
@@ -889,23 +886,25 @@ private: System::ComponentModel::IContainer^ components;
 				this->label2->Text = L"Файл настроек:";
 				this->label2->TextAlign = System::Drawing::ContentAlignment::TopCenter;
 				// 
-				// button3
+				// buttonWriteParameters
 				// 
-				this->button3->Location = System::Drawing::Point(860, 27);
-				this->button3->Name = L"button3";
-				this->button3->Size = System::Drawing::Size(117, 36);
-				this->button3->TabIndex = 5;
-				this->button3->Text = L"Записать";
-				this->button3->UseVisualStyleBackColor = true;
+				this->buttonWriteParameters->Location = System::Drawing::Point(860, 27);
+				this->buttonWriteParameters->Name = L"buttonWriteParameters";
+				this->buttonWriteParameters->Size = System::Drawing::Size(117, 36);
+				this->buttonWriteParameters->TabIndex = 5;
+				this->buttonWriteParameters->Text = L"Записать параметры";
+				this->buttonWriteParameters->UseVisualStyleBackColor = true;
+				this->buttonWriteParameters->Click += gcnew System::EventHandler(this, &DataForm::buttonWriteParameters_Click);
 				// 
-				// button2
+				// buttonReadParameters
 				// 
-				this->button2->Location = System::Drawing::Point(714, 27);
-				this->button2->Name = L"button2";
-				this->button2->Size = System::Drawing::Size(117, 36);
-				this->button2->TabIndex = 4;
-				this->button2->Text = L"Считать";
-				this->button2->UseVisualStyleBackColor = true;
+				this->buttonReadParameters->Location = System::Drawing::Point(714, 27);
+				this->buttonReadParameters->Name = L"buttonReadParameters";
+				this->buttonReadParameters->Size = System::Drawing::Size(117, 36);
+				this->buttonReadParameters->TabIndex = 4;
+				this->buttonReadParameters->Text = L"Считать параметры";
+				this->buttonReadParameters->UseVisualStyleBackColor = true;
+				this->buttonReadParameters->Click += gcnew System::EventHandler(this, &DataForm::buttonReadParameters_Click);
 				// 
 				// label1
 				// 
@@ -1127,25 +1126,29 @@ private: System::ComponentModel::IContainer^ components;
 
 			void EnableButton();
 			void OnExcelExportCompleted(bool enableButtonOnComplete);
-			bool SendCommand(const struct Command& cmd); // Универсальный метод отправки команды (имя определяется автоматически)
-			bool SendCommand(const struct Command& cmd, System::String^ commandName); // Универсальный метод отправки команды с явным именем
+			bool SendCommand(const ::Command& cmd); // Универсальный метод отправки команды (имя определяется автоматически)
+			bool SendCommand(const ::Command& cmd, System::String^ commandName); // Универсальный метод отправки команды с явным именем
 		void SendStartCommand(); // Метод для отправки команды START клиенту
 		void SendStopCommand(); // Метод для отправки команды STOP клиенту
 		void SendResetCommand(); // Метод для отправки команды RESET клиенту
 			void SendCommandInfoRequest(); // Метод для запроса статуса обработки последней команды (device-side audit)
 		bool SendVersionRequest(); // Метод для запроса версии прошивки контроллера
 		bool SendSetIntervalCommand(int intervalSeconds); // Set measurement interval (seconds)
+		// Defrost params API: exchange parameters with defroster (compatible with DefrostControl + CommandReceiver on controller)
+		bool SetDefrostParam(uint8_t groupId, uint8_t paramId, const ::DefrostParamValue& value);
+		bool GetDefrostParam(uint8_t groupId, uint8_t paramId, ::DefrostParamValue* outValue);
+		bool GetDefrostGroup(uint8_t groupId, uint8_t page, uint8_t* outData, uint8_t outCapacity, uint8_t* outLength);
 		void UpdateVersionLabelInternal(); // Вспомогательный метод для обновления label_Version из UI потока
 		
 		// Методы для обработки ответов от контроллера
 			void EnqueueResponse(cli::array<System::Byte>^ response); // Добавление ответа в очередь (вызывается из SServer)
-			bool ReceiveResponse(struct CommandResponse& response, int timeoutMs); // Прием ответа от контроллера с таймаутом
-			bool ReceiveResponse(struct CommandResponse& response, int timeoutMs, cli::array<System::Byte>^% rawResponse); // Receive response plus raw frame for diagnostics
-			bool ReceiveResponse(struct CommandResponse& response); // Прием ответа от контроллера (таймаут по умолчанию 1000 мс)
-			void ProcessResponse(const struct CommandResponse& response); // Обработка полученного ответа
+			bool ReceiveResponse(::CommandResponse& response, int timeoutMs); // Прием ответа от контроллера с таймаутом
+			bool ReceiveResponse(::CommandResponse& response, int timeoutMs, cli::array<System::Byte>^% rawResponse); // Receive response plus raw frame for diagnostics
+			bool ReceiveResponse(::CommandResponse& response); // Прием ответа от контроллера (таймаут по умолчанию 1000 мс)
+			void ProcessResponse(const ::CommandResponse& response); // Обработка полученного ответа
 			void RestoreLabelCommandsColor(System::Object^ sender, System::EventArgs^ e); // Восстановление цвета Label_Commands
-			bool SendCommandAndWaitResponse(const struct Command& cmd, struct CommandResponse& response, System::String^ commandName); // Отправка команды и ожидание ответа с именем
-			bool SendCommandAndWaitResponse(const struct Command& cmd, struct CommandResponse& response); // Отправка команды и ожидание ответа (имя автоматически)
+			bool SendCommandAndWaitResponse(const ::Command& cmd, ::CommandResponse& response, System::String^ commandName); // Отправка команды и ожидание ответа с именем
+			bool SendCommandAndWaitResponse(const ::Command& cmd, ::CommandResponse& response); // Отправка команды и ожидание ответа (имя автоматически)
 			
 			void buttonSTARTstate_TRUE();	// Метод для изменения статуса кнопок Старт и Стоп
 			void buttonSTOPstate_TRUE();	// Метод для изменения статуса кнопок Старт и Стоп
@@ -1179,7 +1182,7 @@ private: System::ComponentModel::IContainer^ components;
 				System::String^ commandName,
 				int timeoutMs,
 				int retries,
-				CommandResponse% lastResponse);
+				::CommandResponse% lastResponse);
 			bool StartExcelExportThread(bool isEmergency);
 			void OnInactivityTimerTick(Object^ sender, EventArgs^ e);
 		private: System::Void textBoxExcelDirectory_TextChanged(System::Object^ sender, System::EventArgs^ e) {
@@ -1227,6 +1230,8 @@ private: System::Void button_CMDINFO_Click(System::Object^ sender, System::Event
 	private: System::Void tabControl1_SelectedIndexChanged(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void buttonLoadFromFile_Click(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void buttonSaveToFile_Click(System::Object^ sender, System::EventArgs^ e);
+	private: System::Void buttonReadParameters_Click(System::Object^ sender, System::EventArgs^ e);
+	private: System::Void buttonWriteParameters_Click(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void dataGridView1_CellValueChanged(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e);
 	private: System::Void dataGridView1_RowChanged(System::Object^ sender, System::Windows::Forms::DataGridViewRowEventArgs^ e);
 	private: System::Void dataGridView2_CellValueChanged(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e);

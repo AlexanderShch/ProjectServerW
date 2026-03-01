@@ -1069,8 +1069,11 @@ void ProjectServerW::DataForm::LoadDataGridView2Defaults() {
     dataGridView2->Rows->Add("Sensor5 use in defrost", "Use sensor 5 in algorithm", "1");
     dataGridView2->Rows->Add("Sensor6 use in defrost", "Use sensor 6 in algorithm", "1");
     dataGridView2->Rows->Add("leftRightTrimGain", "Heater trim per degC difference", "0.08");
-    dataGridView2->Rows->Add("leftRightTrimMaxEq", "Max trim B� heater equivalent", "0.6");
+    dataGridView2->Rows->Add("leftRightTrimMaxEq", "Max trim heater equivalent", "0.6");
+    dataGridView2->Rows->Add("piKp", "PI proportional gain (supply temp)", "0.18");
+    dataGridView2->Rows->Add("piKi", "PI integral gain (supply temp)", "0.02");
     dataGridView2->Rows->Add("wDeadband_kgkg", "Humidity deadband", "0.0008");
+    dataGridView2->Rows->Add("injGain", "Injection gain (duty per kg/kg humidity error)", "900");
     dataGridView2->Rows->Add("outDamperTimer_s", "Damper open time", "10");
     dataGridView2->Rows->Add("outFanDelay_s", "Fan delay after damper open", "5");
     dataGridView2->Rows->Add("tenMinHold_s", "Heater min hold between switches", "10");
@@ -1313,6 +1316,45 @@ System::Void ProjectServerW::DataForm::dataGridView2_RowChanged(System::Object^ 
     dataGridView2Dirty = true;
 }
 
+// ������� ���� ���������� (Parameter2) �� �������� ����������: groupId, paramId, ��� (1=U8, 2=U16, 3=F32)
+static bool GetDefrostParamId(System::String^ paramName, uint8_t% outGroupId, uint8_t% outParamId, uint8_t% outValueType) {
+    if (paramName == nullptr) return false;
+    String^ p = paramName->Trim();
+    if (String::IsNullOrEmpty(p)) return false;
+    // ������: 1=SENSORS, 2=TEMPERATURE, 3=HUMIDITY, 4=PWM (��������� � DefrostControl.h)
+    if (p->StartsWith("Sensor", StringComparison::OrdinalIgnoreCase) && p->Contains("use in defrost")) {
+        int i = -1; if (p->Length >= 7) Int32::TryParse(p->Substring(6, 1), i);
+        if (i >= 0 && i <= 6) { outGroupId = 1; outParamId = (uint8_t)i; outValueType = DefrostParamType::U8; return true; }
+    }
+    if (p->Equals("leftRightTrimGain", StringComparison::OrdinalIgnoreCase)) { outGroupId = 2; outParamId = 15; outValueType = DefrostParamType::F32; return true; }
+    if (p->Equals("leftRightTrimMaxEq", StringComparison::OrdinalIgnoreCase)) { outGroupId = 2; outParamId = 16; outValueType = DefrostParamType::F32; return true; }
+    if (p->Equals("piKp", StringComparison::OrdinalIgnoreCase)) { outGroupId = 2; outParamId = 17; outValueType = DefrostParamType::F32; return true; }
+    if (p->Equals("piKi", StringComparison::OrdinalIgnoreCase)) { outGroupId = 2; outParamId = 18; outValueType = DefrostParamType::F32; return true; }
+    if (p->Equals("wDeadband_kgkg", StringComparison::OrdinalIgnoreCase)) { outGroupId = 3; outParamId = 3; outValueType = DefrostParamType::F32; return true; }
+    if (p->Equals("injGain", StringComparison::OrdinalIgnoreCase)) { outGroupId = 3; outParamId = 6; outValueType = DefrostParamType::F32; return true; }
+    if (p->Equals("outDamperTimer_s", StringComparison::OrdinalIgnoreCase)) { outGroupId = 3; outParamId = 4; outValueType = DefrostParamType::U16; return true; }
+    if (p->Equals("outFanDelay_s", StringComparison::OrdinalIgnoreCase)) { outGroupId = 3; outParamId = 5; outValueType = DefrostParamType::U16; return true; }
+    if (p->Equals("tenMinHold_s", StringComparison::OrdinalIgnoreCase)) { outGroupId = 4; outParamId = 0; outValueType = DefrostParamType::U16; return true; }
+    if (p->Equals("injMinHold_s", StringComparison::OrdinalIgnoreCase)) { outGroupId = 4; outParamId = 1; outValueType = DefrostParamType::U16; return true; }
+    if (p->Equals("outHold_s", StringComparison::OrdinalIgnoreCase)) { outGroupId = 4; outParamId = 2; outValueType = DefrostParamType::U16; return true; }
+    return false;
+}
+
+// dataGridView1: Parameter + phase (0=WarmUP, 1=Plateau, 2=Finish) -> groupId, paramId. DefrostControl TEMPERATURE 0-14, HUMIDITY 0-2.
+static bool GetDefrostParamIdGrid1(System::String^ paramName, int phaseIndex, uint8_t% outGroupId, uint8_t% outParamId) {
+    if (paramName == nullptr || phaseIndex < 0 || phaseIndex > 2) return false;
+    String^ p = paramName->Trim();
+    if (String::IsNullOrEmpty(p)) return false;
+    uint8_t ph = (uint8_t)phaseIndex;
+    if (p->Equals("fishHotMax_C", StringComparison::OrdinalIgnoreCase)) { outGroupId = 2; outParamId = ph; return true; }
+    if (p->Equals("supplySet_C", StringComparison::OrdinalIgnoreCase)) { outGroupId = 2; outParamId = (uint8_t)(3 + ph); return true; }
+    if (p->Equals("supplyMax_C", StringComparison::OrdinalIgnoreCase)) { outGroupId = 2; outParamId = (uint8_t)(6 + ph); return true; }
+    if (p->Equals("fishDeltaMax_C", StringComparison::OrdinalIgnoreCase)) { outGroupId = 2; outParamId = (uint8_t)(9 + ph); return true; }
+    if (p->Equals("fishHotRateMax_Cps", StringComparison::OrdinalIgnoreCase)) { outGroupId = 2; outParamId = (uint8_t)(12 + ph); return true; }
+    if (p->Equals("returnTargetRH_percent", StringComparison::OrdinalIgnoreCase)) { outGroupId = 3; outParamId = ph; return true; }
+    return false;
+}
+
 System::Void ProjectServerW::DataForm::buttonLoadFromFile_Click(System::Object^ sender, System::EventArgs^ e) {
     LoadDataGridView1FromFile();
     LoadDataGridView2FromFile();
@@ -1321,6 +1363,126 @@ System::Void ProjectServerW::DataForm::buttonLoadFromFile_Click(System::Object^ 
 System::Void ProjectServerW::DataForm::buttonSaveToFile_Click(System::Object^ sender, System::EventArgs^ e) {
     SaveDataGridView1ToFile();
     SaveDataGridView2ToFile();
+}
+
+System::Void ProjectServerW::DataForm::buttonReadParameters_Click(System::Object^ sender, System::EventArgs^ e) {
+    if ((dataGridView1 == nullptr || dataGridView1->IsDisposed) && (dataGridView2 == nullptr || dataGridView2->IsDisposed)) return;
+    if (ClientSocket == INVALID_SOCKET) {
+        MessageBox::Show("РќРµС‚ СЃРѕРµРґРёРЅРµРЅРёСЏ СЃ СѓСЃС‚СЂРѕР№СЃС‚РІРѕРј. РџРѕРґРєР»СЋС‡РёС‚РµСЃСЊ Рє РґРµС„СЂРѕСЃС‚РµСЂСѓ.");
+        if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+            Label_Commands->Text = "РЎС‡РёС‚Р°С‚СЊ СЃ СѓСЃС‚СЂРѕР№СЃС‚РІР°: РЅРµС‚ СЃРѕРµРґРёРЅРµРЅРёСЏ";
+            Label_Commands->ForeColor = System::Drawing::Color::Orange;
+        }
+        return;
+    }
+    int ok = 0, fail = 0;
+    if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
+        for (int r = 0; r < dataGridView1->Rows->Count; r++) {
+            DataGridViewRow^ row = dataGridView1->Rows[r];
+            if (row->IsNewRow) continue;
+            Object^ v0 = row->Cells["Parameter"]->Value;
+            String^ paramName = v0 != nullptr ? v0->ToString() : "";
+            for (int ph = 0; ph < 3; ph++) {
+                uint8_t g, id;
+                if (!GetDefrostParamIdGrid1(paramName, ph, g, id)) continue;
+                DefrostParamValue val;
+                if (!GetDefrostParam(g, id, &val)) { fail++; continue; }
+                String^ valueStr = (val.valueType == DefrostParamType::F32) ? val.value.f32.ToString(System::Globalization::CultureInfo::InvariantCulture) : "";
+                String^ colName = (ph == 0) ? "WarmUP" : (ph == 1) ? "Plateau" : "Finish";
+                row->Cells[colName]->Value = valueStr;
+                ok++;
+            }
+        }
+    }
+    if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
+        for (int r = 0; r < dataGridView2->Rows->Count; r++) {
+            DataGridViewRow^ row = dataGridView2->Rows[r];
+            if (row->IsNewRow) continue;
+            Object^ v0 = row->Cells["Parameter2"]->Value;
+            String^ paramName = v0 != nullptr ? v0->ToString() : "";
+            uint8_t g, id, vt;
+            if (!GetDefrostParamId(paramName, g, id, vt)) continue;
+            DefrostParamValue val;
+            if (!GetDefrostParam(g, id, &val)) { fail++; continue; }
+            String^ valueStr = "";
+            if (val.valueType == DefrostParamType::U8) valueStr = val.value.u8.ToString();
+            else if (val.valueType == DefrostParamType::U16) valueStr = val.value.u16.ToString();
+            else if (val.valueType == DefrostParamType::F32) valueStr = val.value.f32.ToString(System::Globalization::CultureInfo::InvariantCulture);
+            row->Cells["Value"]->Value = valueStr;
+            ok++;
+        }
+    }
+    if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+        Label_Commands->Text = String::Format("РЎС‡РёС‚Р°С‚СЊ СЃ СѓСЃС‚СЂРѕР№СЃС‚РІР°: Р·Р°РіСЂСѓР¶РµРЅРѕ {0} РїР°СЂР°РјРµС‚СЂРѕРІ" + (fail > 0 ? ", РѕС€РёР±РѕРє: " + fail : ""), ok);
+        Label_Commands->ForeColor = System::Drawing::Color::DarkGreen;
+    }
+    GlobalLogger::LogMessage(ConvertToStdString(String::Format("Information: Read {0} params from defroster" + (fail > 0 ? ", {1} failed" : ""), ok, fail)));
+}
+
+System::Void ProjectServerW::DataForm::buttonWriteParameters_Click(System::Object^ sender, System::EventArgs^ e) {
+    if ((dataGridView1 == nullptr || dataGridView1->IsDisposed) && (dataGridView2 == nullptr || dataGridView2->IsDisposed)) return;
+    if (ClientSocket == INVALID_SOCKET) {
+        MessageBox::Show("РќРµС‚ СЃРѕРµРґРёРЅРµРЅРёСЏ СЃ СѓСЃС‚СЂРѕР№СЃС‚РІРѕРј. РџРѕРґРєР»СЋС‡РёС‚РµСЃСЊ Рє РґРµС„СЂРѕСЃС‚РµСЂСѓ.");
+        if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+            Label_Commands->Text = "Р—Р°РїРёСЃР°С‚СЊ РІ СѓСЃС‚СЂРѕР№СЃС‚РІРѕ: РЅРµС‚ СЃРѕРµРґРёРЅРµРЅРёСЏ";
+            Label_Commands->ForeColor = System::Drawing::Color::Orange;
+        }
+        return;
+    }
+    int ok = 0, fail = 0;
+    if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
+        for (int r = 0; r < dataGridView1->Rows->Count; r++) {
+            DataGridViewRow^ row = dataGridView1->Rows[r];
+            if (row->IsNewRow) continue;
+            Object^ v0 = row->Cells["Parameter"]->Value;
+            String^ paramName = v0 != nullptr ? v0->ToString() : "";
+            for (int ph = 0; ph < 3; ph++) {
+                uint8_t g, id;
+                if (!GetDefrostParamIdGrid1(paramName, ph, g, id)) continue;
+                String^ colName = (ph == 0) ? "WarmUP" : (ph == 1) ? "Plateau" : "Finish";
+                Object^ vc = row->Cells[colName]->Value;
+                String^ valueStr = vc != nullptr ? vc->ToString() : "";
+                float f;
+                if (!Single::TryParse(valueStr->Trim()->Replace(",", "."), System::Globalization::NumberStyles::Float, System::Globalization::CultureInfo::InvariantCulture, f)) { fail++; continue; }
+                DefrostParamValue val;
+                val.valueType = DefrostParamType::F32;
+                val.value.f32 = f;
+                if (!SetDefrostParam(g, id, val)) { fail++; continue; }
+                ok++;
+            }
+        }
+    }
+    if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
+        for (int r = 0; r < dataGridView2->Rows->Count; r++) {
+            DataGridViewRow^ row = dataGridView2->Rows[r];
+            if (row->IsNewRow) continue;
+            Object^ v0 = row->Cells["Parameter2"]->Value;
+            Object^ v2 = row->Cells["Value"]->Value;
+            String^ paramName = v0 != nullptr ? v0->ToString() : "";
+            String^ valueStr = v2 != nullptr ? v2->ToString() : "";
+            uint8_t g, id, vt;
+            if (!GetDefrostParamId(paramName, g, id, vt)) continue;
+            DefrostParamValue val;
+            val.valueType = vt;
+            if (vt == DefrostParamType::U8) {
+                unsigned int u; if (!UInt32::TryParse(valueStr->Trim(), u)) { fail++; continue; }
+                val.value.u8 = (uint8_t)(u & 0xFF);
+            } else if (vt == DefrostParamType::U16) {
+                unsigned int u; if (!UInt32::TryParse(valueStr->Trim(), u)) { fail++; continue; }
+                val.value.u16 = (uint16_t)(u & 0xFFFF);
+            } else if (vt == DefrostParamType::F32) {
+                float f; if (!Single::TryParse(valueStr->Trim()->Replace(",", "."), System::Globalization::NumberStyles::Float, System::Globalization::CultureInfo::InvariantCulture, f)) { fail++; continue; }
+                val.value.f32 = f;
+            } else { fail++; continue; }
+            if (!SetDefrostParam(g, id, val)) { fail++; continue; }
+            ok++;
+        }
+    }
+    if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+        Label_Commands->Text = String::Format("Р—Р°РїРёСЃР°С‚СЊ РІ СѓСЃС‚СЂРѕР№СЃС‚РІРѕ: Р·Р°РїРёСЃР°РЅРѕ {0} РїР°СЂР°РјРµС‚СЂРѕРІ" + (fail > 0 ? ", РѕС€РёР±РѕРє: " + fail : ""), ok);
+        Label_Commands->ForeColor = System::Drawing::Color::DarkGreen;
+    }
+    GlobalLogger::LogMessage(ConvertToStdString(String::Format("Information: Wrote {0} params to defroster" + (fail > 0 ? ", {1} failed" : ""), ok, fail)));
 }
 
 //*******************************************************************************************
@@ -1812,4 +1974,5 @@ void ProjectServerW::DataForm::ExecuteAutoRestartStart() {
 }
 
 // ���������� ������ ���������� ����������� �������� � CommandsDefroster.cpp
+
 

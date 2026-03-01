@@ -87,6 +87,7 @@ const char* GetCommandName(const Command& cmd) {
         case 0x01: return "SET_TEMPERATURE";
         case 0x02: return "SET_INTERVAL";
         case 0x03: return "SET_MODE";
+        case 0x04: return "SET_DEFROST_PARAM";
         default: return "CONFIG_UNKNOWN";
         }
     }
@@ -96,6 +97,8 @@ const char* GetCommandName(const Command& cmd) {
         case 0x02: return "GET_VERSION";
         case 0x03: return "GET_DATA";
         case 0x04: return "GET_CMD_INFO";
+        case 0x06: return "GET_DEFROST_PARAM";
+        case 0x07: return "GET_DEFROST_GROUP";
         default: return "REQUEST_UNKNOWN";
         }
     }
@@ -118,20 +121,70 @@ const char* GetCommandTypeName(uint8_t commandType) {
     }
 }
 
+// Defrost params API
+Command CreateConfigCommandDefrostSetParam(uint8_t groupId, uint8_t paramId, const DefrostParamValue& value) {
+    Command cmd;
+    cmd.commandType = CmdType::CONFIGURATION;
+    cmd.commandCode = CmdConfig::SET_DEFROST_PARAM;
+    cmd.data[0] = groupId;
+    cmd.data[1] = paramId;
+    cmd.data[2] = value.valueType;
+    if (value.valueType == DefrostParamType::U8) {
+        cmd.dataLength = 4;
+        cmd.data[3] = value.value.u8;
+    }
+    else if (value.valueType == DefrostParamType::U16) {
+        cmd.dataLength = 5;
+        memcpy(&cmd.data[3], &value.value.u16, sizeof(uint16_t));
+    }
+    else if (value.valueType == DefrostParamType::F32) {
+        cmd.dataLength = 7;
+        memcpy(&cmd.data[3], &value.value.f32, sizeof(float));
+    }
+    else {
+        cmd.dataLength = 0;
+    }
+    return cmd;
+}
+
+bool ParseDefrostParamResponse(const CommandResponse& response, uint8_t* outGroupId, uint8_t* outParamId, DefrostParamValue* outValue) {
+    if (outValue == nullptr) return false;
+    if (response.dataLength < 4) return false;
+    if (outGroupId) *outGroupId = response.data[0];
+    if (outParamId) *outParamId = response.data[1];
+    outValue->valueType = response.data[2];
+    if (outValue->valueType == DefrostParamType::U8) {
+        if (response.dataLength != 4) return false;
+        outValue->value.u8 = response.data[3];
+        return true;
+    }
+    if (outValue->valueType == DefrostParamType::U16) {
+        if (response.dataLength != 5) return false;
+        memcpy(&outValue->value.u16, &response.data[3], sizeof(uint16_t));
+        return true;
+    }
+    if (outValue->valueType == DefrostParamType::F32) {
+        if (response.dataLength != 7) return false;
+        memcpy(&outValue->value.f32, &response.data[3], sizeof(float));
+        return true;
+    }
+    return false;
+}
+
 // ============================
-// Функции для обработки ответов от контроллера
+// Функции для разбора ответа по протоколу
 // ============================
 
 // Проверка CRC ответа
 bool ValidateResponseCRC(const uint8_t* buffer, size_t length) {
-    if (length < 6) { // Минимальный размер ответа: Type + Code + Status + DataLen + CRC
+    if (length < 6) { // Минимальная длина ответа: Type + Code + Status + DataLen + CRC
         return false;
     }
 
-    // Вычисляем CRC для всех данных кроме последних 2 байт (самого CRC)
+    // Вычисляем CRC для всех байт кроме последних 2 байт (сам CRC)
     uint16_t calculatedCRC = CalculateCommandCRC(buffer, length - 2);
 
-    // Извлекаем полученный CRC (последние 2 байта)
+    // Сравниваем с полученным CRC (последние 2 байта)
     uint16_t receivedCRC;
     memcpy(&receivedCRC, &buffer[length - 2], 2);
 
@@ -142,19 +195,19 @@ bool ValidateResponseCRC(const uint8_t* buffer, size_t length) {
 bool ParseResponseBuffer(const uint8_t* buffer, size_t bufferSize, CommandResponse& response) {
     // Поддерживаются 2 формата ответа:
     // 1) Legacy: [Type][Code][Status][DataLen][Data...][CRC]
-    // 2) Новый (в кадре с длиной сразу после Type): [Type][Len][Code][Status][DataLen][Data...][CRC]
-    // Где Len = количество байт после Len и до CRC, CRC считается по всем байтам до CRC (включая Type и Len).
+    // 2) Новый (во втором байте после Type идёт Len): [Type][Len][Code][Status][DataLen][Data...][CRC]
+    // где Len = количество байт после Len и до CRC, CRC считается по всем байтам кроме CRC (включая Type и Len).
 
     if (buffer == nullptr) {
         return false;
     }
 
-    // Сначала пробуем новый формат.
+    // Пробуем новый формат ответа.
     if (bufferSize >= 7) { // Type + Len + Code + Status + DataLen + CRC(2)
         const uint8_t len = buffer[1];
         const size_t expectedByLen = static_cast<size_t>(1 + 1 + len + 2);
         if (expectedByLen == bufferSize) {
-            // Len должен включать: Code + Status + DataLen + Data
+            // Len включает в себя: Code + Status + DataLen + Data
             if (len < 3) {
                 return false;
             }
@@ -220,7 +273,7 @@ bool ParseResponseBuffer(const uint8_t* buffer, size_t bufferSize, CommandRespon
     return true;
 }
 
-// Получение строкового описания статуса (краткое)
+// Получение строкового имени статуса ответа (английский)
 const char* GetStatusName(uint8_t status) {
     switch (status) {
     case 0x00: return "OK";
@@ -235,29 +288,29 @@ const char* GetStatusName(uint8_t status) {
     }
 }
 
-// Получение детального описания ошибки на русском языке
+// Получение текстового описания статуса ответа по коду статуса
 const char* GetStatusDescription(uint8_t status) {
     switch (status) {
-    case 0x00: return "Команда выполнена успешно";
-    case 0x01: return "Ошибка контрольной суммы CRC. Данные повреждены при передаче";
-    case 0x02: return "Неизвестный тип команды. Контроллер не поддерживает данный тип";
-    case 0x03: return "Неизвестный код команды. Команда не реализована в контроллере";
-    case 0x04: return "Неверная длина данных. Размер параметров не соответствует ожидаемому";
-    case 0x05: return "Ошибка выполнения команды. Контроллер не смог выполнить операцию";
-    case 0x06: return "Таймаут выполнения. Контроллер не успел выполнить операцию в отведенное время";
-    case 0xFF: return "Неизвестная ошибка. Произошла непредвиденная ошибка в контроллере";
-    default: return "Неопределенный статус ответа";
+    case 0x00: return "Команда успешно выполнена";
+    case 0x01: return "Ошибка контрольной суммы CRC. Данные были искажены при передаче";
+    case 0x02: return "Недопустимый тип команды. Устройство не поддерживает данный тип";
+    case 0x03: return "Недопустимый код команды. Код не распознан в данном типе";
+    case 0x04: return "Некорректная длина данных. Команда отклонена по протоколу";
+    case 0x05: return "Ошибка выполнения команды. Устройство не смогло выполнить действие";
+    case 0x06: return "Таймаут выполнения. Устройство не ответило в отведённое время";
+    case 0xFF: return "Неизвестная ошибка. Рекомендуется переподключиться к устройству";
+    default: return "Неопределённый статус ответа";
     }
 }
 
-// Проверка, требует ли команда ответа
+// Команды, которые требуют ответа
 bool CommandRequiresResponse(const Command& cmd) {
-    // Все команды типа REQUEST всегда требуют ответа с данными
+    // Для команд типа REQUEST ответ обязателен по определению
     if (cmd.commandType == CmdType::REQUEST) {
         return true;
     }
 
-    // Остальные команды могут требовать только подтверждения
-    // В зависимости от конфигурации системы
+    // Остальные команды по умолчанию также ожидают ответ подтверждения
+    // в зависимости от протокола и настроек
     return true; // По умолчанию считаем, что все команды требуют ответа
 }

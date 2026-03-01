@@ -1,6 +1,7 @@
 #pragma once
 #pragma comment(lib, "ole32.lib")
 
+#include "Commands.h"   // полные определения Command/CommandResponse до DataForm.h (избегаем ошибок в единицах трансляции, где подключается только Chart.h)
 #include "DataForm.h"
 
 #using <C:\Windows\assembly\GAC_MSIL\Microsoft.Office.Interop.Excel\15.0.0.0__71e9bce111e9429c\Microsoft.Office.Interop.Excel.dll>
@@ -21,19 +22,29 @@ private:
     // Добавляем флаг инициализации COM
     bool isComInitialized;
 
-    // Добавляем метод освобождения
-    // Универсальный метод для освобождения COM-объектов
-    template<typename T>
-    void ReleaseComObject(T% comObj) {
+    // Освобождение COM-объекта с обнулением ссылки (перегрузки избегают ошибок парсера с template T%)
+    void ReleaseComObject(Microsoft::Office::Interop::Excel::Application^% comObj) {
         if (comObj != nullptr) {
-            try {
-                while (Marshal::ReleaseComObject(comObj) > 0) {
-                    // Цикл для полного освобождения
-                }
-            }
-            finally {
-                comObj = nullptr;
-            }
+            try { while (Marshal::ReleaseComObject(comObj) > 0) {} }
+            finally { comObj = nullptr; }
+        }
+    }
+    void ReleaseComObject(Microsoft::Office::Interop::Excel::Workbook^% comObj) {
+        if (comObj != nullptr) {
+            try { while (Marshal::ReleaseComObject(comObj) > 0) {} }
+            finally { comObj = nullptr; }
+        }
+    }
+    void ReleaseComObject(Microsoft::Office::Interop::Excel::Worksheet^% comObj) {
+        if (comObj != nullptr) {
+            try { while (Marshal::ReleaseComObject(comObj) > 0) {} }
+            finally { comObj = nullptr; }
+        }
+    }
+    void ReleaseComObject(Object^% comObj) {
+        if (comObj != nullptr) {
+            try { while (Marshal::ReleaseComObject(comObj) > 0) {} }
+            finally { comObj = nullptr; }
         }
     }
 
@@ -73,14 +84,15 @@ public:
                 "COM уже инициализирован в другом режиме");
         }
         else if (FAILED(hr)) {
-            // Получаем текст ошибки
+            // Получаем текст ошибки (промежуточная переменная избегает ошибки парсера "отсутствие , перед &")
             LPWSTR errorText = nullptr;
+            void* pBuf = &errorText;
             FormatMessage(
                 FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
                 NULL,
                 hr,
                 MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                (LPWSTR)&errorText,
+                (LPWSTR)pBuf,
                 0,
                 NULL);
 

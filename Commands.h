@@ -31,6 +31,7 @@ struct CmdConfig {
     static const uint8_t SET_TEMPERATURE = 0x01;   // Установить температуру
     static const uint8_t SET_INTERVAL = 0x02;      // Установить интервал измерений
     static const uint8_t SET_MODE = 0x03;          // Установить режим работы
+    static const uint8_t SET_DEFROST_PARAM = 0x04; // Установить параметр авто-дефроста (payload: groupId, paramId, valueType, value)
 };
 
 // Коды команд запроса (тип REQUEST)
@@ -38,6 +39,26 @@ struct CmdRequest {
     static const uint8_t GET_VERSION = 0x02;       // Запросить версию прошивки
     static const uint8_t GET_DATA = 0x03;          // Запросить данные
     static const uint8_t GET_CMD_INFO = 0x04;      // Запросить информацию о последней принятой команде
+    static const uint8_t GET_DEFROST_PARAM = 0x06; // Запросить один параметр дефроста (payload: groupId, paramId)
+    static const uint8_t GET_DEFROST_GROUP = 0x07;  // Запросить пачку параметров группы (payload: groupId, page)
+};
+
+// Типы значения параметра дефроста (совместимо с DefrostControl.h)
+struct DefrostParamType {
+    static const uint8_t U8 = 1;
+    static const uint8_t U16 = 2;
+    static const uint8_t F32 = 3;
+};
+
+// Значение параметра дефроста (совместимо с DefrostParamValue_t на контроллере)
+struct DefrostParamValue {
+    uint8_t valueType;
+    union {
+        uint8_t u8;
+        uint16_t u16;
+        float f32;
+    } value;
+    DefrostParamValue() : valueType(0) { value.u8 = 0; }
 };
 
 // Максимальный размер команды
@@ -138,6 +159,27 @@ inline Command CreateRequestCommand(uint8_t commandCode) {
     return cmd;
 }
 
+// Defrost params API (compatible with DefrostControl + CommandReceiver on controller)
+Command CreateConfigCommandDefrostSetParam(uint8_t groupId, uint8_t paramId, const DefrostParamValue& value);
+inline Command CreateRequestCommandDefrostGetParam(uint8_t groupId, uint8_t paramId) {
+    Command cmd;
+    cmd.commandType = CmdType::REQUEST;
+    cmd.commandCode = CmdRequest::GET_DEFROST_PARAM;
+    cmd.dataLength = 2;
+    cmd.data[0] = groupId;
+    cmd.data[1] = paramId;
+    return cmd;
+}
+inline Command CreateRequestCommandDefrostGetGroup(uint8_t groupId, uint8_t page) {
+    Command cmd;
+    cmd.commandType = CmdType::REQUEST;
+    cmd.commandCode = CmdRequest::GET_DEFROST_GROUP;
+    cmd.dataLength = 2;
+    cmd.data[0] = groupId;
+    cmd.data[1] = page;
+    return cmd;
+}
+
 // ============================
 // Структуры и функции для обработки ответов от контроллера
 // ============================
@@ -168,6 +210,9 @@ struct CommandResponse {
     }
 };
 
+// Разбор ответа GET_DEFROST_PARAM (объявление после определения CommandResponse)
+bool ParseDefrostParamResponse(const CommandResponse& response, uint8_t* outGroupId, uint8_t* outParamId, DefrostParamValue* outValue);
+
 // Функция для проверки CRC ответа
 bool ValidateResponseCRC(const uint8_t* buffer, size_t length);
 
@@ -182,4 +227,3 @@ const char* GetStatusDescription(uint8_t status);
 
 // Функция для проверки, требует ли команда ответа
 bool CommandRequiresResponse(const Command& cmd);
-

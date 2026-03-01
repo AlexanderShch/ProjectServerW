@@ -324,6 +324,37 @@ bool ProjectServerW::DataForm::SendSetIntervalCommand(int intervalSeconds) {
     return false;
 }
 
+// Defrost params API (compatible with DefrostControl + CommandReceiver on controller)
+bool ProjectServerW::DataForm::SetDefrostParam(uint8_t groupId, uint8_t paramId, const DefrostParamValue& value) {
+    if (clientSocket == INVALID_SOCKET) return false;
+    if (value.valueType != DefrostParamType::U8 && value.valueType != DefrostParamType::U16 && value.valueType != DefrostParamType::F32) return false;
+    Command cmd = CreateConfigCommandDefrostSetParam(groupId, paramId, value);
+    if (cmd.dataLength == 0) return false;
+    CommandResponse response;
+    return SendCommandAndWaitResponse(cmd, response, "SET_DEFROST_PARAM") && response.status == CmdStatus::OK;
+}
+
+bool ProjectServerW::DataForm::GetDefrostParam(uint8_t groupId, uint8_t paramId, DefrostParamValue* outValue) {
+    if (clientSocket == INVALID_SOCKET || outValue == nullptr) return false;
+    Command cmd = CreateRequestCommandDefrostGetParam(groupId, paramId);
+    CommandResponse response;
+    if (!SendCommandAndWaitResponse(cmd, response, "GET_DEFROST_PARAM") || response.status != CmdStatus::OK) return false;
+    return ParseDefrostParamResponse(response, nullptr, nullptr, outValue);
+}
+
+bool ProjectServerW::DataForm::GetDefrostGroup(uint8_t groupId, uint8_t page, uint8_t* outData, uint8_t outCapacity, uint8_t* outLength) {
+    if (clientSocket == INVALID_SOCKET || outData == nullptr || outLength == nullptr) return false;
+    Command cmd = CreateRequestCommandDefrostGetGroup(groupId, page);
+    CommandResponse response;
+    if (!SendCommandAndWaitResponse(cmd, response, "GET_DEFROST_GROUP") || response.status != CmdStatus::OK) return false;
+    if (response.dataLength < 2) return false;
+    uint8_t payloadLen = (uint8_t)(response.dataLength - 2);
+    if (payloadLen > outCapacity) return false;
+    memcpy(outData, &response.data[2], payloadLen);
+    *outLength = payloadLen;
+    return true;
+}
+
 void ProjectServerW::DataForm::SendCommandInfoRequest() {
     // Почему: это аудит обработки команд, а не "состояние устройства" (телеметрия).
     // Ожидается, что прошивка запоминает последнюю принятую команду и отдаёт её по этому запросу.
