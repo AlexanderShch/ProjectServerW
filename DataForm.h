@@ -105,6 +105,9 @@ namespace ProjectServerW {
 			System::Data::DataTable^ dataTable;  // ќбъ€вление таблицы как члена класса
 			// Critical: DataTable is not thread-safe; lock when copying for Excel while UI is appending rows.
 			System::Object^ dataTableSync;
+			// ѕуть к текущему файлу лога алгоритма (CSV); null до первого пакета Type 0x01
+			System::String^ controlLogFilePath;
+			System::Object^ controlLogSync;
 			// Critical: explicit lock object for export state.
 			System::Object^ excelExportSync;
 			// Critical: prevents starting multiple Excel export threads per form (they would only stack up on the global mutex).
@@ -226,6 +229,8 @@ namespace ProjectServerW {
 				exportCompletedEvent = gcnew System::Threading::ManualResetEvent(false);
 				//  ритично: защищает DataTable от гонок между UI-обновлени€ми и фоновой копией в Excel.
 				dataTableSync = gcnew System::Object();
+				controlLogFilePath = nullptr;
+				controlLogSync = gcnew System::Object();
 				excelExportSync = gcnew System::Object();
 				excelExportInProgress = 0;
 				formGuid = nullptr;
@@ -1111,6 +1116,8 @@ private: System::ComponentModel::IContainer^ components;
 			}
 			void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, System::Data::DataTable^ table);
 			void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size, int port);
+			// «апись пакета лога алгоритма (Type 0x01) в CSV-файл; им€ файла Ч дата и врем€ запуска лога
+			void AppendControlLogToCsv(cli::array<System::Byte>^ packet, int size);
 
 			static cli::array<cli::array<String^>^>^ GetBitFieldNames() {
 				static bool initialized = false;

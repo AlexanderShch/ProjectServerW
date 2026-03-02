@@ -1,4 +1,4 @@
-﻿#include "DataForm.h"
+#include "DataForm.h"
 #include "Chart.h"
 #include "FormExcel.h"
 #include "Commands.h"               // Command, DefrostParam Рё РѕР±РјРµРЅ СЃ РєРѕРЅС‚СЂРѕР»Р»РµСЂРѕРј
@@ -30,6 +30,20 @@ typedef struct   // Формат пакета (как на STM32)
     short H[SQ];				// влажность 2 группы (относительная)
     uint16_t CRC_SUM;			// контрольная сумма
 } MSGQUEUE_OBJ_t;
+#pragma pack(pop)
+
+// Пакет лога алгоритма (Type 0x01), совпадает с ControlLogPayload_t на контроллере
+#pragma pack(push, 1)
+typedef struct {
+    uint16_t Time;
+    uint32_t runtimeSeconds;
+    uint8_t phase;
+    uint8_t ten1L_on, ten2L_on, ten1R_on, ten2R_on, inj_on, outOn;
+    float T_sup_avg_C, T_supL_C, T_supR_C, supplySet_C, eT_common, heatScale01;
+    float uCommon_TEN, uLeft_TEN, uRight_TEN;
+    float leftTen1Duty, leftTen2Duty, rightTen1Duty, rightTen2Duty;
+    float w_sup_avg, w_ret_target, wErr, injDuty;
+} ControlLogPayload_t;
 #pragma pack(pop)
 
 // Совпадает с форматом пакета в типе MSGQUEUE_OBJ_t на STM32
@@ -920,6 +934,41 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
         GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in AddDataToTableThreadSafe: " + ex->ToString()));
     }
 
+}
+
+void ProjectServerW::DataForm::AppendControlLogToCsv(cli::array<System::Byte>^ packet, int size) {
+    if (packet == nullptr || size < 2 + sizeof(ControlLogPayload_t) + 2) return;
+    if (packet[1] != sizeof(ControlLogPayload_t)) return;
+    pin_ptr<System::Byte> pinned = &packet[0];
+    const uint8_t* raw = reinterpret_cast<const uint8_t*>(pinned);
+    ControlLogPayload_t pl;
+    memcpy(&pl, raw + 2, sizeof(ControlLogPayload_t));
+
+    System::Threading::Monitor::Enter(controlLogSync);
+    try {
+        if (controlLogFilePath == nullptr) {
+            String^ appPath = System::IO::Path::GetDirectoryName(System::Windows::Forms::Application::ExecutablePath);
+            controlLogFilePath = System::IO::Path::Combine(appPath, "log_" + DateTime::Now.ToString("yyyy-MM-dd_HH-mm-ss") + ".csv");
+            System::IO::StreamWriter^ w = gcnew System::IO::StreamWriter(controlLogFilePath, false, System::Text::Encoding::UTF8);
+            w->WriteLine("Time,runtimeSeconds,phase,ten1L_on,ten2L_on,ten1R_on,ten2R_on,inj_on,outOn,"
+                "T_sup_avg_C,T_supL_C,T_supR_C,supplySet_C,eT_common,heatScale01,"
+                "uCommon_TEN,uLeft_TEN,uRight_TEN,leftTen1Duty,leftTen2Duty,rightTen1Duty,rightTen2Duty,"
+                "w_sup_avg,w_ret_target,wErr,injDuty");
+            w->Close();
+        }
+        System::IO::StreamWriter^ w = gcnew System::IO::StreamWriter(controlLogFilePath, true, System::Text::Encoding::UTF8);
+        String^ line = String::Format(System::Globalization::CultureInfo::InvariantCulture,
+            "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14},{15},{16},{17},{18},{19},{20},{21},{22},{23},{24},{25}",
+            pl.Time, pl.runtimeSeconds, (int)pl.phase, (int)pl.ten1L_on, (int)pl.ten2L_on, (int)pl.ten1R_on, (int)pl.ten2R_on, (int)pl.inj_on, (int)pl.outOn,
+            pl.T_sup_avg_C, pl.T_supL_C, pl.T_supR_C, pl.supplySet_C, pl.eT_common, pl.heatScale01,
+            pl.uCommon_TEN, pl.uLeft_TEN, pl.uRight_TEN, pl.leftTen1Duty, pl.leftTen2Duty, pl.rightTen1Duty, pl.rightTen2Duty,
+            pl.w_sup_avg, pl.w_ret_target, pl.wErr, pl.injDuty);
+        w->WriteLine(line);
+        w->Close();
+    }
+    finally {
+        System::Threading::Monitor::Exit(controlLogSync);
+    }
 }
 
 /*

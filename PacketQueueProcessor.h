@@ -11,6 +11,7 @@ namespace ProjectServerW {
 		ref class TelemetryWorkItem sealed
 		{
 		public:
+			int itemType; // 0 = telemetry (Type 0x00), 1 = control log (Type 0x01)
 			cli::array<System::Byte>^ packet;
 			int size;
 			int port;
@@ -45,6 +46,13 @@ namespace ProjectServerW {
 		static System::Object^ GetSendGate(SOCKET clientSocket);
 
 		static void EnqueueTelemetry(cli::array<System::Byte>^ packet,
+			int size,
+			int port,
+			System::String^ formGuid,
+			SOCKET clientSocket,
+			System::String^ clientIP);
+
+		static void EnqueueControlLog(cli::array<System::Byte>^ packet,
 			int size,
 			int port,
 			System::String^ formGuid,
