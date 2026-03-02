@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 #include "version.h"
 
 namespace ProjectServerW {
@@ -19,6 +19,7 @@ namespace ProjectServerW {
 		MyForm(void)
 		{
 			InitializeComponent();
+			this->labelVersion->Text = L"v " + gcnew System::String(VERSION_STR);
 			// Hook events after InitializeComponent to keep Designer-generated code minimal.
 			this->Load += gcnew System::EventHandler(this, &MyForm::MyForm_Load);
 		}
@@ -91,7 +92,7 @@ namespace ProjectServerW {
 			// 
 			this->exitToolStripMenuItem->Name = L"exitToolStripMenuItem";
 			this->exitToolStripMenuItem->Size = System::Drawing::Size(80, 30);
-			this->exitToolStripMenuItem->Text = L"Âûõîä";
+			this->exitToolStripMenuItem->Text = L"Ð’Ñ‹Ñ…Ð¾Ð´";
 			this->exitToolStripMenuItem->Click += gcnew System::EventHandler(this, &MyForm::exitToolStripMenuItem_Click);
 			// 
 			// label_N_port
@@ -103,7 +104,7 @@ namespace ProjectServerW {
 			this->label_N_port->Name = L"label_N_port";
 			this->label_N_port->Size = System::Drawing::Size(110, 29);
 			this->label_N_port->TabIndex = 3;
-			this->label_N_port->Text = L"¹ ïîðòà";
+			this->label_N_port->Text = L"â„– Ð¿Ð¾Ñ€Ñ‚Ð°";
 			// 
 			// SocketState
 			// 
@@ -114,7 +115,7 @@ namespace ProjectServerW {
 			this->SocketState->Name = L"SocketState";
 			this->SocketState->Size = System::Drawing::Size(223, 29);
 			this->SocketState->TabIndex = 4;
-			this->SocketState->Text = L"Ñîñòîÿíèå ñîêåòà";
+			this->SocketState->Text = L"Ð¡Ð¾ÑÑ‚Ð¾ÑÐ½Ð¸Ðµ ÑÐ¾ÐºÐµÑ‚Ð°";
 			// 
 			// SocketBind
 			// 
@@ -125,7 +126,7 @@ namespace ProjectServerW {
 			this->SocketBind->Name = L"SocketBind";
 			this->SocketBind->Size = System::Drawing::Size(207, 29);
 			this->SocketBind->TabIndex = 5;
-			this->SocketBind->Text = L"Ïðèâÿçêà ñîêåòà";
+			this->SocketBind->Text = L"ÐŸÑ€Ð¸Ð²ÑÐ·ÐºÐ° ÑÐ¾ÐºÐµÑ‚Ð°";
 			// 
 			// WSAstartup
 			// 
@@ -147,7 +148,7 @@ namespace ProjectServerW {
 			this->ClientAddr->Name = L"ClientAddr";
 			this->ClientAddr->Size = System::Drawing::Size(184, 29);
 			this->ClientAddr->TabIndex = 7;
-			this->ClientAddr->Text = L"Àäðåñ êëèåíòà";
+			this->ClientAddr->Text = L"ÐÐ´Ñ€ÐµÑ ÐºÐ»Ð¸ÐµÐ½Ñ‚Ð°";
 			// 
 			// labelMessage
 			// 
@@ -158,7 +159,7 @@ namespace ProjectServerW {
 			this->labelMessage->Name = L"labelMessage";
 			this->labelMessage->Size = System::Drawing::Size(150, 29);
 			this->labelMessage->TabIndex = 8;
-			this->labelMessage->Text = L"Ñîîáùåíèå";
+			this->labelMessage->Text = L"Ð¡Ð¾Ð¾Ð±Ñ‰ÐµÐ½Ð¸Ðµ";
 			// 
 			// labelVersion
 			// 
@@ -166,7 +167,7 @@ namespace ProjectServerW {
 			this->labelVersion->Name = L"labelVersion";
 			this->labelVersion->Size = System::Drawing::Size(100, 23);
 			this->labelVersion->TabIndex = 10;
-			this->labelVersion->Text = L"v " + gcnew String(VERSION_STR);
+			this->labelVersion->Text = L"v 0.0";  // Designer placeholder; real version set in constructor
 			// 
 			// MyForm
 			// 
@@ -184,7 +185,7 @@ namespace ProjectServerW {
 			this->MainMenuStrip = this->menuStrip1;
 			this->Name = L"MyForm";
 
-			this->Text = L"Ñåðâåð ñáîðà äàííûõ";
+			this->Text = L"Ð¡ÐµÑ€Ð²ÐµÑ€ ÑÐ±Ð¾Ñ€Ð° Ð´Ð°Ð½Ð½Ñ‹Ñ…";
 			this->menuStrip1->ResumeLayout(false);
 			this->menuStrip1->PerformLayout();
 			this->ResumeLayout(false);
