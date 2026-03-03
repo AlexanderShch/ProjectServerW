@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "version.h"
 
 namespace ProjectServerW {

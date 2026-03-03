@@ -5,11 +5,11 @@ using namespace System::Windows::Forms;
 using namespace System::Runtime::InteropServices;
 using namespace Microsoft::Office::Interop::Excel;
 
-// Тестовый код для проверки настроек
+// РўРµСЃС‚РѕРІС‹Р№ РєРѕРґ РґР»СЏ РїСЂРѕРІРµСЂРєРё РЅР°СЃС‚СЂРѕРµРє
 void CreateExcelFile() {
     ExcelHelper^ excel = gcnew ExcelHelper();
     try {
-        // Работа с Excel
+        // Р Р°Р±РѕС‚Р° СЃ Excel
         excel->SaveAs("test.xlsx");
     }
     catch (Exception^ ex) {
@@ -23,8 +23,8 @@ bool IsExcelInstalled() {
         return (type != nullptr);
     }
     catch (...) {
-        MessageBox::Show("Error: EXCEL не установлен!");
-        GlobalLogger::LogMessage("Error: EXCEL не установлен!");
+        MessageBox::Show("Error: EXCEL РЅРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅ!");
+        GlobalLogger::LogMessage("Error: EXCEL РЅРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅ!");
         return false;
     }
 }

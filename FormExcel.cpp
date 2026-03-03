@@ -1,6 +1,6 @@
 #include "FormExcel.h"
 #include "Chart.h"      // ExcelHelper
-#include "DataForm.h"   // Для коллбека завершения экспорта
+#include "DataForm.h"   // Р”Р»СЏ РєРѕР»Р»Р±РµРєР° Р·Р°РІРµСЂС€РµРЅРёСЏ СЌРєСЃРїРѕСЂС‚Р°
 
 using namespace System;
 using namespace System::Runtime::InteropServices;
@@ -15,29 +15,29 @@ static System::String^ MapTemperatureColumnNameForExcel(System::String^ columnNa
 		return columnName;
 	}
 
-	if (columnName->Equals("T0")) return "T0 дефр.Левый";
-	if (columnName->Equals("T1")) return "T1 дефр.Правый";
-	if (columnName->Equals("T2")) return "T2 дефр.Центр";
-	if (columnName->Equals("T3")) return "T3 прод.Лев";
-	if (columnName->Equals("T4")) return "T4 прод.Пр";
-	if (columnName->Equals("T5")) return "T5 корпус";
+	if (columnName->Equals("T0")) return "T0 РґРµС„СЂ.Р›РµРІС‹Р№";
+	if (columnName->Equals("T1")) return "T1 РґРµС„СЂ.РџСЂР°РІС‹Р№";
+	if (columnName->Equals("T2")) return "T2 РґРµС„СЂ.Р¦РµРЅС‚СЂ";
+	if (columnName->Equals("T3")) return "T3 РїСЂРѕРґ.Р›РµРІ";
+	if (columnName->Equals("T4")) return "T4 РїСЂРѕРґ.РџСЂ";
+	if (columnName->Equals("T5")) return "T5 РєРѕСЂРїСѓСЃ";
 
 	return columnName;
 }
 
 static int GetTemperatureSeriesColorOle(System::String^ tColumnName)
 {
-	// Почему: Excel Interop ожидает OLE_COLOR. Используем ColorTranslator, чтобы не зависеть от порядка RGB/BGR.
+	// РџРѕС‡РµРјСѓ: Excel Interop РѕР¶РёРґР°РµС‚ OLE_COLOR. РСЃРїРѕР»СЊР·СѓРµРј ColorTranslator, С‡С‚РѕР±С‹ РЅРµ Р·Р°РІРёСЃРµС‚СЊ РѕС‚ РїРѕСЂСЏРґРєР° RGB/BGR.
 	if (String::IsNullOrEmpty(tColumnName)) {
 		return ColorTranslator::ToOle(Color::Black);
 	}
 
-	if (tColumnName->Equals("T0")) return ColorTranslator::ToOle(Color::FromArgb(0, 128, 0));       // зелёный
-	if (tColumnName->Equals("T1")) return ColorTranslator::ToOle(Color::FromArgb(255, 0, 0));       // красный
-	if (tColumnName->Equals("T2")) return ColorTranslator::ToOle(Color::FromArgb(255, 165, 0));     // оранжевый
-	if (tColumnName->Equals("T3")) return ColorTranslator::ToOle(Color::FromArgb(0, 128, 0));       // зелёный
-	if (tColumnName->Equals("T4")) return ColorTranslator::ToOle(Color::FromArgb(128, 0, 128));     // фиолетовый
-	if (tColumnName->Equals("T5")) return ColorTranslator::ToOle(Color::FromArgb(165, 42, 42));     // коричневый
+	if (tColumnName->Equals("T0")) return ColorTranslator::ToOle(Color::FromArgb(0, 128, 0));       // Р·РµР»С‘РЅС‹Р№
+	if (tColumnName->Equals("T1")) return ColorTranslator::ToOle(Color::FromArgb(255, 0, 0));       // РєСЂР°СЃРЅС‹Р№
+	if (tColumnName->Equals("T2")) return ColorTranslator::ToOle(Color::FromArgb(255, 165, 0));     // РѕСЂР°РЅР¶РµРІС‹Р№
+	if (tColumnName->Equals("T3")) return ColorTranslator::ToOle(Color::FromArgb(0, 128, 0));       // Р·РµР»С‘РЅС‹Р№
+	if (tColumnName->Equals("T4")) return ColorTranslator::ToOle(Color::FromArgb(128, 0, 128));     // С„РёРѕР»РµС‚РѕРІС‹Р№
+	if (tColumnName->Equals("T5")) return ColorTranslator::ToOle(Color::FromArgb(165, 42, 42));     // РєРѕСЂРёС‡РЅРµРІС‹Р№
 
 	return ColorTranslator::ToOle(Color::Black);
 }
@@ -140,7 +140,7 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 	System::Threading::Interlocked::Increment(excelActiveExportJobs);
 	UpdateExcelIdleState();
 	try {
-		const int timeoutMs = 5 * 60 * 1000; // 5 минут
+		const int timeoutMs = 5 * 60 * 1000; // 5 РјРёРЅСѓС‚
 		try {
 			mutexAcquired = excelGlobalMutex->WaitOne(timeoutMs);
 		}
@@ -150,7 +150,7 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 		}
 
 		if (!mutexAcquired) {
-			// Критично: продолжаем ретраи через очередь — Excel может быть занят во время долгих экспортов.
+			// РљСЂРёС‚РёС‡РЅРѕ: РїСЂРѕРґРѕР»Р¶Р°РµРј СЂРµС‚СЂР°Рё С‡РµСЂРµР· РѕС‡РµСЂРµРґСЊ вЂ” Excel РјРѕР¶РµС‚ Р±С‹С‚СЊ Р·Р°РЅСЏС‚ РІРѕ РІСЂРµРјСЏ РґРѕР»РіРёС… СЌРєСЃРїРѕСЂС‚РѕРІ.
 			excelExportQueue->Enqueue(job);
 			excelExportQueueEvent->Set();
 			Thread::Sleep(1000);
@@ -170,7 +170,7 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 			excelApp->Calculation = Microsoft::Office::Interop::Excel::XlCalculation::xlCalculationManual;
 			excelApp->EnableEvents = false;
 
-			// Лист Info (метаданные)
+			// Р›РёСЃС‚ Info (РјРµС‚Р°РґР°РЅРЅС‹Рµ)
 			try {
 				Microsoft::Office::Interop::Excel::Workbook^ wb = safe_cast<Microsoft::Office::Interop::Excel::Workbook^>(ws->Parent);
 				System::Object^ missing = System::Type::Missing;
@@ -227,10 +227,10 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 				Marshal::ReleaseComObject(dataRange);
 			}
 
-			// Добавление листа с графиком температур (Chart)
+			// Р”РѕР±Р°РІР»РµРЅРёРµ Р»РёСЃС‚Р° СЃ РіСЂР°С„РёРєРѕРј С‚РµРјРїРµСЂР°С‚СѓСЂ (Chart)
 			try {
 				if (rowCount > 0) {
-					const int lastRow = rowCount + 1; // 1: заголовок
+					const int lastRow = rowCount + 1; // 1: Р·Р°РіРѕР»РѕРІРѕРє
 					if (lastRow >= 2) {
 						Microsoft::Office::Interop::Excel::Workbook^ wb = safe_cast<Microsoft::Office::Interop::Excel::Workbook^>(ws->Parent);
 						System::Object^ missing = System::Type::Missing;
@@ -253,7 +253,7 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 							if (chartObjects != nullptr) Marshal::ReleaseComObject(chartObjects);
 						}
 
-						// Ось X: RealTime или Time
+						// РћСЃСЊ X: RealTime РёР»Рё Time
 						int xCol = -1;
 						try {
 							int idx = job->tableSnapshot->Columns->IndexOf("RealTime");
@@ -294,12 +294,12 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 
 									const int oleColor = GetTemperatureSeriesColorOle(tColName);
 									try {
-										// Для line chart чаще всего хватает Border->Color.
+										// Р”Р»СЏ line chart С‡Р°С‰Рµ РІСЃРµРіРѕ С…РІР°С‚Р°РµС‚ Border->Color.
 										s->Border->Color = oleColor;
 									}
 									catch (...) {}
 									try {
-										// На некоторых версиях Interop доступен более “новый” API Format->Line.
+										// РќР° РЅРµРєРѕС‚РѕСЂС‹С… РІРµСЂСЃРёСЏС… Interop РґРѕСЃС‚СѓРїРµРЅ Р±РѕР»РµРµ вЂњРЅРѕРІС‹Р№вЂќ API Format->Line.
 										s->Format->Line->ForeColor->RGB = oleColor;
 										s->Format->Line->Weight = 2.0;
 									}
@@ -312,7 +312,7 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 						}
 
 						chart->HasTitle = true;
-						chart->ChartTitle->Text = "Температуры";
+						chart->ChartTitle->Text = "РўРµРјРїРµСЂР°С‚СѓСЂС‹";
 
 						Microsoft::Office::Interop::Excel::Axis^ categoryAxis = safe_cast<Microsoft::Office::Interop::Excel::Axis^>(
 							chart->Axes(Microsoft::Office::Interop::Excel::XlAxisType::xlCategory, Microsoft::Office::Interop::Excel::XlAxisGroup::xlPrimary));
@@ -322,7 +322,7 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 						Microsoft::Office::Interop::Excel::Axis^ valueAxis = safe_cast<Microsoft::Office::Interop::Excel::Axis^>(
 							chart->Axes(Microsoft::Office::Interop::Excel::XlAxisType::xlValue, Microsoft::Office::Interop::Excel::XlAxisGroup::xlPrimary));
 						valueAxis->HasTitle = true;
-						valueAxis->AxisTitle->Text = "T, °C";
+						valueAxis->AxisTitle->Text = "T, В°C";
 
 						if (xRange != nullptr) Marshal::ReleaseComObject(xRange);
 						Marshal::ReleaseComObject(wb);
@@ -373,12 +373,12 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 		catch (...) {}
 
 		GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-			"Information: Файл Excel успешно сохранен: {0}\nВремя записи: {1} секунд ({2} строк)",
+			"Information: Р¤Р°Р№Р» Excel СѓСЃРїРµС€РЅРѕ СЃРѕС…СЂР°РЅРµРЅ: {0}\nР’СЂРµРјСЏ Р·Р°РїРёСЃРё: {1} СЃРµРєСѓРЅРґ ({2} СЃС‚СЂРѕРє)",
 			finalFileName,
 			elapsed.TotalSeconds.ToString("F2"),
 			exportedRows)));
 
-		// Запускаем отложенную сборку мусора, чтобы быстрее освобождать COM-обёртки после экспорта.
+		// Р—Р°РїСѓСЃРєР°РµРј РѕС‚Р»РѕР¶РµРЅРЅСѓСЋ СЃР±РѕСЂРєСѓ РјСѓСЃРѕСЂР°, С‡С‚РѕР±С‹ Р±С‹СЃС‚СЂРµРµ РѕСЃРІРѕР±РѕР¶РґР°С‚СЊ COM-РѕР±С‘СЂС‚РєРё РїРѕСЃР»Рµ СЌРєСЃРїРѕСЂС‚Р°.
 		try {
 			ThreadPool::QueueUserWorkItem(gcnew WaitCallback(DataForm::DelayedGarbageCollection));
 		}

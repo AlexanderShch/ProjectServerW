@@ -1,56 +1,56 @@
 #pragma once
 #include <cstdint>
-#include <cstring>  // Для memset и memcpy
+#include <cstring>  // Р”Р»СЏ memset Рё memcpy
 
-// Определение типов команд
+// РћРїСЂРµРґРµР»РµРЅРёРµ С‚РёРїРѕРІ РєРѕРјР°РЅРґ
 struct CmdType {
-    static const uint8_t TELEMETRY = 0x00;         // Подтверждение приёма телеметрии
-    static const uint8_t PROG_CONTROL = 0x01;      // Команды управления программой (СТАРТ, СТОП и т.д.)
-    static const uint8_t CONFIGURATION = 0x02;     // Команды конфигурации
-    static const uint8_t REQUEST = 0x03;           // Команды запроса данных
-    static const uint8_t DEVICE_CONTROL = 0x04;    // Команды управления устройствами
+    static const uint8_t TELEMETRY = 0x00;         // РџРѕРґС‚РІРµСЂР¶РґРµРЅРёРµ РїСЂРёС‘РјР° С‚РµР»РµРјРµС‚СЂРёРё
+    static const uint8_t PROG_CONTROL = 0x01;      // РљРѕРјР°РЅРґС‹ СѓРїСЂР°РІР»РµРЅРёСЏ РїСЂРѕРіСЂР°РјРјРѕР№ (РЎРўРђР Рў, РЎРўРћРџ Рё С‚.Рґ.)
+    static const uint8_t CONFIGURATION = 0x02;     // РљРѕРјР°РЅРґС‹ РєРѕРЅС„РёРіСѓСЂР°С†РёРё
+    static const uint8_t REQUEST = 0x03;           // РљРѕРјР°РЅРґС‹ Р·Р°РїСЂРѕСЃР° РґР°РЅРЅС‹С…
+    static const uint8_t DEVICE_CONTROL = 0x04;    // РљРѕРјР°РЅРґС‹ СѓРїСЂР°РІР»РµРЅРёСЏ СѓСЃС‚СЂРѕР№СЃС‚РІР°РјРё
 };
 
-// Коды команд телеметрии (тип TELEMETRY)
+// РљРѕРґС‹ РєРѕРјР°РЅРґ С‚РµР»РµРјРµС‚СЂРёРё (С‚РёРї TELEMETRY)
 struct CmdTelemetry {
-    static const uint8_t DATA_OK = 0x01;       // Подтверждение приёма телеметрии без ошибок
-    static const uint8_t DATA_FALSE = 0x02;    // Телеметрия принята с ошибкой CRC
+    static const uint8_t DATA_OK = 0x01;       // РџРѕРґС‚РІРµСЂР¶РґРµРЅРёРµ РїСЂРёС‘РјР° С‚РµР»РµРјРµС‚СЂРёРё Р±РµР· РѕС€РёР±РѕРє
+    static const uint8_t DATA_FALSE = 0x02;    // РўРµР»РµРјРµС‚СЂРёСЏ РїСЂРёРЅСЏС‚Р° СЃ РѕС€РёР±РєРѕР№ CRC
 };
 
-// Коды команд управления (тип PROG_CONTROL)
+// РљРѕРґС‹ РєРѕРјР°РЅРґ СѓРїСЂР°РІР»РµРЅРёСЏ (С‚РёРї PROG_CONTROL)
 struct CmdProgControl {
-    static const uint8_t START = 0x01;         // Запуск работы
-    static const uint8_t STOP = 0x02;          // Остановка работы
-    static const uint8_t PAUSE = 0x03;         // Пауза
-    static const uint8_t RESUME = 0x04;        // Возобновление после паузы
-    static const uint8_t RESET = 0x05;         // Сброс устройства
+    static const uint8_t START = 0x01;         // Р—Р°РїСѓСЃРє СЂР°Р±РѕС‚С‹
+    static const uint8_t STOP = 0x02;          // РћСЃС‚Р°РЅРѕРІРєР° СЂР°Р±РѕС‚С‹
+    static const uint8_t PAUSE = 0x03;         // РџР°СѓР·Р°
+    static const uint8_t RESUME = 0x04;        // Р’РѕР·РѕР±РЅРѕРІР»РµРЅРёРµ РїРѕСЃР»Рµ РїР°СѓР·С‹
+    static const uint8_t RESET = 0x05;         // РЎР±СЂРѕСЃ СѓСЃС‚СЂРѕР№СЃС‚РІР°
 };
 
-// Коды команд конфигурации (тип CONFIGURATION)
+// РљРѕРґС‹ РєРѕРјР°РЅРґ РєРѕРЅС„РёРіСѓСЂР°С†РёРё (С‚РёРї CONFIGURATION)
 struct CmdConfig {
-    static const uint8_t SET_TEMPERATURE = 0x01;   // Установить температуру
-    static const uint8_t SET_INTERVAL = 0x02;      // Установить интервал измерений
-    static const uint8_t SET_MODE = 0x03;          // Установить режим работы
-    static const uint8_t SET_DEFROST_PARAM = 0x04; // Установить параметр авто-дефроста (payload: groupId, paramId, valueType, value)
+    static const uint8_t SET_TEMPERATURE = 0x01;   // РЈСЃС‚Р°РЅРѕРІРёС‚СЊ С‚РµРјРїРµСЂР°С‚СѓСЂСѓ
+    static const uint8_t SET_INTERVAL = 0x02;      // РЈСЃС‚Р°РЅРѕРІРёС‚СЊ РёРЅС‚РµСЂРІР°Р» РёР·РјРµСЂРµРЅРёР№
+    static const uint8_t SET_MODE = 0x03;          // РЈСЃС‚Р°РЅРѕРІРёС‚СЊ СЂРµР¶РёРј СЂР°Р±РѕС‚С‹
+    static const uint8_t SET_DEFROST_PARAM = 0x04; // РЈСЃС‚Р°РЅРѕРІРёС‚СЊ РїР°СЂР°РјРµС‚СЂ Р°РІС‚Рѕ-РґРµС„СЂРѕСЃС‚Р° (payload: groupId, paramId, valueType, value)
 };
 
-// Коды команд запроса (тип REQUEST)
+// РљРѕРґС‹ РєРѕРјР°РЅРґ Р·Р°РїСЂРѕСЃР° (С‚РёРї REQUEST)
 struct CmdRequest {
-    static const uint8_t GET_VERSION = 0x02;       // Запросить версию прошивки
-    static const uint8_t GET_DATA = 0x03;          // Запросить данные
-    static const uint8_t GET_CMD_INFO = 0x04;      // Запросить информацию о последней принятой команде
-    static const uint8_t GET_DEFROST_PARAM = 0x06; // Запросить один параметр дефроста (payload: groupId, paramId)
-    static const uint8_t GET_DEFROST_GROUP = 0x07;  // Запросить пачку параметров группы (payload: groupId, page)
+    static const uint8_t GET_VERSION = 0x02;       // Р—Р°РїСЂРѕСЃРёС‚СЊ РІРµСЂСЃРёСЋ РїСЂРѕС€РёРІРєРё
+    static const uint8_t GET_DATA = 0x03;          // Р—Р°РїСЂРѕСЃРёС‚СЊ РґР°РЅРЅС‹Рµ
+    static const uint8_t GET_CMD_INFO = 0x04;      // Р—Р°РїСЂРѕСЃРёС‚СЊ РёРЅС„РѕСЂРјР°С†РёСЋ Рѕ РїРѕСЃР»РµРґРЅРµР№ РїСЂРёРЅСЏС‚РѕР№ РєРѕРјР°РЅРґРµ
+    static const uint8_t GET_DEFROST_PARAM = 0x06; // Р—Р°РїСЂРѕСЃРёС‚СЊ РѕРґРёРЅ РїР°СЂР°РјРµС‚СЂ РґРµС„СЂРѕСЃС‚Р° (payload: groupId, paramId)
+    static const uint8_t GET_DEFROST_GROUP = 0x07;  // Р—Р°РїСЂРѕСЃРёС‚СЊ РїР°С‡РєСѓ РїР°СЂР°РјРµС‚СЂРѕРІ РіСЂСѓРїРїС‹ (payload: groupId, page)
 };
 
-// Типы значения параметра дефроста (совместимо с DefrostControl.h)
+// РўРёРїС‹ Р·РЅР°С‡РµРЅРёСЏ РїР°СЂР°РјРµС‚СЂР° РґРµС„СЂРѕСЃС‚Р° (СЃРѕРІРјРµСЃС‚РёРјРѕ СЃ DefrostControl.h)
 struct DefrostParamType {
     static const uint8_t U8 = 1;
     static const uint8_t U16 = 2;
     static const uint8_t F32 = 3;
 };
 
-// Значение параметра дефроста (совместимо с DefrostParamValue_t на контроллере)
+// Р—РЅР°С‡РµРЅРёРµ РїР°СЂР°РјРµС‚СЂР° РґРµС„СЂРѕСЃС‚Р° (СЃРѕРІРјРµСЃС‚РёРјРѕ СЃ DefrostParamValue_t РЅР° РєРѕРЅС‚СЂРѕР»Р»РµСЂРµ)
 struct DefrostParamValue {
     uint8_t valueType;
     union {
@@ -61,37 +61,37 @@ struct DefrostParamValue {
     DefrostParamValue() : valueType(0) { value.u8 = 0; }
 };
 
-// Максимальный размер команды
+// РњР°РєСЃРёРјР°Р»СЊРЅС‹Р№ СЂР°Р·РјРµСЂ РєРѕРјР°РЅРґС‹
 const size_t MAX_COMMAND_SIZE = 64;
 
-// Структура команды
+// РЎС‚СЂСѓРєС‚СѓСЂР° РєРѕРјР°РЅРґС‹
 struct Command {
-    uint8_t commandType;           // Тип команды
-    uint8_t commandCode;           // Код команды
-    uint8_t dataLength;            // Длина данных параметров
-    uint8_t data[MAX_COMMAND_SIZE - 5]; // Данные параметров (макс. 59 байт)
-    uint16_t crc;                  // CRC16 для проверки целостности
+    uint8_t commandType;           // РўРёРї РєРѕРјР°РЅРґС‹
+    uint8_t commandCode;           // РљРѕРґ РєРѕРјР°РЅРґС‹
+    uint8_t dataLength;            // Р”Р»РёРЅР° РґР°РЅРЅС‹С… РїР°СЂР°РјРµС‚СЂРѕРІ
+    uint8_t data[MAX_COMMAND_SIZE - 5]; // Р”Р°РЅРЅС‹Рµ РїР°СЂР°РјРµС‚СЂРѕРІ (РјР°РєСЃ. 59 Р±Р°Р№С‚)
+    uint16_t crc;                  // CRC16 РґР»СЏ РїСЂРѕРІРµСЂРєРё С†РµР»РѕСЃС‚РЅРѕСЃС‚Рё
 
     Command() : commandType(0), commandCode(0), dataLength(0), crc(0) {
         memset(data, 0, sizeof(data));
     }
 };
 
-// Функция для вычисления CRC16 команды
+// Р¤СѓРЅРєС†РёСЏ РґР»СЏ РІС‹С‡РёСЃР»РµРЅРёСЏ CRC16 РєРѕРјР°РЅРґС‹
 uint16_t CalculateCommandCRC(const uint8_t* buffer, size_t length);
 
-// Функция для создания буфера команды с CRC
+// Р¤СѓРЅРєС†РёСЏ РґР»СЏ СЃРѕР·РґР°РЅРёСЏ Р±СѓС„РµСЂР° РєРѕРјР°РЅРґС‹ СЃ CRC
 size_t BuildCommandBuffer(const Command& cmd, uint8_t* buffer, size_t bufferSize);
 
-// Функция для получения строкового имени команды
+// Р¤СѓРЅРєС†РёСЏ РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ СЃС‚СЂРѕРєРѕРІРѕРіРѕ РёРјРµРЅРё РєРѕРјР°РЅРґС‹
 const char* GetCommandName(const Command& cmd);
 
 // Short command type name (e.g. REQUEST, PROG_CONTROL).
 const char* GetCommandTypeName(uint8_t commandType);
 
-// Вспомогательные функции для создания команд
+// Р’СЃРїРѕРјРѕРіР°С‚РµР»СЊРЅС‹Рµ С„СѓРЅРєС†РёРё РґР»СЏ СЃРѕР·РґР°РЅРёСЏ РєРѕРјР°РЅРґ
 
-// Создать команду подтверждения телеметрии (без параметров)
+// РЎРѕР·РґР°С‚СЊ РєРѕРјР°РЅРґСѓ РїРѕРґС‚РІРµСЂР¶РґРµРЅРёСЏ С‚РµР»РµРјРµС‚СЂРёРё (Р±РµР· РїР°СЂР°РјРµС‚СЂРѕРІ)
 inline Command CreateTelemetryAckCommand(uint8_t commandCode) {
     Command cmd;
     cmd.commandType = CmdType::TELEMETRY;
@@ -100,7 +100,7 @@ inline Command CreateTelemetryAckCommand(uint8_t commandCode) {
     return cmd;
 }
 
-// Создать команду управления без параметров
+// РЎРѕР·РґР°С‚СЊ РєРѕРјР°РЅРґСѓ СѓРїСЂР°РІР»РµРЅРёСЏ Р±РµР· РїР°СЂР°РјРµС‚СЂРѕРІ
 inline Command CreateControlCommand(uint8_t commandCode) {
     Command cmd;
     cmd.commandType = CmdType::PROG_CONTROL;
@@ -109,7 +109,7 @@ inline Command CreateControlCommand(uint8_t commandCode) {
     return cmd;
 }
 
-// Создать команду управления с одним байтом параметра
+// РЎРѕР·РґР°С‚СЊ РєРѕРјР°РЅРґСѓ СѓРїСЂР°РІР»РµРЅРёСЏ СЃ РѕРґРЅРёРј Р±Р°Р№С‚РѕРј РїР°СЂР°РјРµС‚СЂР°
 inline Command CreateControlCommandWithParam(uint8_t commandCode, uint8_t param) {
     Command cmd;
     cmd.commandType = CmdType::PROG_CONTROL;
@@ -119,7 +119,7 @@ inline Command CreateControlCommandWithParam(uint8_t commandCode, uint8_t param)
     return cmd;
 }
 
-// Создать команду конфигурации с целочисленным параметром (4 байта)
+// РЎРѕР·РґР°С‚СЊ РєРѕРјР°РЅРґСѓ РєРѕРЅС„РёРіСѓСЂР°С†РёРё СЃ С†РµР»РѕС‡РёСЃР»РµРЅРЅС‹Рј РїР°СЂР°РјРµС‚СЂРѕРј (4 Р±Р°Р№С‚Р°)
 inline Command CreateConfigCommandInt(uint8_t commandCode, int32_t value) {
     Command cmd;
     cmd.commandType = CmdType::CONFIGURATION;
@@ -140,7 +140,7 @@ inline Command CreateConfigCommandU16(uint8_t commandCode, uint16_t value) {
     return cmd;
 }
 
-// Создать команду конфигурации с параметром типа float
+// РЎРѕР·РґР°С‚СЊ РєРѕРјР°РЅРґСѓ РєРѕРЅС„РёРіСѓСЂР°С†РёРё СЃ РїР°СЂР°РјРµС‚СЂРѕРј С‚РёРїР° float
 inline Command CreateConfigCommandFloat(uint8_t commandCode, float value) {
     Command cmd;
     cmd.commandType = CmdType::CONFIGURATION;
@@ -150,7 +150,7 @@ inline Command CreateConfigCommandFloat(uint8_t commandCode, float value) {
     return cmd;
 }
 
-// Создать команду запроса без параметров
+// РЎРѕР·РґР°С‚СЊ РєРѕРјР°РЅРґСѓ Р·Р°РїСЂРѕСЃР° Р±РµР· РїР°СЂР°РјРµС‚СЂРѕРІ
 inline Command CreateRequestCommand(uint8_t commandCode) {
     Command cmd;
     cmd.commandType = CmdType::REQUEST;
@@ -181,49 +181,49 @@ inline Command CreateRequestCommandDefrostGetGroup(uint8_t groupId, uint8_t page
 }
 
 // ============================
-// Структуры и функции для обработки ответов от контроллера
+// РЎС‚СЂСѓРєС‚СѓСЂС‹ Рё С„СѓРЅРєС†РёРё РґР»СЏ РѕР±СЂР°Р±РѕС‚РєРё РѕС‚РІРµС‚РѕРІ РѕС‚ РєРѕРЅС‚СЂРѕР»Р»РµСЂР°
 // ============================
 
-// Коды статуса выполнения команд
+// РљРѕРґС‹ СЃС‚Р°С‚СѓСЃР° РІС‹РїРѕР»РЅРµРЅРёСЏ РєРѕРјР°РЅРґ
 struct CmdStatus {
-    static const uint8_t OK = 0x00;                   // Команда выполнена успешно
-    static const uint8_t CRC_ERROR = 0x01;            // Ошибка контрольной суммы
-    static const uint8_t INVALID_TYPE = 0x02;         // Неизвестный тип команды
-    static const uint8_t INVALID_CODE = 0x03;         // Неизвестный код команды
-    static const uint8_t INVALID_LENGTH = 0x04;       // Неверная длина данных
-    static const uint8_t EXECUTION_ERROR = 0x05;      // Ошибка выполнения команды
-    static const uint8_t TIMEOUT = 0x06;              // Таймаут выполнения
-    static const uint8_t UNKNOWN_ERROR = 0xFF;        // Неизвестная ошибка
+    static const uint8_t OK = 0x00;                   // РљРѕРјР°РЅРґР° РІС‹РїРѕР»РЅРµРЅР° СѓСЃРїРµС€РЅРѕ
+    static const uint8_t CRC_ERROR = 0x01;            // РћС€РёР±РєР° РєРѕРЅС‚СЂРѕР»СЊРЅРѕР№ СЃСѓРјРјС‹
+    static const uint8_t INVALID_TYPE = 0x02;         // РќРµРёР·РІРµСЃС‚РЅС‹Р№ С‚РёРї РєРѕРјР°РЅРґС‹
+    static const uint8_t INVALID_CODE = 0x03;         // РќРµРёР·РІРµСЃС‚РЅС‹Р№ РєРѕРґ РєРѕРјР°РЅРґС‹
+    static const uint8_t INVALID_LENGTH = 0x04;       // РќРµРІРµСЂРЅР°СЏ РґР»РёРЅР° РґР°РЅРЅС‹С…
+    static const uint8_t EXECUTION_ERROR = 0x05;      // РћС€РёР±РєР° РІС‹РїРѕР»РЅРµРЅРёСЏ РєРѕРјР°РЅРґС‹
+    static const uint8_t TIMEOUT = 0x06;              // РўР°Р№РјР°СѓС‚ РІС‹РїРѕР»РЅРµРЅРёСЏ
+    static const uint8_t UNKNOWN_ERROR = 0xFF;        // РќРµРёР·РІРµСЃС‚РЅР°СЏ РѕС€РёР±РєР°
 };
 
-// Структура ответа от контроллера
+// РЎС‚СЂСѓРєС‚СѓСЂР° РѕС‚РІРµС‚Р° РѕС‚ РєРѕРЅС‚СЂРѕР»Р»РµСЂР°
 struct CommandResponse {
-    uint8_t commandType;           // Тип исходной команды
-    uint8_t commandCode;           // Код исходной команды
-    uint8_t status;                // Статус выполнения команды
-    uint8_t dataLength;            // Длина данных ответа
-    uint8_t data[MAX_COMMAND_SIZE - 6]; // Данные ответа (макс. 58 байт)
-    uint16_t crc;                  // CRC16 для проверки целостности
+    uint8_t commandType;           // РўРёРї РёСЃС…РѕРґРЅРѕР№ РєРѕРјР°РЅРґС‹
+    uint8_t commandCode;           // РљРѕРґ РёСЃС…РѕРґРЅРѕР№ РєРѕРјР°РЅРґС‹
+    uint8_t status;                // РЎС‚Р°С‚СѓСЃ РІС‹РїРѕР»РЅРµРЅРёСЏ РєРѕРјР°РЅРґС‹
+    uint8_t dataLength;            // Р”Р»РёРЅР° РґР°РЅРЅС‹С… РѕС‚РІРµС‚Р°
+    uint8_t data[MAX_COMMAND_SIZE - 6]; // Р”Р°РЅРЅС‹Рµ РѕС‚РІРµС‚Р° (РјР°РєСЃ. 58 Р±Р°Р№С‚)
+    uint16_t crc;                  // CRC16 РґР»СЏ РїСЂРѕРІРµСЂРєРё С†РµР»РѕСЃС‚РЅРѕСЃС‚Рё
 
     CommandResponse() : commandType(0), commandCode(0), status(0), dataLength(0), crc(0) {
         memset(data, 0, sizeof(data));
     }
 };
 
-// Разбор ответа GET_DEFROST_PARAM (объявление после определения CommandResponse)
+// Р Р°Р·Р±РѕСЂ РѕС‚РІРµС‚Р° GET_DEFROST_PARAM (РѕР±СЉСЏРІР»РµРЅРёРµ РїРѕСЃР»Рµ РѕРїСЂРµРґРµР»РµРЅРёСЏ CommandResponse)
 bool ParseDefrostParamResponse(const CommandResponse& response, uint8_t* outGroupId, uint8_t* outParamId, DefrostParamValue* outValue);
 
-// Функция для проверки CRC ответа
+// Р¤СѓРЅРєС†РёСЏ РґР»СЏ РїСЂРѕРІРµСЂРєРё CRC РѕС‚РІРµС‚Р°
 bool ValidateResponseCRC(const uint8_t* buffer, size_t length);
 
-// Функция для разбора буфера ответа в структуру CommandResponse
+// Р¤СѓРЅРєС†РёСЏ РґР»СЏ СЂР°Р·Р±РѕСЂР° Р±СѓС„РµСЂР° РѕС‚РІРµС‚Р° РІ СЃС‚СЂСѓРєС‚СѓСЂСѓ CommandResponse
 bool ParseResponseBuffer(const uint8_t* buffer, size_t bufferSize, CommandResponse& response);
 
-// Функция для получения строкового описания статуса
+// Р¤СѓРЅРєС†РёСЏ РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ СЃС‚СЂРѕРєРѕРІРѕРіРѕ РѕРїРёСЃР°РЅРёСЏ СЃС‚Р°С‚СѓСЃР°
 const char* GetStatusName(uint8_t status);
 
-// Функция для получения детального описания ошибки на русском языке
+// Р¤СѓРЅРєС†РёСЏ РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ РґРµС‚Р°Р»СЊРЅРѕРіРѕ РѕРїРёСЃР°РЅРёСЏ РѕС€РёР±РєРё РЅР° СЂСѓСЃСЃРєРѕРј СЏР·С‹РєРµ
 const char* GetStatusDescription(uint8_t status);
 
-// Функция для проверки, требует ли команда ответа
+// Р¤СѓРЅРєС†РёСЏ РґР»СЏ РїСЂРѕРІРµСЂРєРё, С‚СЂРµР±СѓРµС‚ Р»Рё РєРѕРјР°РЅРґР° РѕС‚РІРµС‚Р°
 bool CommandRequiresResponse(const Command& cmd);

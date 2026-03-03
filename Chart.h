@@ -1,7 +1,7 @@
 #pragma once
 #pragma comment(lib, "ole32.lib")
 
-#include "Commands.h"   // полные определения Command/CommandResponse до DataForm.h (избегаем ошибок в единицах трансляции, где подключается только Chart.h)
+#include "Commands.h"   // РїРѕР»РЅС‹Рµ РѕРїСЂРµРґРµР»РµРЅРёСЏ Command/CommandResponse РґРѕ DataForm.h (РёР·Р±РµРіР°РµРј РѕС€РёР±РѕРє РІ РµРґРёРЅРёС†Р°С… С‚СЂР°РЅСЃР»СЏС†РёРё, РіРґРµ РїРѕРґРєР»СЋС‡Р°РµС‚СЃСЏ С‚РѕР»СЊРєРѕ Chart.h)
 #include "DataForm.h"
 
 #using <C:\Windows\assembly\GAC_MSIL\Microsoft.Office.Interop.Excel\15.0.0.0__71e9bce111e9429c\Microsoft.Office.Interop.Excel.dll>
@@ -19,10 +19,10 @@ private:
     Microsoft::Office::Interop::Excel::Workbook^ workbook;
     Microsoft::Office::Interop::Excel::Worksheet^ worksheet;
     bool isInitialized;
-    // Добавляем флаг инициализации COM
+    // Р”РѕР±Р°РІР»СЏРµРј С„Р»Р°Рі РёРЅРёС†РёР°Р»РёР·Р°С†РёРё COM
     bool isComInitialized;
 
-    // Освобождение COM-объекта с обнулением ссылки (перегрузки избегают ошибок парсера с template T%)
+    // РћСЃРІРѕР±РѕР¶РґРµРЅРёРµ COM-РѕР±СЉРµРєС‚Р° СЃ РѕР±РЅСѓР»РµРЅРёРµРј СЃСЃС‹Р»РєРё (РїРµСЂРµРіСЂСѓР·РєРё РёР·Р±РµРіР°СЋС‚ РѕС€РёР±РѕРє РїР°СЂСЃРµСЂР° СЃ template T%)
     void ReleaseComObject(Microsoft::Office::Interop::Excel::Application^% comObj) {
         if (comObj != nullptr) {
             try { while (Marshal::ReleaseComObject(comObj) > 0) {} }
@@ -55,36 +55,36 @@ public:
 
         HRESULT hra = CoGetApartmentType(&currentType, &currentQualifier);
 
-        // Проверим тип апартмента текущего потока, должен быть STA (APTTYPE_STA или APTTYPE_MAINSTA)для EXCEL
+        // РџСЂРѕРІРµСЂРёРј С‚РёРї Р°РїР°СЂС‚РјРµРЅС‚Р° С‚РµРєСѓС‰РµРіРѕ РїРѕС‚РѕРєР°, РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ STA (APTTYPE_STA РёР»Рё APTTYPE_MAINSTA)РґР»СЏ EXCEL
         if (SUCCEEDED(hra)) {
             DWORD desiredMode = COINIT_APARTMENTTHREADED;
 
-            // Мы должны учитывать APTTYPE_MAINSTA при проверке на STA-совместимость. 
-            // Поскольку APTTYPE_MAINSTA (0x00000003) включает в себя флаг APTTYPE_STA (0x00000001), 
-            // правильнее использовать побитовую операцию для проверки:
+            // РњС‹ РґРѕР»Р¶РЅС‹ СѓС‡РёС‚С‹РІР°С‚СЊ APTTYPE_MAINSTA РїСЂРё РїСЂРѕРІРµСЂРєРµ РЅР° STA-СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚СЊ. 
+            // РџРѕСЃРєРѕР»СЊРєСѓ APTTYPE_MAINSTA (0x00000003) РІРєР»СЋС‡Р°РµС‚ РІ СЃРµР±СЏ С„Р»Р°Рі APTTYPE_STA (0x00000001), 
+            // РїСЂР°РІРёР»СЊРЅРµРµ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ РїРѕР±РёС‚РѕРІСѓСЋ РѕРїРµСЂР°С†РёСЋ РґР»СЏ РїСЂРѕРІРµСЂРєРё:
             bool isSTA = ((currentType & APTTYPE_STA) == APTTYPE_STA);
             bool wantsSTA = (desiredMode == COINIT_APARTMENTTHREADED);
 
             if (isSTA != wantsSTA) {
-                // Режимы не совпадают
+                // Р РµР¶РёРјС‹ РЅРµ СЃРѕРІРїР°РґР°СЋС‚
                 throw gcnew InvalidOperationException(
                     "COM mode mismatch!"
                 );
             }
         }
-        // Явная инициализация COM с обработкой ошибок
+        // РЇРІРЅР°СЏ РёРЅРёС†РёР°Р»РёР·Р°С†РёСЏ COM СЃ РѕР±СЂР°Р±РѕС‚РєРѕР№ РѕС€РёР±РѕРє
         HRESULT hr = CoInitializeEx(
             NULL,
             COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE
         );
 
-        // Обрабатываем возможные коды возврата
+        // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РІРѕР·РјРѕР¶РЅС‹Рµ РєРѕРґС‹ РІРѕР·РІСЂР°С‚Р°
         if (hr == RPC_E_CHANGED_MODE) {
              throw gcnew InvalidOperationException(
-                "COM уже инициализирован в другом режиме");
+                "COM СѓР¶Рµ РёРЅРёС†РёР°Р»РёР·РёСЂРѕРІР°РЅ РІ РґСЂСѓРіРѕРј СЂРµР¶РёРјРµ");
         }
         else if (FAILED(hr)) {
-            // Получаем текст ошибки (промежуточная переменная избегает ошибки парсера "отсутствие , перед &")
+            // РџРѕР»СѓС‡Р°РµРј С‚РµРєСЃС‚ РѕС€РёР±РєРё (РїСЂРѕРјРµР¶СѓС‚РѕС‡РЅР°СЏ РїРµСЂРµРјРµРЅРЅР°СЏ РёР·Р±РµРіР°РµС‚ РѕС€РёР±РєРё РїР°СЂСЃРµСЂР° "РѕС‚СЃСѓС‚СЃС‚РІРёРµ , РїРµСЂРµРґ &")
             LPWSTR errorText = nullptr;
             void* pBuf = &errorText;
             FormatMessage(
@@ -102,11 +102,11 @@ public:
             throw gcnew Exception("COM initialization failed: " + message);
         }
 
-        // Все проверки пройдены, установим флаг, что COM инициализирован
+        // Р’СЃРµ РїСЂРѕРІРµСЂРєРё РїСЂРѕР№РґРµРЅС‹, СѓСЃС‚Р°РЅРѕРІРёРј С„Р»Р°Рі, С‡С‚Рѕ COM РёРЅРёС†РёР°Р»РёР·РёСЂРѕРІР°РЅ
         isComInitialized = true;
 
         try {
-            // Инициализация безопасности
+            // РРЅРёС†РёР°Р»РёР·Р°С†РёСЏ Р±РµР·РѕРїР°СЃРЅРѕСЃС‚Рё
             HRESULT hr = CoInitializeSecurity(
                 NULL,                        // Security descriptor
                 -1,                         // COM authentication
@@ -119,25 +119,25 @@ public:
                 NULL                        // Reserved
             );
 
-            if (FAILED(hr) && (hr != RPC_E_TOO_LATE)) {  // RPC_E_TOO_LATE - не ошибка
+            if (FAILED(hr) && (hr != RPC_E_TOO_LATE)) {  // RPC_E_TOO_LATE - РЅРµ РѕС€РёР±РєР°
                 switch (hr) {
                 case RPC_E_TOO_LATE:
-                    // Безопасность уже инициализирована
+                    // Р‘РµР·РѕРїР°СЃРЅРѕСЃС‚СЊ СѓР¶Рµ РёРЅРёС†РёР°Р»РёР·РёСЂРѕРІР°РЅР°
                     break;
                 case E_INVALIDARG:
-                    // Неверные параметры
+                    // РќРµРІРµСЂРЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹
                     break;
                 case E_OUTOFMEMORY:
-                    // Недостаточно памяти
+                    // РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РїР°РјСЏС‚Рё
                     break;
                 default:
-                    // Другие ошибки
+                    // Р”СЂСѓРіРёРµ РѕС€РёР±РєРё
                     break;
                 }
                 throw gcnew COMException("Failed to initialize COM security", hr);
             }
-            // Создание Excel
-            // Создание через Interop
+            // РЎРѕР·РґР°РЅРёРµ Excel
+            // РЎРѕР·РґР°РЅРёРµ С‡РµСЂРµР· Interop
             excel = gcnew Microsoft::Office::Interop::Excel::ApplicationClass();
             excel->Visible = false;
             excel->DisplayAlerts = false;
@@ -158,7 +158,7 @@ public:
         if (!isInitialized) return false;
 
         try {
-            // Освобождаем предыдущие объекты
+            // РћСЃРІРѕР±РѕР¶РґР°РµРј РїСЂРµРґС‹РґСѓС‰РёРµ РѕР±СЉРµРєС‚С‹
             if (workbook != nullptr) {
                 ReleaseComObject(workbook);
                 workbook = nullptr;
@@ -167,7 +167,7 @@ public:
             workbook = excel->Workbooks->Add(Type::Missing);
             worksheet = safe_cast<Worksheet^>(workbook->Worksheets->Item[1]);
 
-            // Освобождаем временные объекты
+            // РћСЃРІРѕР±РѕР¶РґР°РµРј РІСЂРµРјРµРЅРЅС‹Рµ РѕР±СЉРµРєС‚С‹
             Marshal::ReleaseComObject(workbook->Worksheets);
             return true;
         }
@@ -177,7 +177,7 @@ public:
         }
     }
 
-    // Метод для получения worksheet
+    // РњРµС‚РѕРґ РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ worksheet
     Microsoft::Office::Interop::Excel::Worksheet^ GetWorksheet() {
         return worksheet;
     }
@@ -210,7 +210,7 @@ public:
 
     void Close() {
         try {
-            // Сначала закрываем книгу, ЗАТЕМ освобождаем объекты
+            // РЎРЅР°С‡Р°Р»Р° Р·Р°РєСЂС‹РІР°РµРј РєРЅРёРіСѓ, Р—РђРўР•Рњ РѕСЃРІРѕР±РѕР¶РґР°РµРј РѕР±СЉРµРєС‚С‹
             if (workbook != nullptr) {
                 try {
                     workbook->Close(false, Type::Missing, Type::Missing);
@@ -218,7 +218,7 @@ public:
                 catch (...) {}
             }
 
-            // Закрываем Excel
+            // Р—Р°РєСЂС‹РІР°РµРј Excel
             if (excel != nullptr) {
                 try {
                     excel->Quit();
@@ -226,7 +226,7 @@ public:
                 catch (...) {}
             }
 
-            // Теперь освобождаем объекты в обратном порядке их создания
+            // РўРµРїРµСЂСЊ РѕСЃРІРѕР±РѕР¶РґР°РµРј РѕР±СЉРµРєС‚С‹ РІ РѕР±СЂР°С‚РЅРѕРј РїРѕСЂСЏРґРєРµ РёС… СЃРѕР·РґР°РЅРёСЏ
             if (worksheet != nullptr) {
                 try {
                     Marshal::ReleaseComObject(worksheet);
@@ -242,7 +242,7 @@ public:
                 catch (...) {}
                 workbook = nullptr;
             }
-            // В последнюю очередь закрыть Excel приложение
+            // Р’ РїРѕСЃР»РµРґРЅСЋСЋ РѕС‡РµСЂРµРґСЊ Р·Р°РєСЂС‹С‚СЊ Excel РїСЂРёР»РѕР¶РµРЅРёРµ
             if (excel != nullptr) {
                 try {
                     Marshal::ReleaseComObject(excel);
@@ -253,18 +253,18 @@ public:
 
         }
         catch (Exception^ ex) {
-            // Логирование ошибки (можно заменить на свой метод)
+            // Р›РѕРіРёСЂРѕРІР°РЅРёРµ РѕС€РёР±РєРё (РјРѕР¶РЅРѕ Р·Р°РјРµРЅРёС‚СЊ РЅР° СЃРІРѕР№ РјРµС‚РѕРґ)
 #ifdef _DEBUG
             System::Diagnostics::Debug::WriteLine("Close error: " + ex->Message);
 #endif
             GlobalLogger::LogMessage("Close EXCEL error: " + ConvertToStdString(ex->Message));
         }
         finally {
-            isInitialized = false;  // Отмечаем, что объект закрыт
+            isInitialized = false;  // РћС‚РјРµС‡Р°РµРј, С‡С‚Рѕ РѕР±СЉРµРєС‚ Р·Р°РєСЂС‹С‚
         }
     }
 
-    // Финализатор
+    // Р¤РёРЅР°Р»РёР·Р°С‚РѕСЂ
     !ExcelHelper() {
         try {
             if (worksheet != nullptr) {

@@ -145,9 +145,9 @@ System::Void ProjectServerW::MyForm::button_Listen_Click(System::Object^ sender,
 	try {
 		server.port = 3487;
 		
-		// ˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜ ˜ ˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜, ˜˜˜˜˜ ˜˜ ˜˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜ ˜˜˜˜˜˜˜˜˜ ˜˜˜˜
+		// Ğ—Ğ°Ğ¿ÑƒÑĞº ÑĞµÑ€Ğ²ĞµÑ€Ğ° Ğ² Ğ¾Ñ‚Ğ´ĞµĞ»ÑŒĞ½Ğ¾Ğ¼ Ğ¿Ğ¾Ñ‚Ğ¾ĞºĞµ, Ñ‡Ñ‚Ğ¾Ğ±Ñ‹ Ğ½Ğµ Ğ±Ğ»Ğ¾ĞºĞ¸Ñ€Ğ¾Ğ²Ğ°Ñ‚ÑŒ UI.
 		std::thread serverThread(&ServerThreadFunction);
-		serverThread.detach(); // ˜˜˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜ ˜˜˜˜˜˜˜, ˜˜˜˜˜ ˜˜ ˜˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜˜˜
+		serverThread.detach(); // ĞÑ‚ÑĞ¾ĞµĞ´Ğ¸Ğ½ÑĞµĞ¼ Ğ¿Ğ¾Ñ‚Ğ¾Ğº, Ñ‡Ñ‚Ğ¾Ğ±Ñ‹ Ğ½Ğµ Ğ¶Ğ´Ğ°Ñ‚ÑŒ ĞµĞ³Ğ¾ Ğ·Ğ°Ğ²ĞµÑ€ÑˆĞµĞ½Ğ¸Ñ.
 	}
 	catch (Exception^ ex) {
 		GlobalLogger::LogMessage(ConvertToStdString(String::Format(
@@ -164,6 +164,6 @@ System::Void ProjectServerW::MyForm::button_Listen_Click(System::Object^ sender,
 
 System::Void ProjectServerW::MyForm::MyForm_Load(System::Object^ sender, System::EventArgs^ e)
 {
-	// ˜˜˜˜˜˜˜˜˜ ˜˜˜˜˜˜ ˜˜˜˜˜ ˜˜˜˜˜˜ ˜˜˜˜˜˜˜˜ ˜˜˜˜˜
+	// ĞŸÑ€Ğ¸ Ğ·Ğ°Ğ³Ñ€ÑƒĞ·ĞºĞµ Ñ„Ğ¾Ñ€Ğ¼Ñ‹ Ğ·Ğ°Ğ¿ÑƒÑĞºĞ°ĞµĞ¼ ÑĞµÑ€Ğ²ĞµÑ€.
 	button_Listen_Click(nullptr, nullptr);
 }

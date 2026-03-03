@@ -4,18 +4,18 @@
 #pragma once
 #pragma comment(lib, "Ws2_32.lib")
 
-#include <winsock2.h>       // Должен быть первым!
-#include <ws2tcpip.h>       // После winsock2.h
-#include <windows.h>        // Windows.h должен быть после winsock2.h Для CreateThread
+#include <winsock2.h>       // Р”РѕР»Р¶РµРЅ Р±С‹С‚СЊ РїРµСЂРІС‹Рј!
+#include <ws2tcpip.h>       // РџРѕСЃР»Рµ winsock2.h
+#include <windows.h>        // Windows.h РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РїРѕСЃР»Рµ winsock2.h Р”Р»СЏ CreateThread
 
-#include <ctime>			// Для std::time
-#include <iomanip>			// Для std::put_time
+#include <ctime>			// Р”Р»СЏ std::time
+#include <iomanip>			// Р”Р»СЏ std::put_time
 #include <iostream>
-#include <sstream>			// Для std::stringstream
+#include <sstream>			// Р”Р»СЏ std::stringstream
 #include <thread>
-#include <msclr\marshal_cppstd.h>  // Для работы с кодировками
+#include <msclr\marshal_cppstd.h>  // Р”Р»СЏ СЂР°Р±РѕС‚С‹ СЃ РєРѕРґРёСЂРѕРІРєР°РјРё
 
-// Объявления для работы с Unicode и форматированием
+// РћР±СЉСЏРІР»РµРЅРёСЏ РґР»СЏ СЂР°Р±РѕС‚С‹ СЃ Unicode Рё С„РѕСЂРјР°С‚РёСЂРѕРІР°РЅРёРµРј
 namespace Unicode {
     int snprintfFloat(char* buffer, size_t size, const char* format, float value);
 }
@@ -29,22 +29,22 @@ using namespace System::IO;
 using namespace System::Threading;
 using namespace System::Windows::Forms;
 
-// Буфер для форматирования значений
+// Р‘СѓС„РµСЂ РґР»СЏ С„РѕСЂРјР°С‚РёСЂРѕРІР°РЅРёСЏ Р·РЅР°С‡РµРЅРёР№
 extern char ValueCoreT1SmallBuffer[256];
 
 class SServer
 {
 public:
-    SServer();			// Объявление конструктора
-    ~SServer();			// Объявление деструктора
-    void startServer(); // Объявление функции
+    SServer();			// РћР±СЉСЏРІР»РµРЅРёРµ РєРѕРЅСЃС‚СЂСѓРєС‚РѕСЂР°
+    ~SServer();			// РћР±СЉСЏРІР»РµРЅРёРµ РґРµСЃС‚СЂСѓРєС‚РѕСЂР°
+    void startServer(); // РћР±СЉСЏРІР»РµРЅРёРµ С„СѓРЅРєС†РёРё
     void closeServer();
 	void handle();
     int port;
 private:
 	SOCKET this_s;
 	WSAData wData;
-    static DWORD WINAPI ClientHandler(LPVOID lpParam); // Объявление функции потока
+    static DWORD WINAPI ClientHandler(LPVOID lpParam); // РћР±СЉСЏРІР»РµРЅРёРµ С„СѓРЅРєС†РёРё РїРѕС‚РѕРєР°
 };
 
 ref class GlobalLogger abstract sealed { // abstract sealed = static class
@@ -53,7 +53,7 @@ private:
     static Object^ lockObject;
     static bool isInitialized;
 
-    // Статический конструктор для инициализации полей
+    // РЎС‚Р°С‚РёС‡РµСЃРєРёР№ РєРѕРЅСЃС‚СЂСѓРєС‚РѕСЂ РґР»СЏ РёРЅРёС†РёР°Р»РёР·Р°С†РёРё РїРѕР»РµР№
     static GlobalLogger() {
         writer = nullptr;
         lockObject = gcnew Object();

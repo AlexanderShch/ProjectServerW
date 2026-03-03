@@ -2,7 +2,7 @@
 
 namespace ProjectServerW {
 
-	// Экспорт в Excel вынесен из DataForm, чтобы UI-логика и COM-логика не жили в одном файле.
+	// Р­РєСЃРїРѕСЂС‚ РІ Excel РІС‹РЅРµСЃРµРЅ РёР· DataForm, С‡С‚РѕР±С‹ UI-Р»РѕРіРёРєР° Рё COM-Р»РѕРіРёРєР° РЅРµ Р¶РёР»Рё РІ РѕРґРЅРѕРј С„Р°Р№Р»Рµ.
 	public ref class FormExcel abstract sealed
 	{
 	public:
