@@ -363,6 +363,12 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 
 		// Добавляем полученные байты к накопленным
 		accumulatedBytes += bytesReceived;
+
+		// Полудуплекс: пока обрабатываем принятые данные, блокируем отправку команд (SendCommand / DATA_OK ждут).
+		if (bytesReceived > 0) {
+			System::Object^ recvGate = PacketQueueProcessor::GetReceivingGate(clientSocket);
+			System::Threading::Monitor::Enter(recvGate);
+			try {
 		
 		// Обрабатываем все полные пакеты в буфере
 		int processedBytes = 0;
@@ -509,6 +515,12 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 			memmove(accumulatedBuffer, accumulatedBuffer + processedBytes, remainingBytes);
 		}
 		accumulatedBytes = remainingBytes;
+
+			}
+			finally {
+				System::Threading::Monitor::Exit(recvGate);
+			}
+		}
 	}	// конец while (основной цикл)
 
 	// Соединение оборвалось. Форму НЕ закрываем: устройство может вернуться в течение 30 минут,

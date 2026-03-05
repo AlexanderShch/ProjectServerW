@@ -42,16 +42,24 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
             return false;
         }
 
-        // Критично: сериализуем send() на сокет, чтобы байтовые потоки не перемешивались с ACK телеметрии.
-        System::Object^ sendGate = PacketQueueProcessor::GetSendGate(clientSocket);
-        System::Threading::Monitor::Enter(sendGate);
         int bytesSent = SOCKET_ERROR;
+        // Полудуплекс: не отправлять команду, пока recv()-поток обрабатывает принятые от контроллера данные.
+        System::Object^ recvGate = PacketQueueProcessor::GetReceivingGate(clientSocket);
+        System::Threading::Monitor::Enter(recvGate);
         try {
-            bytesSent = send(clientSocket, reinterpret_cast<const char*>(buffer),
-                static_cast<int>(commandLength), 0);
+            // Сериализуем send() на сокет, чтобы байтовые потоки не перемешивались с ACK телеметрии.
+            System::Object^ sendGate = PacketQueueProcessor::GetSendGate(clientSocket);
+            System::Threading::Monitor::Enter(sendGate);
+            try {
+                bytesSent = send(clientSocket, reinterpret_cast<const char*>(buffer),
+                    static_cast<int>(commandLength), 0);
+            }
+            finally {
+                System::Threading::Monitor::Exit(sendGate);
+            }
         }
         finally {
-            System::Threading::Monitor::Exit(sendGate);
+            System::Threading::Monitor::Exit(recvGate);
         }
 
         if (bytesSent == SOCKET_ERROR) {

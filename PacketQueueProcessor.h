@@ -34,9 +34,14 @@ namespace ProjectServerW {
 		static initonly System::Collections::Concurrent::ConcurrentDictionary<System::IntPtr, System::Object^>^ s_sendGates =
 			gcnew System::Collections::Concurrent::ConcurrentDictionary<System::IntPtr, System::Object^>();
 
+		// Полудуплекс: пока recv()-поток обрабатывает принятые данные, отправка команд откладывается.
+		static initonly System::Collections::Concurrent::ConcurrentDictionary<System::IntPtr, System::Object^>^ s_receivingGates =
+			gcnew System::Collections::Concurrent::ConcurrentDictionary<System::IntPtr, System::Object^>();
+
 		static void EnsureWorker();
 		static void WorkerLoop();
 		static System::Object^ GetOrCreateSendGate(System::IntPtr socketKey);
+		static System::Object^ GetOrCreateReceivingGate(System::IntPtr socketKey);
 		static bool TrySendTelemetryAck(SOCKET socket, uint8_t code);
 		static bool ValidateTelemetryCrc(const uint8_t* data, int size);
 
@@ -44,6 +49,8 @@ namespace ProjectServerW {
 		// Critical: telemetry ACKs and UI-originated commands share the same socket.
 		// Serializing send() per-socket prevents interleaving at the TCP stream level.
 		static System::Object^ GetSendGate(SOCKET clientSocket);
+		// Блокировка «идёт приём»: recv()-поток удерживает её при разборе буфера; отправители ждут перед send().
+		static System::Object^ GetReceivingGate(SOCKET clientSocket);
 
 		static void EnqueueTelemetry(cli::array<System::Byte>^ packet,
 			int size,

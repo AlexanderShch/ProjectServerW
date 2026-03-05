@@ -60,6 +60,22 @@ namespace ProjectServerW {
 		return candidate;
 	}
 
+	Object^ PacketQueueProcessor::GetOrCreateReceivingGate(IntPtr socketKey)
+	{
+		Object^ gate = nullptr;
+		if (s_receivingGates->TryGetValue(socketKey, gate)) {
+			return gate;
+		}
+		Object^ candidate = gcnew Object();
+		if (s_receivingGates->TryAdd(socketKey, candidate)) {
+			return candidate;
+		}
+		if (s_receivingGates->TryGetValue(socketKey, gate) && gate != nullptr) {
+			return gate;
+		}
+		return candidate;
+	}
+
 	void PacketQueueProcessor::EnsureWorker()
 	{
 		Monitor::Enter(s_workerSync);
@@ -88,15 +104,22 @@ namespace ProjectServerW {
 		}
 
 		const IntPtr socketKey(reinterpret_cast<void*>(socket));
-		Object^ gate = GetOrCreateSendGate(socketKey);
-
-		Monitor::Enter(gate);
+		// Полудуплекс: не отправлять, пока recv()-поток обрабатывает принятые данные.
+		Object^ recvGate = GetOrCreateReceivingGate(socketKey);
+		Monitor::Enter(recvGate);
 		try {
-			const int bytesSent = send(socket, reinterpret_cast<const char*>(ackBuffer), static_cast<int>(ackSize), 0);
-			return bytesSent != SOCKET_ERROR;
+			Object^ sendGate = GetOrCreateSendGate(socketKey);
+			Monitor::Enter(sendGate);
+			try {
+				const int bytesSent = send(socket, reinterpret_cast<const char*>(ackBuffer), static_cast<int>(ackSize), 0);
+				return bytesSent != SOCKET_ERROR;
+			}
+			finally {
+				Monitor::Exit(sendGate);
+			}
 		}
 		finally {
-			Monitor::Exit(gate);
+			Monitor::Exit(recvGate);
 		}
 	}
 
@@ -252,6 +275,11 @@ namespace ProjectServerW {
 	System::Object^ PacketQueueProcessor::GetSendGate(SOCKET clientSocket)
 	{
 		return GetOrCreateSendGate(IntPtr(reinterpret_cast<void*>(clientSocket)));
+	}
+
+	System::Object^ PacketQueueProcessor::GetReceivingGate(SOCKET clientSocket)
+	{
+		return GetOrCreateReceivingGate(IntPtr(reinterpret_cast<void*>(clientSocket)));
 	}
 
 	// ============================

@@ -1423,57 +1423,71 @@ System::Void ProjectServerW::DataForm::buttonSaveToFile_Click(System::Object^ se
 }
 
 System::Void ProjectServerW::DataForm::buttonReadParameters_Click(System::Object^ sender, System::EventArgs^ e) {
-    if ((dataGridView1 == nullptr || dataGridView1->IsDisposed) && (dataGridView2 == nullptr || dataGridView2->IsDisposed)) return;
-    if (ClientSocket == INVALID_SOCKET) {
-        MessageBox::Show("Нет соединения с устройством. Подключитесь к устройству.");
-        if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
-            Label_Commands->Text = "Соединение с устройством: нет соединения";
-            Label_Commands->ForeColor = System::Drawing::Color::Orange;
+    try {
+        if ((dataGridView1 == nullptr || dataGridView1->IsDisposed) && (dataGridView2 == nullptr || dataGridView2->IsDisposed)) {
+            MessageBox::Show("Таблицы параметров недоступны. Закройте и снова откройте вкладку \"Параметры\" или перезапустите приложение.", "Считать параметры");
+            return;
         }
-        return;
-    }
-    int ok = 0, fail = 0;
-    if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
-        for (int r = 0; r < dataGridView1->Rows->Count; r++) {
-            DataGridViewRow^ row = dataGridView1->Rows[r];
-            if (row->IsNewRow) continue;
-            Object^ v0 = row->Cells["Parameter"]->Value;
-            String^ paramName = v0 != nullptr ? v0->ToString() : "";
-            for (int ph = 0; ph < 3; ph++) {
-                uint8_t g, id;
-                if (!GetDefrostParamIdGrid1(paramName, ph, g, id)) continue;
+        if (ClientSocket == INVALID_SOCKET) {
+            MessageBox::Show("Нет соединения с устройством. Подключитесь к устройству.");
+            if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+                Label_Commands->Text = "Соединение с устройством: нет соединения";
+                Label_Commands->ForeColor = System::Drawing::Color::Orange;
+            }
+            return;
+        }
+        int ok = 0, fail = 0;
+        if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
+            for (int r = 0; r < dataGridView1->Rows->Count; r++) {
+                DataGridViewRow^ row = dataGridView1->Rows[r];
+                if (row->IsNewRow) continue;
+                Object^ v0 = row->Cells["Parameter"]->Value;
+                String^ paramName = v0 != nullptr ? v0->ToString() : "";
+                for (int ph = 0; ph < 3; ph++) {
+                    uint8_t g, id;
+                    if (!GetDefrostParamIdGrid1(paramName, ph, g, id)) continue;
+                    DefrostParamValue val;
+                    if (!GetDefrostParam(g, id, &val)) { fail++; continue; }
+                    String^ valueStr = (val.valueType == DefrostParamType::F32) ? val.value.f32.ToString(System::Globalization::CultureInfo::InvariantCulture) : "";
+                    String^ colName = (ph == 0) ? "WarmUP" : (ph == 1) ? "Plateau" : "Finish";
+                    row->Cells[colName]->Value = valueStr;
+                    ok++;
+                }
+            }
+        }
+        if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
+            for (int r = 0; r < dataGridView2->Rows->Count; r++) {
+                DataGridViewRow^ row = dataGridView2->Rows[r];
+                if (row->IsNewRow) continue;
+                Object^ v0 = row->Cells["Parameter2"]->Value;
+                String^ paramName = v0 != nullptr ? v0->ToString() : "";
+                uint8_t g, id, vt;
+                if (!GetDefrostParamId(paramName, g, id, vt)) continue;
                 DefrostParamValue val;
                 if (!GetDefrostParam(g, id, &val)) { fail++; continue; }
-                String^ valueStr = (val.valueType == DefrostParamType::F32) ? val.value.f32.ToString(System::Globalization::CultureInfo::InvariantCulture) : "";
-                String^ colName = (ph == 0) ? "WarmUP" : (ph == 1) ? "Plateau" : "Finish";
-                row->Cells[colName]->Value = valueStr;
+                String^ valueStr = "";
+                if (val.valueType == DefrostParamType::U8) valueStr = val.value.u8.ToString();
+                else if (val.valueType == DefrostParamType::U16) valueStr = val.value.u16.ToString();
+                else if (val.valueType == DefrostParamType::F32) valueStr = val.value.f32.ToString(System::Globalization::CultureInfo::InvariantCulture);
+                row->Cells["Value"]->Value = valueStr;
                 ok++;
             }
         }
+        if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+            Label_Commands->Text = String::Format("Считать с устройства: прочитано {0} параметров" + (fail > 0 ? ", ошибок: " + fail : ""), ok);
+            Label_Commands->ForeColor = System::Drawing::Color::DarkGreen;
+        }
+        GlobalLogger::LogMessage(ConvertToStdString(String::Format("Information: Read {0} params from defroster" + (fail > 0 ? ", {1} failed" : ""), ok, fail)));
     }
-    if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
-        for (int r = 0; r < dataGridView2->Rows->Count; r++) {
-            DataGridViewRow^ row = dataGridView2->Rows[r];
-            if (row->IsNewRow) continue;
-            Object^ v0 = row->Cells["Parameter2"]->Value;
-            String^ paramName = v0 != nullptr ? v0->ToString() : "";
-            uint8_t g, id, vt;
-            if (!GetDefrostParamId(paramName, g, id, vt)) continue;
-            DefrostParamValue val;
-            if (!GetDefrostParam(g, id, &val)) { fail++; continue; }
-            String^ valueStr = "";
-            if (val.valueType == DefrostParamType::U8) valueStr = val.value.u8.ToString();
-            else if (val.valueType == DefrostParamType::U16) valueStr = val.value.u16.ToString();
-            else if (val.valueType == DefrostParamType::F32) valueStr = val.value.f32.ToString(System::Globalization::CultureInfo::InvariantCulture);
-            row->Cells["Value"]->Value = valueStr;
-            ok++;
+    catch (Exception^ ex) {
+        String^ msg = "Ошибка при считывании параметров: " + (ex->Message != nullptr ? ex->Message : "");
+        MessageBox::Show(msg, "Считать параметры", MessageBoxButtons::OK, MessageBoxIcon::Warning);
+        GlobalLogger::LogMessage(ConvertToStdString("Error: buttonReadParameters_Click: " + msg));
+        if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+            Label_Commands->Text = "Ошибка при считывании параметров";
+            Label_Commands->ForeColor = System::Drawing::Color::Red;
         }
     }
-    if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
-        Label_Commands->Text = String::Format("Считать с устройства: прочитано {0} параметров" + (fail > 0 ? ", ошибок: " + fail : ""), ok);
-        Label_Commands->ForeColor = System::Drawing::Color::DarkGreen;
-    }
-    GlobalLogger::LogMessage(ConvertToStdString(String::Format("Information: Read {0} params from defroster" + (fail > 0 ? ", {1} failed" : ""), ok, fail)));
 }
 
 System::Void ProjectServerW::DataForm::buttonWriteParameters_Click(System::Object^ sender, System::EventArgs^ e) {
