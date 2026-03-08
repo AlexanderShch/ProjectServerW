@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "Commands.h"   // первым: Command, CommandResponse, DefrostParamValue — полные определения до любых заголовков, использующих их в объявлениях
 #include "SServer.h"
 
@@ -105,9 +105,8 @@ namespace ProjectServerW {
 			System::Data::DataTable^ dataTable;  // Объявление таблицы как члена класса
 			// Critical: DataTable is not thread-safe; lock when copying for Excel while UI is appending rows.
 			System::Object^ dataTableSync;
-			// Путь к текущему файлу лога алгоритма (CSV); null до первого пакета Type 0x01
-			System::String^ controlLogFilePath;
-			System::Object^ controlLogSync;
+			// Строка, накопленная по телеметрии; добавляется в таблицу только при приходе лога (авто-режим).
+			System::Data::DataRow^ lastPendingTelemetryRow;
 			// Critical: explicit lock object for export state.
 			System::Object^ excelExportSync;
 			// Critical: prevents starting multiple Excel export threads per form (they would only stack up on the global mutex).
@@ -149,17 +148,14 @@ namespace ProjectServerW {
 		private: System::Windows::Forms::TextBox^ textBoxExcelDirectory;
 		private: System::Windows::Forms::Label^ labelExcelDirectory;
 		private: System::String^ excelSavePath;  // Для хранения пути
-				System::String^ excelFileName;   // Для хранения имени файла, связанного с битом "Work"
+				System::String^ excelFileName;   // Имя файла для экспорта данных (формируется при первом приёме)
 				DateTime dataCollectionStartTime; // Время начала сбора данных
 				DateTime dataCollectionEndTime;   // Время окончания сбора данных
-			bool workBitDetected;            // Флаг для отслеживания активации бита "Work"
-			// Excel export retries are handled inside FormExcel worker (queue + mutex requeue).
-		bool workBitZeroTimerActive;     // флаг "идёт 5-минутная дозапись после Work=0 (финализация только по телеметрии)"
-		bool workStopFinalizeDelayElapsed; // флаг "5 минут после Work=0 прошли, можно финализировать на следующем пакете телеметрии"
-	bool firstDataReceived;          // флаг "получен первый пакет данных" (для установки начального состояния кнопок)
+	bool firstDataReceived;          // флаг "получен первый пакет данных"
 	bool dataExportedToExcel;        // флаг "данные уже были экспортированы в Excel" (для предотвращения дублирующей записи при закрытии формы)
-	bool autoRestartPending;         // When true, we have issued a scheduled STOP and will START after a stable Work=0 stop is observed.
-		DateTime autoRestartStopIssuedTime; // Why: cancel pending auto-restart if Work does not transition within a reasonable window.
+	bool autoRestartPending;         // true: отправлен STOP по автоперезапуску, ждём экспорт и затем START
+		DateTime autoRestartStopIssuedTime; // Время отправки STOP для таймаута автоперезапуска
+	DateTime lastStopSuccessTime; // Время последнего успешного ответа на СТОП; лог не перезаписывает кнопки в течение 10 с
 	bool autoRestartInternalUncheck; // Why: one-shot UX unchecks the box; we must not cancel the pending START.
 	bool settingsLoading;            // Why: avoid side-effects (timers/log/save) while applying persisted settings.
 	System::String^ pendingVersion;  // временное хранение версии для обновления UI из другого потока
@@ -229,8 +225,7 @@ namespace ProjectServerW {
 				exportCompletedEvent = gcnew System::Threading::ManualResetEvent(false);
 				// Критично: защищает DataTable от гонок между UI-обновлениями и фоновой копией в Excel.
 				dataTableSync = gcnew System::Object();
-				controlLogFilePath = nullptr;
-				controlLogSync = gcnew System::Object();
+				lastPendingTelemetryRow = nullptr;
 				excelExportSync = gcnew System::Object();
 				excelExportInProgress = 0;
 				formGuid = nullptr;
@@ -264,15 +259,12 @@ namespace ProjectServerW {
 
 			// Инициализируем путь сохранения из текстового поля
 			excelSavePath = textBoxExcelDirectory->Text;
-			// Имя файла будет сгенерировано позже, когда "Work" станет активным
 	excelFileName = nullptr;
-	workBitDetected = false;
-	workBitZeroTimerActive = false;
-	workStopFinalizeDelayElapsed = false;
-	firstDataReceived = false;      // Флаг первого приёма данных
+	firstDataReceived = false;
 	dataExportedToExcel = false;    // Флаг экспорта данных в Excel
 	autoRestartPending = false;
 	autoRestartStopIssuedTime = DateTime::MinValue;
+	lastStopSuccessTime = DateTime::MinValue;
 	autoRestartInternalUncheck = false;
 	settingsLoading = false;
 	pendingVersion = nullptr;       // Временная версия для обновления UI
@@ -285,13 +277,7 @@ namespace ProjectServerW {
 			LoadDataGridView1FromFile();
 			LoadDataGridView2FromFile();
 
-			// Таймер задержки финализации после Work=0: по истечении 5 минут только разрешаем финализацию,
-			// а сам экспорт выполняем на следующем пакете телеметрии (чтобы не финализировать "вслепую").
-			workStopFinalizeTimer = gcnew System::Windows::Forms::Timer();
-			workStopFinalizeTimer->Interval = 5 * 60 * 1000; // 5 minutes
-			workStopFinalizeTimer->Tick += gcnew EventHandler(this, &DataForm::OnWorkStopFinalizeTimerTick);
-
-			// Состояние кнопок START/STOP будет установлено при получении первого пакета данных
+			// Состояние кнопок START/STOP устанавливается при первом приёме данных
 
 		// ===== ОПТИМИЗАЦИЯ ПРОИЗВОДИТЕЛЬНОСТИ DataGridView =====
 		// Отключаем автоматический пересчет размеров - это ОЧЕНЬ медленно при большом количестве строк
@@ -369,9 +355,6 @@ namespace ProjectServerW {
 private: System::ComponentModel::IContainer^ components;
 
 		private:
-			// Таймер задержки финализации после Work=0 (5 минут). Экспорт/START делаем только на приходе телеметрии.
-			System::Windows::Forms::Timer^ workStopFinalizeTimer;
-			void OnWorkStopFinalizeTimerTick(Object^ sender, EventArgs^ e);
 			/// <summary>
 			/// Обязательная переменная конструктора.
 			/// </summary>
@@ -1116,8 +1099,9 @@ private: System::ComponentModel::IContainer^ components;
 			}
 			void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, System::Data::DataTable^ table);
 			void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size, int port);
-			// Запись пакета лога алгоритма (Type 0x01) в CSV-файл; имя файла — дата и время запуска лога
-			void AppendControlLogToCsv(cli::array<System::Byte>^ packet, int size);
+			// Парсинг лога (Type 0x01, группа 3) и добавление лога в строку данных: дополняет lastPendingTelemetryRow
+			// параметрами лога и добавляет эту строку в таблицу (лог передаётся только в автоматическом режиме).
+			void AppendControlLogToDataRow(cli::array<System::Byte>^ packet, int size);
 
 			static cli::array<cli::array<String^>^>^ GetBitFieldNames() {
 				static bool initialized = false;
@@ -1159,9 +1143,13 @@ private: System::ComponentModel::IContainer^ components;
 			
 			void buttonSTARTstate_TRUE();	// Метод для изменения статуса кнопок Старт и Стоп
 			void buttonSTOPstate_TRUE();	// Метод для изменения статуса кнопок Старт и Стоп
+			/** Вызвать из обработчика лога: переключить в «программа запущена», только если ещё не в состоянии «остановлена» (чтобы запоздалый лог после СТОП не затирал кнопки). */
+			void EnsureProgramRunningStateFromLog();
 			System::Void DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ e);
 			System::Void DataForm_HandleDestroyed(Object^ sender, EventArgs^ e);
-		private: 
+		private:
+			/** Применить запоздалый ответ GET_VERSION или SET_INTERVAL. Возвращает true, если ответ применён (не логировать как Discarding). */
+			bool ApplyLateStartupResponse(const ::CommandResponse& candidate);
 			void ScheduleCommandInfoProbe(System::String^ reason);
 			void ExecuteCommandInfoProbe();
 			void SchedulePostResetInit();

@@ -331,7 +331,7 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 			}
 			catch (Exception^ ex) {
 				try {
-					GlobalLogger::LogMessage(ConvertToStdString("Warning: Excel chart creation failed: " + ex->Message));
+					GlobalLogger::LogMessage("Warning: Excel chart creation failed: " + ex->Message);
 				}
 				catch (...) {}
 			}
@@ -372,11 +372,11 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 		}
 		catch (...) {}
 
-		GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+		GlobalLogger::LogMessage(String::Format(
 			"Information: Файл Excel успешно сохранен: {0}\nВремя записи: {1} секунд ({2} строк)",
 			finalFileName,
 			elapsed.TotalSeconds.ToString("F2"),
-			exportedRows)));
+			exportedRows));
 
 		// Запускаем отложенную сборку мусора, чтобы быстрее освобождать COM-обёртки после экспорта.
 		try {
@@ -385,7 +385,7 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 		catch (...) {}
 	}
 	catch (Exception^ ex) {
-		GlobalLogger::LogMessage(ConvertToStdString("Error: Excel export job failed: " + ex->ToString()));
+		GlobalLogger::LogMessage("Error: Excel export job failed: " + ex->ToString());
 	}
 	finally {
 		if (mutexAcquired) {

@@ -26,7 +26,7 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
         // Проверяем, что сокет клиента валиден
         if (clientSocket == INVALID_SOCKET) {
             MessageBox::Show("Нет активного соединения с клиентом!");
-            GlobalLogger::LogMessage("Error: Не могу отправить команду " + ConvertToStdString(commandName) +
+            GlobalLogger::LogMessage("Error: Не могу отправить команду " + commandName +
                 ", нет активного соединения с клиентом!");
             return false;
         }
@@ -38,15 +38,18 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
         if (commandLength == 0) {
             String^ errorMsg = "Ошибка формирования команды " + commandName;
             MessageBox::Show(errorMsg);
-            GlobalLogger::LogMessage("Error: " + ConvertToStdString(errorMsg));
+            GlobalLogger::LogMessage("Error: " + errorMsg);
             return false;
         }
 
         int bytesSent = SOCKET_ERROR;
         // Полудуплекс: не отправлять команду, пока recv()-поток обрабатывает принятые от контроллера данные.
+        // Мы получаем recvGate только после того, как recv() вернул данные (телеметрию). Сразу после этого
+        // контроллер может быть ещё занят передачей или не готов принять команду — даём время на "разворот" линии.
         System::Object^ recvGate = PacketQueueProcessor::GetReceivingGate(clientSocket);
         System::Threading::Monitor::Enter(recvGate);
         try {
+            System::Threading::Thread::Sleep(150);  // задержка разворота полудуплекса (мс)
             // Сериализуем send() на сокет, чтобы байтовые потоки не перемешивались с ACK телеметрии.
             System::Object^ sendGate = PacketQueueProcessor::GetSendGate(clientSocket);
             System::Threading::Monitor::Enter(sendGate);
@@ -66,14 +69,13 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
             int error = WSAGetLastError();
             String^ errorMsg = "Ошибка отправки команды " + commandName + ": " + error.ToString();
             MessageBox::Show(errorMsg);
-            GlobalLogger::LogMessage("Error: " + ConvertToStdString(errorMsg));
+            GlobalLogger::LogMessage("Error: " + errorMsg);
             return false;
         }
         else if (bytesSent == commandLength) {
             // Команда успешно отправлена
             Label_Commands->Text = "Команда " + commandName + " отправлена клиенту";
-            GlobalLogger::LogMessage("Information: Команда " + ConvertToStdString(commandName) +
-                " отправлена клиенту");
+            GlobalLogger::LogMessage("Information: Команда " + commandName + " отправлена клиенту");
             return true;
         }
         else {
@@ -82,15 +84,14 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
                 commandLength.ToString() + " байт для команды " + commandName;
             MessageBox::Show(errorMsg);
             GlobalLogger::LogMessage("Error: Частичная отправка команды " +
-                ConvertToStdString(commandName) + ": " +
-                ConvertToStdString(errorMsg));
+                commandName + ": " + errorMsg);
             return false;
         }
     }
     catch (Exception^ ex) {
         String^ errorMsg = "Исключение при отправке команды " + commandName + ": " + ex->Message;
         MessageBox::Show(errorMsg);
-        GlobalLogger::LogMessage("Error: " + ConvertToStdString(errorMsg));
+        GlobalLogger::LogMessage("Error: " + errorMsg);
         return false;
     }
 }
@@ -103,8 +104,13 @@ void ProjectServerW::DataForm::SendStartCommand() {
 
     // Отправляем команду и ждем ответ
     if (SendCommandAndWaitResponse(cmd, response)) {
-        // Команда успешно выполнена на контроллере
-        buttonSTOPstate_TRUE();
+        // Команда успешно выполнена на контроллере; обновление кнопок обязательно в UI-потоке и до выхода
+        if (this->InvokeRequired) {
+            this->Invoke(gcnew System::Windows::Forms::MethodInvoker(this, &DataForm::buttonSTOPstate_TRUE));
+        }
+        else {
+            buttonSTOPstate_TRUE();
+        }
         Label_Commands->Text = "[OK] Программа запущена";
         Label_Commands->ForeColor = System::Drawing::Color::Green;
         GlobalLogger::LogMessage("Information: Команда START успешно выполнена контроллером");
@@ -117,9 +123,9 @@ void ProjectServerW::DataForm::SendStartCommand() {
     }
     else {
         // Ошибка выполнения команды - детали уже обработаны в ProcessResponse
-        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+        GlobalLogger::LogMessage(String::Format(
             "Error: Команда START не выполнена. Статус: 0x{0:X2} ({1})",
-            response.status, gcnew String(GetStatusName(response.status)))));
+            response.status, gcnew String(GetStatusName(response.status))));
 
         // Дополнительная обработка специфичных ошибок для START
         switch (response.status) {
@@ -150,11 +156,20 @@ void ProjectServerW::DataForm::SendStopCommand() {
 
     // Отправляем команду и ждем ответ
     if (SendCommandAndWaitResponse(cmd, response)) {
-        // Команда успешно выполнена на контроллере
-        buttonSTARTstate_TRUE();
+        // Команда успешно выполнена на контроллере; обновление кнопок обязательно в UI-потоке и до выхода
+        if (this->InvokeRequired) {
+            this->Invoke(gcnew System::Windows::Forms::MethodInvoker(this, &DataForm::buttonSTARTstate_TRUE));
+        }
+        else {
+            buttonSTARTstate_TRUE();
+        }
+        lastStopSuccessTime = DateTime::Now; // чтобы запоздалый лог не перезаписал кнопки в течение 10 с
         Label_Commands->Text = "[OK] Программа остановлена";
         Label_Commands->ForeColor = System::Drawing::Color::Green;
         GlobalLogger::LogMessage("Information: Команда STOP успешно выполнена контроллером");
+
+        // По успешному СТОП — записать таблицу данных в Excel
+        StartExcelExportThread(false);
 
         // Восстанавливаем цвет через 3 секунды с помощью таймера
         System::Windows::Forms::Timer^ colorTimer = gcnew System::Windows::Forms::Timer();
@@ -164,9 +179,9 @@ void ProjectServerW::DataForm::SendStopCommand() {
     }
     else {
         // Ошибка выполнения команды - детали уже обработаны в ProcessResponse
-        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+        GlobalLogger::LogMessage(String::Format(
             "Error: Команда STOP не выполнена. Статус: 0x{0:X2} ({1})",
-            response.status, gcnew String(GetStatusName(response.status)))));
+            response.status, gcnew String(GetStatusName(response.status))));
 
         // Дополнительная обработка специфичных ошибок для STOP
         switch (response.status) {
@@ -214,9 +229,9 @@ void ProjectServerW::DataForm::SendResetCommand() {
     }
     else {
         // Ошибка выполнения команды - детали уже обработаны в ProcessResponse
-        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+        GlobalLogger::LogMessage(String::Format(
             "Error: Команда RESET не выполнена. Статус: 0x{0:X2} ({1})",
-            response.status, gcnew String(GetStatusName(response.status)))));
+            response.status, gcnew String(GetStatusName(response.status))));
 
         // Дополнительная обработка специфичных ошибок для RESET
         switch (response.status) {
@@ -237,6 +252,30 @@ void ProjectServerW::DataForm::SendResetCommand() {
             break;
         }
     }
+}
+
+// Применить запоздалый ответ GET_VERSION или SET_INTERVAL (при получении «чужого» ответа в цикле ожидания)
+bool ProjectServerW::DataForm::ApplyLateStartupResponse(const CommandResponse& candidate) {
+    if (candidate.status != CmdStatus::OK) return false;
+    if (candidate.commandType == CmdType::REQUEST && candidate.commandCode == CmdRequest::GET_VERSION && candidate.dataLength > 0) {
+        String^ version = gcnew String(reinterpret_cast<const char*>(candidate.data), 0, static_cast<int>(candidate.dataLength), System::Text::Encoding::ASCII);
+        pendingVersion = version;
+        if (label_Version != nullptr && !label_Version->IsDisposed) {
+            if (label_Version->InvokeRequired) {
+                label_Version->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(this, &DataForm::UpdateVersionLabelInternal));
+            }
+            else {
+                label_Version->Text = version;
+            }
+        }
+        GlobalLogger::LogMessage("Information: Версия прошивки получена (запоздалый ответ): " + version);
+        return true;
+    }
+    if (candidate.commandType == CmdType::CONFIGURATION && candidate.commandCode == CmdConfig::SET_INTERVAL) {
+        GlobalLogger::LogMessage("Information: Интервал измерений принят контроллером (запоздалый ответ)");
+        return true;
+    }
+    return false;
 }
 
 // Метод для запроса версии прошивки контроллера
@@ -273,7 +312,7 @@ bool ProjectServerW::DataForm::SendVersionRequest() {
 
             Label_Commands->Text = "Версия прошивки получена: " + version;
             Label_Commands->ForeColor = System::Drawing::Color::Green;
-            GlobalLogger::LogMessage(ConvertToStdString("Information: Версия прошивки контроллера: " + version));
+            GlobalLogger::LogMessage("Information: Версия прошивки контроллера: " + version);
             return true;
         }
         else {
@@ -290,9 +329,9 @@ bool ProjectServerW::DataForm::SendVersionRequest() {
     }
     else {
         // Ошибка выполнения команды
-        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+        GlobalLogger::LogMessage(String::Format(
             "Error: Команда GET_VERSION не выполнена. Статус: 0x{0:X2} ({1})",
-            response.status, gcnew String(GetStatusName(response.status)))));
+            response.status, gcnew String(GetStatusName(response.status))));
 
         Label_Commands->Text = "[!] Не удалось получить версию прошивки";
         Label_Commands->ForeColor = System::Drawing::Color::Red;
@@ -321,7 +360,7 @@ bool ProjectServerW::DataForm::SendSetIntervalCommand(int intervalSeconds) {
     if (SendCommandAndWaitResponse(cmd, response, "SET_INTERVAL")) {
         Label_Commands->Text = String::Format("[OK] Интервал измерений: {0} с", intervalSeconds);
         Label_Commands->ForeColor = System::Drawing::Color::Green;
-        GlobalLogger::LogMessage(ConvertToStdString(Label_Commands->Text));
+        GlobalLogger::LogMessage(Label_Commands->Text);
 
         System::Windows::Forms::Timer^ colorTimer = gcnew System::Windows::Forms::Timer();
         colorTimer->Interval = 3000;
@@ -400,9 +439,9 @@ void ProjectServerW::DataForm::SendCommandInfoRequest() {
     }
 
     TimeSpan waited = DateTime::Now.Subtract(requestTime);
-    GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+    GlobalLogger::LogMessage(String::Format(
         "Warning: GET_CMD_INFO: no response for {0:F1}s; device may be OFF and the connection can be breaking",
-        waited.TotalSeconds)));
+        waited.TotalSeconds));
     if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
         Label_Commands->Text = "[!] GET_CMD_INFO: нет ответа (возможно устройство выключено)";
         Label_Commands->ForeColor = System::Drawing::Color::Orange;
@@ -430,7 +469,7 @@ void ProjectServerW::DataForm::ScheduleCommandInfoProbe(System::String^ reason) 
         }
         lastCmdInfoProbeTime = now;
 
-        GlobalLogger::LogMessage(ConvertToStdString("Information: Scheduling GET_CMD_INFO probe. Reason: " + (reason != nullptr ? reason : "")));
+        GlobalLogger::LogMessage("Information: Scheduling GET_CMD_INFO probe. Reason: " + (reason != nullptr ? reason : ""));
 
         if (this->InvokeRequired) {
             this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::ExecuteCommandInfoProbe));
@@ -440,7 +479,7 @@ void ProjectServerW::DataForm::ScheduleCommandInfoProbe(System::String^ reason) 
         }
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in ScheduleCommandInfoProbe: " + ex->Message));
+        GlobalLogger::LogMessage("Error: Exception in ScheduleCommandInfoProbe: " + ex->Message);
     }
 }
 
@@ -455,7 +494,7 @@ void ProjectServerW::DataForm::ExecuteCommandInfoProbe() {
         SendCommandInfoRequest();
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in ExecuteCommandInfoProbe: " + ex->ToString()));
+        GlobalLogger::LogMessage("Error: Exception in ExecuteCommandInfoProbe: " + ex->ToString());
     }
     finally {
         cmdInfoProbeInProgress = false;
@@ -474,7 +513,7 @@ void ProjectServerW::DataForm::ProcessResponse(const CommandResponse& response) 
     try {
         // Получаем имя команды и статус
         const char* statusName = GetStatusName(response.status);
-        const char* statusDescription = GetStatusDescription(response.status);
+        const wchar_t* statusDescription = GetStatusDescription(response.status);
         Command responseCmd{};
         responseCmd.commandType = response.commandType;
         responseCmd.commandCode = response.commandCode;
@@ -517,7 +556,7 @@ void ProjectServerW::DataForm::ProcessResponse(const CommandResponse& response) 
                             const char* lastCmdName = GetCommandName(lastCmd);
                             const char* lastCmdTypeName = GetCommandTypeName(lastCmdType);
                             const char* lastStatusName = GetStatusName(lastCmdStatus);
-                            const char* lastStatusDescription = GetStatusDescription(lastCmdStatus);
+                            const wchar_t* lastStatusDescription = GetStatusDescription(lastCmdStatus);
 
                             // Почему: время устройства относительное; привязываем к реальному времени по последней метке телеметрии.
                             // Это оценка; предполагается, что телеметрия и обработчик команд используют одну временную базу.
@@ -561,21 +600,13 @@ void ProjectServerW::DataForm::ProcessResponse(const CommandResponse& response) 
                         message += "\nВерсия прошивки: " + version;
                         break;
                     }
-                    case CmdRequest::GET_DATA: {
-                        // Получаем данные конфигурации
-                        if (response.dataLength >= 1) {
-                            message += String::Format("\nРежим работы: {0}",
-                                response.data[0] == 0 ? "Автоматический" : "Ручной");
-                        }
-                        break;
-                    }
                     }
                 }
             }
 
             // Отображаем успешный результат
             Label_Commands->Text = message;
-            GlobalLogger::LogMessage(ConvertToStdString(message));
+            GlobalLogger::LogMessage(message);
         }
         else {
             // ===== ОБРАБОТКА ОШИБОК =====
@@ -651,7 +682,7 @@ void ProjectServerW::DataForm::ProcessResponse(const CommandResponse& response) 
 
             MessageBox::Show(message, "Ошибка выполнения команды",
                 MessageBoxButtons::OK, MessageBoxIcon::Error);
-            GlobalLogger::LogMessage(ConvertToStdString(message));
+            GlobalLogger::LogMessage(message);
 
             // Восстанавливаем цвет текста через 3 секунды с помощью таймера
             System::Windows::Forms::Timer^ colorTimer = gcnew System::Windows::Forms::Timer();
@@ -664,7 +695,7 @@ void ProjectServerW::DataForm::ProcessResponse(const CommandResponse& response) 
         String^ errorMsg = "Исключение в ProcessResponse: " + ex->Message;
         MessageBox::Show(errorMsg, "Критическая ошибка",
             MessageBoxButtons::OK, MessageBoxIcon::Error);
-        GlobalLogger::LogMessage(ConvertToStdString(errorMsg));
+        GlobalLogger::LogMessage(errorMsg);
     }
 }
 
@@ -680,7 +711,7 @@ void ProjectServerW::DataForm::RestoreLabelCommandsColor(System::Object^ sender,
         Label_Commands->ForeColor = System::Drawing::SystemColors::ControlText;
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage(ConvertToStdString("Error in RestoreLabelCommandsColor: " + ex->Message));
+        GlobalLogger::LogMessage("Error in RestoreLabelCommandsColor: " + ex->Message);
     }
 }
 
@@ -707,9 +738,11 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
         // Почему: recv()-цикл может поставить в очередь ответы от более ранних команд; отказ по первому несовпадению
         // ломает авто-сценарии и может ошибочно пометить валидную команду как неуспешную.
         const bool isCmdInfoRequest = (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_CMD_INFO);
+        const bool isGetVersion = (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_VERSION);
 
+        // Первая команда после подключения (GET_VERSION) и зонд GET_CMD_INFO — увеличенный таймаут:
         const int defaultTimeoutMs = 2000;
-        const int totalTimeoutMs = defaultTimeoutMs;
+        const int totalTimeoutMs = (isGetVersion || isCmdInfoRequest) ? 6000 : defaultTimeoutMs;
         DateTime deadline = DateTime::Now.AddMilliseconds(totalTimeoutMs);
         while (true) {
             TimeSpan remaining = deadline.Subtract(DateTime::Now);
@@ -734,23 +767,27 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
             }
 
             if (candidate.commandType != cmd.commandType || candidate.commandCode != cmd.commandCode) {
-                String^ hex = "";
-                if (rawCandidate != nullptr && rawCandidate->Length > 0) {
-                    System::Text::StringBuilder^ sb = gcnew System::Text::StringBuilder(rawCandidate->Length * 3);
-                    for (int i = 0; i < rawCandidate->Length; i++) {
-                        if (i != 0) sb->Append(" ");
-                        sb->Append(rawCandidate[i].ToString("X2"));
-                    }
-                    hex = sb->ToString();
+                if (ApplyLateStartupResponse(candidate)) {
+                    // Запоздалый ответ GET_VERSION или SET_INTERVAL применён, продолжаем ждать нужный ответ
                 }
-
-                GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-                    "Warning: Discarding unrelated response. Expected Type=0x{0:X2}, Code=0x{1:X2}; Got Type=0x{2:X2}, Code=0x{3:X2}; Raw={4}",
-                    cmd.commandType, cmd.commandCode, candidate.commandType, candidate.commandCode, hex)));
-                if (!isCmdInfoRequest) {
-                    ScheduleCommandInfoProbe(String::Format(
-                        "discarded unrelated response while waiting Type=0x{0:X2}, Code=0x{1:X2}",
-                        cmd.commandType, cmd.commandCode));
+                else {
+                    String^ hex = "";
+                    if (rawCandidate != nullptr && rawCandidate->Length > 0) {
+                        System::Text::StringBuilder^ sb = gcnew System::Text::StringBuilder(rawCandidate->Length * 3);
+                        for (int i = 0; i < rawCandidate->Length; i++) {
+                            if (i != 0) sb->Append(" ");
+                            sb->Append(rawCandidate[i].ToString("X2"));
+                        }
+                        hex = sb->ToString();
+                    }
+                    GlobalLogger::LogMessage(String::Format(
+                        "Warning: Discarding unrelated response. Expected Type=0x{0:X2}, Code=0x{1:X2}; Got Type=0x{2:X2}, Code=0x{3:X2}; Raw={4}",
+                        cmd.commandType, cmd.commandCode, candidate.commandType, candidate.commandCode, hex));
+                    if (!isCmdInfoRequest) {
+                        ScheduleCommandInfoProbe(String::Format(
+                            "discarded unrelated response while waiting Type=0x{0:X2}, Code=0x{1:X2}",
+                            cmd.commandType, cmd.commandCode));
+                    }
                 }
                 continue;
             }
@@ -768,7 +805,7 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
     catch (Exception^ ex) {
         String^ errorMsg = "Exception in SendCommandAndWaitResponse: " + ex->Message;
         MessageBox::Show(errorMsg);
-        GlobalLogger::LogMessage(ConvertToStdString(errorMsg));
+        GlobalLogger::LogMessage(errorMsg);
         return false;
     }
 }
@@ -787,7 +824,7 @@ bool ProjectServerW::DataForm::TrySendControlCommandFireAndForget(uint8_t contro
         return SendCommand(cmd, commandName);
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in TrySendControlCommandFireAndForget: " + ex->Message));
+        GlobalLogger::LogMessage("Error: Exception in TrySendControlCommandFireAndForget: " + ex->Message);
         return false;
     }
 }
@@ -832,9 +869,9 @@ ProjectServerW::DataForm::CommandAckResult ProjectServerW::DataForm::SendControl
                 }
                 hex = sb->ToString();
             }
-            GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+            GlobalLogger::LogMessage(String::Format(
                 "Warning: Discarding unrelated response in SendControlCommandWithAck. Expected Type=0x{0:X2}, Code=0x{1:X2}; Got Type=0x{2:X2}, Code=0x{3:X2}; Raw={4}",
-                cmd.commandType, cmd.commandCode, response.commandType, response.commandCode, hex)));
+                cmd.commandType, cmd.commandCode, response.commandType, response.commandCode, hex));
             ScheduleCommandInfoProbe(String::Format(
                 "discarded unrelated response while waiting ACK Type=0x{0:X2}, Code=0x{1:X2}",
                 cmd.commandType, cmd.commandCode));
@@ -860,7 +897,7 @@ System::Void ProjectServerW::DataForm::button_CMDINFO_Click(System::Object^ send
         SendCommandInfoRequest();
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in button_CMDINFO_Click: " + ex->ToString()));
+        GlobalLogger::LogMessage("Error: Exception in button_CMDINFO_Click: " + ex->ToString());
     }
 }
 

@@ -11,15 +11,15 @@ void UnhandledExceptionHandler(Object^ sender, UnhandledExceptionEventArgs^ e) {
 	try {
 		Exception^ ex = dynamic_cast<Exception^>(e->ExceptionObject);
 		if (ex != nullptr) {
-			GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+			GlobalLogger::LogMessage(String::Format(
 				"FATAL UNHANDLED EXCEPTION: {0}\nTerminating: {1}",
-				ex->ToString(), e->IsTerminating)));
+				ex->ToString(), e->IsTerminating));
 		}
 		else {
-			GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+			GlobalLogger::LogMessage(String::Format(
 				"FATAL UNHANDLED NON-MANAGED EXCEPTION: {0}\nTerminating: {1}",
 				(e->ExceptionObject != nullptr ? e->ExceptionObject->ToString() : "null"),
-				e->IsTerminating)));
+				e->IsTerminating));
 		}
 		GlobalLogger::Shutdown();
 	}
@@ -31,9 +31,9 @@ void UnhandledExceptionHandler(Object^ sender, UnhandledExceptionEventArgs^ e) {
 // Thread exception handler for UI thread exceptions
 void ThreadExceptionHandler(Object^ sender, System::Threading::ThreadExceptionEventArgs^ e) {
 	try {
-		GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+		GlobalLogger::LogMessage(String::Format(
 			"THREAD EXCEPTION: {0}",
-			(e->Exception != nullptr ? e->Exception->ToString() : "null"))));
+			(e->Exception != nullptr ? e->Exception->ToString() : "null")));
 	}
 	catch (...) {
 		// Last resort - do nothing
@@ -51,7 +51,9 @@ void ServerThreadFunction() {
 			ex->Message, ex->StackTrace)));
 	}
 	catch (const std::exception& ex) {
-		GlobalLogger::LogMessage(std::string("CRITICAL: Native exception in server thread: ") + ex.what());
+		GlobalLogger::LogMessage(String::Format(
+			"CRITICAL: Native exception in server thread: {0}",
+			gcnew String(ex.what())));
 	}
 	catch (...) {
 		GlobalLogger::LogMessage("CRITICAL: Unknown exception in server thread");
@@ -103,9 +105,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	}
 	catch (Exception^ ex) {
 		try {
-			GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+			GlobalLogger::LogMessage(String::Format(
 				"FATAL: Unhandled managed exception in WinMain: {0}\nStackTrace: {1}",
-				ex->Message, ex->StackTrace)));
+				ex->Message, ex->StackTrace));
 			GlobalLogger::Shutdown();
 		}
 		catch (...) {}
@@ -150,9 +152,9 @@ System::Void ProjectServerW::MyForm::button_Listen_Click(System::Object^ sender,
 		serverThread.detach(); // Отсоединяем поток, чтобы не ждать его завершения.
 	}
 	catch (Exception^ ex) {
-		GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+		GlobalLogger::LogMessage(String::Format(
 			"Error starting server thread: {0}\nStackTrace: {1}",
-			ex->Message, ex->StackTrace)));
+			ex->Message, ex->StackTrace));
 	}
 	catch (const std::exception& ex) {
 		GlobalLogger::LogMessage(std::string("Error starting server thread: ") + ex.what());

@@ -153,14 +153,28 @@ namespace ProjectServerW {
 					continue;
 				}
 
-				// Пакет лога алгоритма (Type 0x01): доставка на форму для записи в CSV, без ACK контроллеру
+				// Пакет лога (Type 0x01): доставка на форму в потоке UI, после телеметрии (чтобы lastPendingTelemetryRow уже был установлен).
 				if (item->itemType == 1) {
-					if (!String::IsNullOrEmpty(item->formGuid)) {
+					if (String::IsNullOrEmpty(item->formGuid)) {
+						GlobalLogger::LogMessage("Warning: Log packet (itemType=1): formGuid empty, log dropped");
+					}
+					else {
 						msclr::interop::marshal_context ctx;
 						const std::wstring guidW = ctx.marshal_as<std::wstring>(item->formGuid);
 						DataForm^ form = DataForm::GetFormByGuid(guidW);
-						if (form != nullptr && !form->IsDisposed && !form->Disposing && form->IsHandleCreated) {
-							form->AppendControlLogToCsv(item->packet, item->size);
+						if (form == nullptr) {
+							GlobalLogger::LogMessage("Warning: Log packet: GetFormByGuid returned null, log dropped");
+						}
+						else if (form->IsDisposed || form->Disposing || !form->IsHandleCreated) {
+							GlobalLogger::LogMessage(String::Format(
+								"Warning: Log packet: form invalid (IsDisposed={0}, Disposing={1}, IsHandleCreated={2}), log dropped",
+								form->IsDisposed, form->Disposing, form->IsHandleCreated));
+						}
+						else {
+							form->BeginInvoke(
+								gcnew Action<cli::array<System::Byte>^, int>(form, &DataForm::AppendControlLogToDataRow),
+								item->packet,
+								item->size);
 						}
 					}
 					continue;
@@ -320,8 +334,8 @@ namespace ProjectServerW {
 
 		if (responseBuffer->Length <= 0 || responseBuffer->Length > static_cast<int>(MAX_COMMAND_SIZE)) {
 			// Why: this buffer is already removed from the queue; log it to explain why it was dropped.
-			GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-				"Warning: Dropping invalid response frame (len={0})", responseBuffer->Length)));
+			GlobalLogger::LogMessage(String::Format(
+				"Warning: Dropping invalid response frame (len={0})", responseBuffer->Length));
 			return false;
 		}
 
@@ -333,10 +347,10 @@ namespace ProjectServerW {
 
 		const bool ok = ParseResponseBuffer(buffer, static_cast<size_t>(responseBuffer->Length), response);
 		if (!ok) {
-			GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+			GlobalLogger::LogMessage(String::Format(
 				"Warning: Dropping unparseable response frame (len={0}): {1}",
 				responseBuffer->Length,
-				gcnew String(BytesToHex(buffer, responseBuffer->Length).c_str()))));
+				gcnew String(BytesToHex(buffer, responseBuffer->Length).c_str())));
 			ScheduleCommandInfoProbe("dropped unparseable response frame");
 		}
 		return ok;

@@ -8,6 +8,8 @@
 #include <ws2tcpip.h>       // После winsock2.h
 #include <windows.h>        // Windows.h должен быть после winsock2.h Для CreateThread
 
+#include <climits>
+#include <cstring>
 #include <ctime>			// Для std::time
 #include <iomanip>			// Для std::put_time
 #include <iostream>
@@ -92,7 +94,13 @@ public:
             Monitor::Enter(lockObject);
             try {
                 String^ timestamp = DateTime::Now.ToString("dd.MM.yy HH:mm:ss");
-                String^ managedMessage = gcnew String(message.c_str());
+                // std::string: если из ConvertToStdString — байты в CP1251; декодируем в Unicode, файл пишется в UTF-8
+                const size_t msgLenSize = message.size();
+                const int msgLen = (msgLenSize <= static_cast<size_t>(INT_MAX)) ? static_cast<int>(msgLenSize) : INT_MAX;
+                cli::array<System::Byte>^ msgBytes = gcnew cli::array<System::Byte>(msgLen);
+                for (int i = 0; i < msgLen; ++i)
+                    msgBytes[i] = static_cast<System::Byte>(message[static_cast<size_t>(i)]);
+                String^ managedMessage = System::Text::Encoding::GetEncoding(1251)->GetString(msgBytes);
                 writer->WriteLine(timestamp + " : " + managedMessage);
                 writer->Flush();
             }
@@ -103,6 +111,40 @@ public:
         catch (Exception^ ex) {
             MessageBox::Show("Error writing to log: " + ex->Message);
         }
+    }
+
+    // Запись в лог управляемой строки (Unicode). Файл log.txt в UTF-8.
+    static void LogMessage(String^ managedMessage) {
+        if (!isInitialized || writer == nullptr) {
+            Initialize();
+        }
+        if (managedMessage == nullptr) return;
+        try {
+            Monitor::Enter(lockObject);
+            try {
+                String^ timestamp = DateTime::Now.ToString("dd.MM.yy HH:mm:ss");
+                writer->WriteLine(timestamp + " : " + managedMessage);
+                writer->Flush();
+            }
+            finally {
+                Monitor::Exit(lockObject);
+            }
+        }
+        catch (Exception^ ex) {
+            MessageBox::Show("Error writing to log: " + ex->Message);
+        }
+    }
+
+    // Узкий литерал в UTF-8 (исходник в UTF-8): байты → String^ → запись в лог (файл UTF-8).
+    static void LogMessage(const char* utf8Message) {
+        if (utf8Message == nullptr) return;
+        size_t len = std::strlen(utf8Message);
+        if (len == 0) return;
+        if (len > static_cast<size_t>(INT_MAX)) len = static_cast<size_t>(INT_MAX);
+        cli::array<System::Byte>^ bytes = gcnew cli::array<System::Byte>(static_cast<int>(len));
+        System::Runtime::InteropServices::Marshal::Copy(IntPtr(const_cast<char*>(utf8Message)), bytes, 0, static_cast<int>(len));
+        String^ s = System::Text::Encoding::UTF8->GetString(bytes);
+        LogMessage(s);
     }
 
     static void Shutdown() {

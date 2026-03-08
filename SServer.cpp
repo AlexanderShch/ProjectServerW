@@ -87,7 +87,7 @@ void SServer::startServer() {
 		unsigned short port = ntohs(addr.sin_port);
 		System::String^ portString = port.ToString();
 		form->SetTextValue("Start listenin at port " + portString);
-		GlobalLogger::LogMessage(ConvertToStdString("Start listenin at port " + portString));
+		GlobalLogger::LogMessage("Start listenin at port " + portString);
 	}
 	
 	if (form->InvokeRequired) {
@@ -171,7 +171,7 @@ void SServer::handle() {
 					// Визуальный разделитель для нового соединения
 					GlobalLogger::LogMessage("");
 					GlobalLogger::LogMessage("================================================================================");
-					GlobalLogger::LogMessage(ConvertToStdString("Information: New thread was created, port " + ClientPort));
+					GlobalLogger::LogMessage("Information: New thread was created, port " + ClientPort);
 				}
 				CloseHandle(hThread); // Закрытие дескриптора потока
             }
@@ -217,7 +217,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		if (form != nullptr && !form->IsDisposed) {
 			form->SetMessage_TextValue(msg);
 		}
-		GlobalLogger::LogMessage(ConvertToStdString(msg));
+		GlobalLogger::LogMessage(msg);
 	}
 	else {
 		// Открываем форму DataForm для демонстрации принятых данных в отдельном потоке
@@ -240,13 +240,13 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 			}
 			// Сохраняем поток формы данных в хранилище с GUID формы в качестве ключа
 			ThreadStorage::StoreThread(guid, formThread);
-			GlobalLogger::LogMessage(ConvertToStdString("Information: The DataForm has been opened successfully!"));
+			GlobalLogger::LogMessage("Information: The DataForm has been opened successfully!");
 		}
 		catch (const std::exception& e) {	// Обработка исключения, выводим сообщение об ошибке
 			String^ errorMessage = gcnew String(e.what());
 			if (form != nullptr && !form->IsDisposed) {
 				form->SetMessage_TextValue("Error: Couldn't create a form in a new thread " + errorMessage);
-				GlobalLogger::LogMessage(ConvertToStdString("Error: Couldn't create a DataForm in a new thread " + errorMessage));
+				GlobalLogger::LogMessage("Error: Couldn't create a DataForm in a new thread " + errorMessage);
 			}
 			return 1;
 		}
@@ -269,9 +269,9 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				// Важно: closesocket(prevSocket) здесь не делаем, чтобы избежать двойного closesocket
 				// (старый recv()-поток сам закроет свой сокет на выходе).
 				shutdown(prevSocket, SD_BOTH);
-				GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+				GlobalLogger::LogMessage(String::Format(
 					"Information: Reconnect: drop old socket {0}",
-					clientIPAddress)));
+					clientIPAddress));
 			}
 
 			df->ClientIP = clientIPAddress;
@@ -305,10 +305,16 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	// Причина: TCP — это поток байтов; маркер начала кадра нужен для ресинхронизации после склеек/разрывов,
 	//          а длина позволяет корректно выделять кадр, даже если AA55/55AA встречаются внутри данных (например, в счётчике секунд).
 	const int TELEMETRY_FRAME_PAYLOAD_LEN = 45; // Для телеметрии: после Len идут 45 байт данных до CRC (Time..H..).
-	const int CONTROL_LOG_PAYLOAD_LEN = 95;    // Пакет лога алгоритма (Type 0x01): после Len идут 95 байт (ControlLogPayload_t).
+	const int CONTROL_LOG_PAYLOAD_LEN = 65;   // Пакет лога (Type 0x01): после Len идут 65 байт (phase + группа 3, ControlLogPayload_t packed).
+	// Макс. размер блока [Type][Len][Payload][CRC] для кадров AA 55 (телеметрия 49, лог 73; команды до 64).
+	const int MAX_FRAMED_PAYLOAD_LEN = 128;
 
 	// Бесконечный цикл считывания данных
 	while (true) {
+		// Полудуплекс: блокируем отправку команд на время приёма и обработки (включая ожидание в recv).
+		System::Object^ recvGate = PacketQueueProcessor::GetReceivingGate(clientSocket);
+		System::Threading::Monitor::Enter(recvGate);
+		try {
 		// Принимаем данные в конец накопительного буфера
 		int spaceAvailable = sizeof(accumulatedBuffer) - accumulatedBytes;
 		if (spaceAvailable <= 0) {
@@ -317,7 +323,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 			accumulatedBytes = 0;
 			continue;
 		}
-		
+
 		bytesReceived = recv(clientSocket, accumulatedBuffer + accumulatedBytes, spaceAvailable, 0);
 
 		/* ОБРАБОТКА ОШИБОК
@@ -348,7 +354,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 			else {
 				if (form != nullptr && !form->IsDisposed) {
 					form->SetMessage_TextValue("Attention: Recv failed: " + error);
-					GlobalLogger::LogMessage(ConvertToStdString("Attention: Recv failed: " + error));
+					GlobalLogger::LogMessage("Attention: Recv failed: " + error);
 				}
 			}
 			break;	// Выходим из цикла
@@ -364,12 +370,6 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		// Добавляем полученные байты к накопленным
 		accumulatedBytes += bytesReceived;
 
-		// Полудуплекс: пока обрабатываем принятые данные, блокируем отправку команд (SendCommand / DATA_OK ждут).
-		if (bytesReceived > 0) {
-			System::Object^ recvGate = PacketQueueProcessor::GetReceivingGate(clientSocket);
-			System::Threading::Monitor::Enter(recvGate);
-			try {
-		
 		// Обрабатываем все полные пакеты в буфере
 		int processedBytes = 0;
 		while (accumulatedBytes - processedBytes > 0) {
@@ -433,10 +433,10 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				const int payloadWithCrcLen = payloadNoCrcLen + 2;               // + CRC16
 				const int totalFrameLen = 2 + payloadWithCrcLen;                 // + AA 55
 
-				// Ограничиваем максимальный размер, чтобы не выделять огромные буферы из-за мусора.
-				if (payloadWithCrcLen <= 0 || payloadWithCrcLen > static_cast<int>(MAX_COMMAND_SIZE)) {
-					GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-						"Warning: Dropping framed packet with invalid length. Type=0x{0:X2}, Len={1}", framedType, payloadLenByte)));
+				// Ограничиваем максимальный размер, чтобы не выделять огромные буферы из-за мусора (команды до 64, лог до 73).
+				if (payloadWithCrcLen <= 0 || payloadWithCrcLen > MAX_FRAMED_PAYLOAD_LEN) {
+				GlobalLogger::LogMessage(String::Format(
+					"Warning: Dropping framed packet with invalid length. Type=0x{0:X2}, Len={1}", framedType, payloadLenByte));
 					processedBytes += 1;
 					continue;
 				}
@@ -466,8 +466,8 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 						continue;
 					}
 
-					GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-						"Warning: Dropping framed packet due CRC mismatch. Type=0x{0:X2}, Len={1}", framedType, payloadLenByte)));
+					GlobalLogger::LogMessage(String::Format(
+						"Warning: Dropping framed packet due CRC mismatch. Type=0x{0:X2}, Len={1}", framedType, payloadLenByte));
 					// Смещаемся на 1 байт, чтобы не зациклиться на одном и том же AA 55 при мусоре.
 					processedBytes += 1;
 					continue;
@@ -476,8 +476,8 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				if (isTelemetryType) {
 					// Причина: телеметрия имеет стабильный формат; проверяем Len, чтобы не кормить UI мусором.
 					if (payloadLenByte != TELEMETRY_FRAME_PAYLOAD_LEN) {
-						GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-							"Warning: Dropping framed telemetry with unexpected Len={0}", payloadLenByte)));
+						GlobalLogger::LogMessage(String::Format(
+							"Warning: Dropping framed telemetry with unexpected Len={0}", payloadLenByte));
 					}
 					else {
 						cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(payloadWithCrcLen);
@@ -485,11 +485,21 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 						PacketQueueProcessor::EnqueueTelemetry(dataBuffer, payloadWithCrcLen, clientPort, guidManaged, clientSocket, clientIPAddress);
 					}
 				}
-				else if (framedType == 0x01 && payloadLenByte == CONTROL_LOG_PAYLOAD_LEN) {
-					// Пакет лога алгоритма управления (после телеметрии): запись в CSV на форме
-					cli::array<System::Byte>^ logBuffer = gcnew cli::array<System::Byte>(payloadWithCrcLen);
-					Marshal::Copy(IntPtr(const_cast<uint8_t*>(payload)), logBuffer, 0, payloadWithCrcLen);
-					PacketQueueProcessor::EnqueueControlLog(logBuffer, payloadWithCrcLen, clientPort, guidManaged, clientSocket, clientIPAddress);
+				else if (framedType == 0x01) {
+					if (payloadLenByte == CONTROL_LOG_PAYLOAD_LEN) {
+						// Пакет лога алгоритма (после телеметрии): запись в таблицу телеметрии на форме
+						cli::array<System::Byte>^ logBuffer = gcnew cli::array<System::Byte>(payloadWithCrcLen);
+						Marshal::Copy(IntPtr(const_cast<uint8_t*>(payload)), logBuffer, 0, payloadWithCrcLen);
+						PacketQueueProcessor::EnqueueControlLog(logBuffer, payloadWithCrcLen, clientPort, guidManaged, clientSocket, clientIPAddress);
+					}
+					else {
+						// Type 0x01 с коротким Len (напр. 3) — ответ на команду PROG_CONTROL (START/STOP), не лог
+						cli::array<System::Byte>^ responseBuffer = gcnew cli::array<System::Byte>(payloadWithCrcLen);
+						Marshal::Copy(IntPtr(const_cast<uint8_t*>(payload)), responseBuffer, 0, payloadWithCrcLen);
+						if (df != nullptr && !df->IsDisposed && !df->Disposing) {
+							df->EnqueueResponse(responseBuffer);
+						}
+					}
 				}
 				else if (isCmdResponseType) {
 					cli::array<System::Byte>^ responseBuffer = gcnew cli::array<System::Byte>(payloadWithCrcLen);
@@ -500,8 +510,8 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				}
 				else {
 					// Причина: держим очередь ответов на команды чистой; неизвестные типы нельзя трактовать как ответы.
-					GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-						"Warning: Dropping framed packet with unknown Type=0x{0:X2}, Len={1}", framedType, payloadLenByte)));
+					GlobalLogger::LogMessage(String::Format(
+						"Warning: Dropping framed packet with unknown Type=0x{0:X2}, Len={1}", framedType, payloadLenByte));
 				}
 
 				// Поглощаем весь кадр целиком: [AA 55][Type][Len][Payload...][CRC16]
@@ -516,11 +526,13 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		}
 		accumulatedBytes = remainingBytes;
 
-			}
-			finally {
-				System::Threading::Monitor::Exit(recvGate);
-			}
 		}
+		finally {
+			System::Threading::Monitor::Exit(recvGate);
+		}
+		// Даём шанс потоку отправки (UI) захватить recvGate для стартовых команд до следующего recv().
+		// 300 мс: при 50 мс поток UI часто не успевал захватить замок, старт затягивался на 10+ с.
+		System::Threading::Thread::Sleep(300);
 	}	// конец while (основной цикл)
 
 	// Соединение оборвалось. Форму НЕ закрываем: устройство может вернуться в течение 30 минут,

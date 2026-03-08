@@ -37,8 +37,7 @@ struct CmdConfig {
 // Коды команд запроса (тип REQUEST)
 struct CmdRequest {
     static const uint8_t GET_VERSION = 0x02;       // Запросить версию прошивки
-    static const uint8_t GET_DATA = 0x03;          // Запросить данные
-    static const uint8_t GET_CMD_INFO = 0x04;      // Запросить информацию о последней принятой команде
+    static const uint8_t GET_CMD_INFO = 0x04;     // Запросить информацию о последней принятой команде
     static const uint8_t GET_DEFROST_PARAM = 0x06; // Запросить один параметр дефроста (payload: groupId, paramId)
     static const uint8_t GET_DEFROST_GROUP = 0x07;  // Запросить пачку параметров группы (payload: groupId, page)
 };
@@ -222,8 +221,8 @@ bool ParseResponseBuffer(const uint8_t* buffer, size_t bufferSize, CommandRespon
 // Функция для получения строкового описания статуса
 const char* GetStatusName(uint8_t status);
 
-// Функция для получения детального описания ошибки на русском языке
-const char* GetStatusDescription(uint8_t status);
+// Функция для получения детального описания ошибки на русском языке (wide string для корректного отображения в логе UTF-8)
+const wchar_t* GetStatusDescription(uint8_t status);
 
 // Функция для проверки, требует ли команда ответа
 bool CommandRequiresResponse(const Command& cmd);

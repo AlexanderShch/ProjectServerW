@@ -32,19 +32,16 @@ typedef struct   // Формат пакета (как на STM32)
 } MSGQUEUE_OBJ_t;
 #pragma pack(pop)
 
-// Пакет лога алгоритма (Type 0x01), совпадает с ControlLogPayload_t на контроллере
+// Пакет лога алгоритма (Type 0x01), группа 3 — совпадает с ControlLogPayload_t на контроллере (текущая фаза + переменные алгоритма)
 #pragma pack(push, 1)
 typedef struct {
-    uint16_t Time;
-    uint32_t runtimeSeconds;
     uint8_t phase;
     float eT_common, heatScale01;
     float uCommon_TEN, trim_TEN, uLeft_TEN, uRight_TEN;
     float leftTen1Duty, leftTen2Duty, rightTen1Duty, rightTen2Duty;
-    float w_sup_avg, w_ret_target, wErr, injDuty;
-    float fishHotMax_C, rate_Cps, fishHotRateMax_Cps, fishDeltaMax_C, supplyMax_C;
+    float w_sup_avg, wErr, injDuty;
+    float rate_Cps;
     float fishHot_C, fishCold_C;
-    float supplySet_C;
 } ControlLogPayload_t;
 #pragma pack(pop)
 
@@ -93,7 +90,7 @@ System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System:
     }
     catch (Exception^ ex) {
         MessageBox::Show("Не удалось сохранить данные: " + ex->Message);
-        GlobalLogger::LogMessage(ConvertToStdString("Не удалось сохранить данные: " + ex->Message));
+        GlobalLogger::LogMessage("Не удалось сохранить данные: " + ex->Message);
     }
 
 	return System::Void();
@@ -105,7 +102,7 @@ System::Void ProjectServerW::DataForm::buttonEXCEL_Click(System::Object^ sender,
         StartExcelExportThread(false);
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in buttonEXCEL_Click: " + ex->ToString()));
+        GlobalLogger::LogMessage("Error: Exception in buttonEXCEL_Click: " + ex->ToString());
     }
 }
 
@@ -177,7 +174,7 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency) {
         finally {
             System::Threading::Monitor::Exit(excelExportSync);
         }
-        GlobalLogger::LogMessage(ConvertToStdString("Error: Failed to start Excel export thread: " + ex->ToString()));
+        GlobalLogger::LogMessage("Error: Failed to start Excel export thread: " + ex->ToString());
         return false;
     }
 }
@@ -421,8 +418,27 @@ void ProjectServerW::DataForm::InitializeDataTable() {
         }
     }
 
+    // Колонки лога параметров процесса (группа 3): имена — как в ControlLogPayload_t на контроллере
+    dataTable->Columns->Add("phase", int::typeid);
+    dataTable->Columns->Add("eT_common", float::typeid);
+    dataTable->Columns->Add("heatScale01", float::typeid);
+    dataTable->Columns->Add("uCommon_TEN", float::typeid);
+    dataTable->Columns->Add("trim_TEN", float::typeid);
+    dataTable->Columns->Add("uLeft_TEN", float::typeid);
+    dataTable->Columns->Add("uRight_TEN", float::typeid);
+    dataTable->Columns->Add("leftTen1Duty", float::typeid);
+    dataTable->Columns->Add("leftTen2Duty", float::typeid);
+    dataTable->Columns->Add("rightTen1Duty", float::typeid);
+    dataTable->Columns->Add("rightTen2Duty", float::typeid);
+    dataTable->Columns->Add("w_sup_avg", float::typeid);
+    dataTable->Columns->Add("wErr", float::typeid);
+    dataTable->Columns->Add("injDuty", float::typeid);
+    dataTable->Columns->Add("rate_Cps", float::typeid);
+    dataTable->Columns->Add("fishHot_C", float::typeid);
+    dataTable->Columns->Add("fishCold_C", float::typeid);
+
     dataGridView->DataSource = dataTable;
-    GlobalLogger::LogMessage("Information: Получены новые данные");
+    GlobalLogger::LogMessage(gcnew String(L"Information: \u041F\u043E\u043B\u0443\u0447\u0435\u043D\u044B \u043D\u043E\u0432\u044B\u0435 \u0434\u0430\u043D\u043D\u044B\u0435"));
 }
 
 // 2. Добавление строки
@@ -466,147 +482,47 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
 
     cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();
 
-    // Индекс бита имени "Work" в массиве bitNames[0]
-    int workBitIndex = -1;
-    // Ищем индекс имени "Work" в массиве
-    for (int i = 0; i < bitNames[0]->Length; i++) {
-        if (bitNames[0][i] == "Work") {
-            workBitIndex = i;
-            break;
-        }
-    }
-
     uint16_t bitField;
     bitField = data.T[SQ - 1];
-    if (workBitIndex != -1) {
-        // Текущее состояние бита "Work"
-        bool currentWorkBitState = (bitField & (1 << workBitIndex)) != 0;
 
-        // Для отладки — принудительно считаем Work=1
-        // currentWorkBitState = true;
+    if (reconnectFixationLogPending) {
+        reconnectFixationLogPending = false;
+        GlobalLogger::LogMessage(String::Format(
+            "Information: Устройство подключено к порту (Port {1}), GUID: {0}",
+            (this->ClientIP != nullptr ? this->ClientIP : ""),
+            clientPort));
+    }
 
-        if (reconnectFixationLogPending) {
-            reconnectFixationLogPending = false;
-            GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-                "Information: Устройство подключено к порту (Port {1}), GUID: {0}",
-                (this->ClientIP != nullptr ? this->ClientIP : ""),
-                clientPort)));
+    if (!firstDataReceived) {
+        firstDataReceived = true;
+        dataCollectionStartTime = now;
+        dataCollectionEndTime = DateTime::MinValue;
+        excelFileName = "WorkData_Port" + clientPort.ToString();
+        dataExportedToExcel = false;
+        buttonSTARTstate_TRUE();
+        SendVersionRequest();
+        int intervalSeconds = 10;
+        if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
+            intervalSeconds = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
         }
+        SendSetIntervalCommand(intervalSeconds);
+    }
 
-        // ===== Синхронизация состояния кнопок при первом приходе данных =====
-        if (!firstDataReceived) {
-            // При первом пакете данных — синхронизируем кнопки с состоянием устройства
-            if (currentWorkBitState) {
-                // Если WORK включён — показываем STOP
-                buttonSTOPstate_TRUE();
-                GlobalLogger::LogMessage("Information: Получен бит Work - флаг WORK установлен, отправлен STOP");
-            } else {
-                // Если WORK не включён — показываем START
-                buttonSTARTstate_TRUE();
-                GlobalLogger::LogMessage("Information: Получен бит Work - флаг WORK не установлен, отправлен START");
-            }
-            firstDataReceived = true;
-            
-            // Отправляем запрос версии и интервала после синхронизации состояния кнопок
-            SendVersionRequest();
-
-            // Отправляем текущий интервал измерения на устройство.
-            // Замечание: интервал задаётся пользователем в настройках формы, в UI отображается актуальное значение для отладки.
-            int intervalSeconds = 10;
-            if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
-                intervalSeconds = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
-            }
-            SendSetIntervalCommand(intervalSeconds);
-        }
-
-        // Когда бит "Work" переходит с 0 на 1 (устройство is ON)
-        if (!workBitDetected && currentWorkBitState) {
-            // Отмена: если был запланирован переход в состояние "остановлено"
-            if (workBitZeroTimerActive) {
-                // Если устройство включилось снова: отменяем таймер, сбрасываем бит Work=0 в ожидание.
-                workBitZeroTimerActive = false;
-                workStopFinalizeDelayElapsed = false;
-                if (workStopFinalizeTimer != nullptr && workStopFinalizeTimer->Enabled) {
-                    workStopFinalizeTimer->Stop();
-                }
-            } else {
-                // Если это новый цикл работы (не переподключение)
-                // Запоминаем время начала цикла: момент когда устройство включилось в работу, в секундах.
-                dataCollectionStartTime = now;
-                dataCollectionEndTime = DateTime::MinValue;
-                excelFileName = "WorkData_Port" + clientPort.ToString();
-                GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-                    "Information: Устройство отключено: {0} (Port {1})",
-                    dataCollectionStartTime.ToString("yyyy-MM-dd HH:mm:ss"), clientPort)));
-                // Сбрасываем флаг — данные ещё не экспортированы
-                dataExportedToExcel = false;  // при экспорте — сбросим после выгрузки
-            }
-            // Показываем кнопку STOP в нажатом виде
-            buttonSTOPstate_TRUE();
-        }
-
-        // Когда бит "Work" переходит с 1 на 0 (устройство is OFF)
-        if (workBitDetected && !currentWorkBitState) {
-            // Запуск 5-секундного таймера после бита Work=0. Ожидаем стабилизации перед экспортом.
-            workBitZeroTimerActive = true;
-            workStopFinalizeDelayElapsed = false;
-            if (workStopFinalizeTimer != nullptr) {
-                workStopFinalizeTimer->Stop();
-                workStopFinalizeTimer->Start();
-            }
-            GlobalLogger::LogMessage("Information: Work=0, запущен 5-секундный таймер перед экспортом");
-        }
-
-        // Обработка автоперезапуска: ждём подтверждения от устройства о выполнении команды в текущем цикле дефроста.
-        // Замечание: кнопка STOP отправлена на устройство в текущем цикле (при нажатии пользователь нажал кнопку).
-        // Повторный на START отправится после ожидания 5-секундного таймера и экспорта данных в Excel с Work=0.
-        if (autoRestartPending && autoRestartStopIssuedTime != DateTime::MinValue) {
-            TimeSpan waited = now.Subtract(autoRestartStopIssuedTime);
-            const double safetyTimeoutMinutes = 20;
-            if (waited.TotalMinutes >= safetyTimeoutMinutes) { 
-                // Таймаут: прошло 20 минут после STOP, отменяем автоперезапуск
-                autoRestartPending = false;
-                autoRestartStopIssuedTime = DateTime::MinValue;
-                GlobalLogger::LogMessage(ConvertToStdString(String::Format(
-                    "Warning: Автоперезапуск отменён: не получено подтверждение бита Work=0 за {0} минут после STOP",
-                    safetyTimeoutMinutes)));
-                if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
-                    Label_Commands->Text = "[!] Неожиданное состояние: проверьте подключение устройства";
-                    Label_Commands->ForeColor = System::Drawing::Color::Orange;
-                    GlobalLogger::LogMessage(ConvertToStdString(Label_Commands->Text));
-                }
+    // Таймаут автоперезапуска: если после STOP прошло 20 минут без экспорта — отменяем ожидание.
+    if (autoRestartPending && autoRestartStopIssuedTime != DateTime::MinValue) {
+        TimeSpan waited = now.Subtract(autoRestartStopIssuedTime);
+        const double safetyTimeoutMinutes = 20;
+        if (waited.TotalMinutes >= safetyTimeoutMinutes) {
+            autoRestartPending = false;
+            autoRestartStopIssuedTime = DateTime::MinValue;
+            GlobalLogger::LogMessage(String::Format(
+                "Warning: Автоперезапуск отменён: таймаут {0} мин после STOP", safetyTimeoutMinutes));
+            if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+                Label_Commands->Text = "[!] \u041D\u0435\u043E\u0436\u0438\u0434\u0430\u043D\u043D\u043E\u0435 \u0441\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435: \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u0435 \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u0430";
+                Label_Commands->ForeColor = System::Drawing::Color::Orange;
+                GlobalLogger::LogMessage(Label_Commands->Text);
             }
         }
-
-        // Условие: прошло по таймеру, бит Work=0 и прошло 5 секунд ожидания.
-        if (workBitZeroTimerActive && workStopFinalizeDelayElapsed && !currentWorkBitState) {
-                workBitZeroTimerActive = false;
-                workStopFinalizeDelayElapsed = false;
-                
-                // Запоминаем время окончания цикла данных
-                dataCollectionEndTime = now;
-                
-            GlobalLogger::LogMessage(ConvertToStdString("Information: Цикл завершён (Work=0, +5 сек ожидания), экспорт в файл " + excelFileName));
-                // Показываем кнопку START в нажатом виде
-                buttonSTARTstate_TRUE();
-                
-                // Считаем, что данные экспортированы (файл не перезаписывается при следующем цикле)
-                dataExportedToExcel = true;
-                
-                // Экспорт данных в Excel
-                this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));
-
-            // Замечание: кнопки START/STOP обрабатываются (при нажатии пользователем). Вызов START в UI message loop,
-            // затем отправка команды на устройство и экспорт данных в Excel при следующем подключении.
-                if (autoRestartPending) {
-                    autoRestartPending = false;
-                autoRestartStopIssuedTime = DateTime::MinValue;
-                    this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::ExecuteAutoRestartStart));
-            }
-        }
-
-        // Запоминаем текущее состояние бита Work
-        workBitDetected = currentWorkBitState;
     }
 
     // Записываем биты первой группы в строку таблицы
@@ -621,19 +537,28 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         row[bitNames[1][bit]] = bitValue;
     }
 
-    // Добавляем строку в таблицу только при сборе данных
-    // Условия добавления строки: 
-    // 1. Work = 1 (устройство в процессе работы)
-    // 2. Work = 0, но ещё не истекло время ожидания экспорта (workBitZeroTimerActive = true)
-    //    или уже истекло — тогда бит Work->0 и Open->1
-    if (workBitDetected || workBitZeroTimerActive)
-    {
-        table->Rows->Add(row);
-        
-        // Сбрасываем флаг экспорта, т.к. добавлена новая строка, которая ещё не выгружена в Excel
-        // при следующем цикле данные этой сессии будут экспортированы в файл
-        dataExportedToExcel = false;
-    }
+    // Колонки лога параметров процесса (группа 3): до прихода пакета лога — пусто
+    row["phase"] = System::DBNull::Value;
+    row["eT_common"] = System::DBNull::Value;
+    row["heatScale01"] = System::DBNull::Value;
+    row["uCommon_TEN"] = System::DBNull::Value;
+    row["trim_TEN"] = System::DBNull::Value;
+    row["uLeft_TEN"] = System::DBNull::Value;
+    row["uRight_TEN"] = System::DBNull::Value;
+    row["leftTen1Duty"] = System::DBNull::Value;
+    row["leftTen2Duty"] = System::DBNull::Value;
+    row["rightTen1Duty"] = System::DBNull::Value;
+    row["rightTen2Duty"] = System::DBNull::Value;
+    row["w_sup_avg"] = System::DBNull::Value;
+    row["wErr"] = System::DBNull::Value;
+    row["injDuty"] = System::DBNull::Value;
+    row["rate_Cps"] = System::DBNull::Value;
+    row["fishHot_C"] = System::DBNull::Value;
+    row["fishCold_C"] = System::DBNull::Value;
+
+    // Строку в таблицу не добавляем здесь: добавление только при приходе лога параметров (авто-режим).
+    // Всегда сохраняем последнюю телеметрию, чтобы при приходе лога (AppendControlLogToDataRow) была строка с данными.
+    lastPendingTelemetryRow = row;
 }
 
 
@@ -644,7 +569,7 @@ void DataForm::DelayedGarbageCollection(Object^ state) {
     try {
         // Пауза перед сборкой мусора
         //MessageBox::Show("Ошибка Excel не удалось запуститься!");
-        GlobalLogger::LogMessage(ConvertToStdString("Ошибка Excel не удалось запуститься!"));
+        GlobalLogger::LogMessage("Ошибка Excel не удалось запуститься!");
         Thread::Sleep(500);
 
         // Сборка мусора и ожидание финализаторов
@@ -665,21 +590,6 @@ void DataForm::EnableButton()
     catch (...) {}
 }
 
-void ProjectServerW::DataForm::OnWorkStopFinalizeTimerTick(Object^ sender, EventArgs^ e) {
-    try {
-        if (workStopFinalizeTimer != nullptr) {
-            workStopFinalizeTimer->Stop();
-        }
-
-        // Замечание: 5 секунд прошло после бита Work=0. Устанавливаем флаг ожидания экспорта.
-        // Таймер больше не перезапускается, данные считаются стабилизированными по таймеру с Work=0.
-        workStopFinalizeDelayElapsed = true;
-        GlobalLogger::LogMessage("Information: 5 секунд после бита Work=0 истекло, разрешаем экспорт для пользователя");
-    }
-    catch (Exception^ ex) {
-        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in OnWorkStopFinalizeTimerTick: " + ex->ToString()));
-    }
-}
 
 void ProjectServerW::DataForm::OnInactivityTimerTick(Object^ sender, EventArgs^ e) {
     try {
@@ -698,10 +608,10 @@ void ProjectServerW::DataForm::OnInactivityTimerTick(Object^ sender, EventArgs^ 
                 DateTime disconnectedSince(ticks);
                 TimeSpan waited = now.Subtract(disconnectedSince);
                 if (waited.TotalMinutes >= 30) {
-                    GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+                    GlobalLogger::LogMessage(String::Format(
                         "Information: Нет соединения с устройством {0} {1:F1} мин. Закрытие формы DataForm.",
                         ClientIP,
-                        waited.TotalMinutes)));
+                        waited.TotalMinutes));
 
                     // Если телеметрии не было в аварийном экспорте, закрываем форму.
                     if (!hasTelemetry) {
@@ -740,9 +650,9 @@ void ProjectServerW::DataForm::OnInactivityTimerTick(Object^ sender, EventArgs^ 
             dataCollectionEndTime = now;
         }
 
-        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+        GlobalLogger::LogMessage(String::Format(
             "Information: Нет телеметрии {0:F1} мин. Закрытие формы DataForm.",
-            idle.TotalMinutes)));
+            idle.TotalMinutes));
 
         // Повторный захват монитора; поток вызывающий для аварийного экспорта в том же потоке, иначе не блокируем поток из-за экспортного guard.
         if (!StartExcelExportThread(true)) {
@@ -757,7 +667,7 @@ void ProjectServerW::DataForm::OnInactivityTimerTick(Object^ sender, EventArgs^ 
         this->Close();
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in OnInactivityTimerTick: " + ex->ToString()));
+        GlobalLogger::LogMessage("Error: Exception in OnInactivityTimerTick: " + ex->ToString());
     }
 }
 
@@ -778,7 +688,11 @@ void ProjectServerW::DataForm::OnReconnectSendStartupCommands() {
             return;
         }
 
-        // Отправляем версию и интервал измерения команды на UI-устройство.
+        // Пауза после переподключения: мосту TCP↔UART нужно время переключиться на новый сокет,
+        // иначе первая команда (GET_VERSION) может теряться или ответ приходит с большой задержкой.
+        System::Threading::Thread::Sleep(1500);
+
+        // Отправляем версию и интервал измерения на устройство. Состояние ПУСК/СТОП выставляется по приходу лога параметров.
         const bool okVersion = SendVersionRequest();
 
         int intervalSeconds = 10;
@@ -793,7 +707,7 @@ void ProjectServerW::DataForm::OnReconnectSendStartupCommands() {
         }
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in OnReconnectSendStartupCommands: " + ex->ToString()));
+        GlobalLogger::LogMessage("Error: Exception in OnReconnectSendStartupCommands: " + ex->ToString());
     }
     catch (...) {
         GlobalLogger::LogMessage("Error: Unknown exception in OnReconnectSendStartupCommands");
@@ -854,6 +768,9 @@ void ProjectServerW::DataForm::OnPostResetInitTimerTick(System::Object^ sender, 
 
         postResetInitAttempt++;
 
+        // Пауза для моста TCP↔UART после переподключения (аналогично OnReconnectSendStartupCommands).
+        System::Threading::Thread::Sleep(1500);
+
         const bool okVersion = SendVersionRequest();
         int intervalSeconds = 10;
         if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
@@ -874,7 +791,7 @@ void ProjectServerW::DataForm::OnPostResetInitTimerTick(System::Object^ sender, 
         }
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in OnPostResetInitTimerTick: " + ex->ToString()));
+        GlobalLogger::LogMessage("Error: Exception in OnPostResetInitTimerTick: " + ex->ToString());
     }
     catch (...) {
         GlobalLogger::LogMessage("Error: Unknown exception in OnPostResetInitTimerTick");
@@ -912,7 +829,7 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
         lastTelemetryTime = telemetryTime;
         lastTelemetrySocket = currentSocket;
 
-        // Замечание: если время пришло с момента переключения Work->1 (как при переподключении "к устройству" окна), то обновляем время начала цикла.
+        // Обновляем время начала цикла при первом приёме после переподключения.
         if (dataCollectionStartTime == DateTime::MinValue) {
             dataCollectionStartTime = telemetryTime;
         }
@@ -933,43 +850,91 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
         }
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in AddDataToTableThreadSafe: " + ex->ToString()));
+        GlobalLogger::LogMessage("Error: Exception in AddDataToTableThreadSafe: " + ex->ToString());
     }
 
 }
 
-void ProjectServerW::DataForm::AppendControlLogToCsv(cli::array<System::Byte>^ packet, int size) {
-    if (packet == nullptr || size < 2 + sizeof(ControlLogPayload_t) + 2) return;
-    if (packet[1] != sizeof(ControlLogPayload_t)) return;
+// Парсинг лога параметров (группа 3) и добавление лога в строку данных: дополняет накопленную строку
+// телеметрии параметрами лога и добавляет эту строку в таблицу (только при приходе лога, авто-режим).
+void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte>^ packet, int size) {
+    const int expectedPayloadSize = (int)sizeof(ControlLogPayload_t);
+    const int minPacketSize = 2 + expectedPayloadSize + 2;
+    if (packet == nullptr || size < minPacketSize) {
+        GlobalLogger::LogMessage(String::Format(
+            "Warning: AppendControlLogToDataRow: packet null or size {0} < {1}", size, minPacketSize));
+        return;
+    }
+    const int lenByte = (int)packet[1];
+    if (lenByte != expectedPayloadSize) {
+        GlobalLogger::LogMessage(String::Format(
+            "Warning: AppendControlLogToDataRow: Len byte {0} != sizeof(ControlLogPayload_t)={1}, packet dropped", lenByte, expectedPayloadSize));
+        return;
+    }
     pin_ptr<System::Byte> pinned = &packet[0];
     const uint8_t* raw = reinterpret_cast<const uint8_t*>(pinned);
     ControlLogPayload_t pl;
     memcpy(&pl, raw + 2, sizeof(ControlLogPayload_t));
 
-    System::Threading::Monitor::Enter(controlLogSync);
+    System::Threading::Monitor::Enter(dataTableSync);
     try {
-        if (controlLogFilePath == nullptr) {
-            String^ appPath = System::IO::Path::GetDirectoryName(System::Windows::Forms::Application::ExecutablePath);
-            controlLogFilePath = System::IO::Path::Combine(appPath, "log_" + DateTime::Now.ToString("yyyy-MM-dd_HH-mm-ss") + ".csv");
-            System::IO::StreamWriter^ w = gcnew System::IO::StreamWriter(controlLogFilePath, false, System::Text::Encoding::UTF8);
-            w->WriteLine("Time,runtimeSeconds,phase,eT_common,heatScale01,"
-                "uCommon_TEN,trim_TEN,uLeft_TEN,uRight_TEN,leftTen1Duty,leftTen2Duty,rightTen1Duty,rightTen2Duty,"
-                "w_sup_avg,w_ret_target,wErr,injDuty,"
-                "fishHotMax_C,rate_Cps,fishHotRateMax_Cps,fishDeltaMax_C,supplyMax_C,fishHot_C,fishCold_C,supplySet_C");
-            w->Close();
+        if (dataTable == nullptr) {
+            GlobalLogger::LogMessage("Warning: AppendControlLogToDataRow: dataTable == nullptr");
+            return;
         }
-        System::IO::StreamWriter^ w = gcnew System::IO::StreamWriter(controlLogFilePath, true, System::Text::Encoding::UTF8);
-        String^ line = String::Format(System::Globalization::CultureInfo::InvariantCulture,
-            "{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14},{15},{16},{17},{18},{19},{20},{21},{22},{23},{24}",
-            pl.Time, pl.runtimeSeconds, (int)pl.phase, pl.eT_common, pl.heatScale01,
-            pl.uCommon_TEN, pl.trim_TEN, pl.uLeft_TEN, pl.uRight_TEN, pl.leftTen1Duty, pl.leftTen2Duty, pl.rightTen1Duty, pl.rightTen2Duty,
-            pl.w_sup_avg, pl.w_ret_target, pl.wErr, pl.injDuty,
-            pl.fishHotMax_C, pl.rate_Cps, pl.fishHotRateMax_Cps, pl.fishDeltaMax_C, pl.supplyMax_C, pl.fishHot_C, pl.fishCold_C, pl.supplySet_C);
-        w->WriteLine(line);
-        w->Close();
+        DataRow^ rowToAdd = nullptr;
+        if (lastPendingTelemetryRow != nullptr) {
+            rowToAdd = lastPendingTelemetryRow;
+            lastPendingTelemetryRow = nullptr;
+        } else {
+            rowToAdd = dataTable->NewRow();
+            for (int c = 0; c < dataTable->Columns->Count; c++) {
+                rowToAdd[c] = System::DBNull::Value;
+            }
+        }
+        rowToAdd["phase"] = (int)pl.phase;
+        rowToAdd["eT_common"] = pl.eT_common;
+        rowToAdd["heatScale01"] = pl.heatScale01;
+        rowToAdd["uCommon_TEN"] = pl.uCommon_TEN;
+        rowToAdd["trim_TEN"] = pl.trim_TEN;
+        rowToAdd["uLeft_TEN"] = pl.uLeft_TEN;
+        rowToAdd["uRight_TEN"] = pl.uRight_TEN;
+        rowToAdd["leftTen1Duty"] = pl.leftTen1Duty;
+        rowToAdd["leftTen2Duty"] = pl.leftTen2Duty;
+        rowToAdd["rightTen1Duty"] = pl.rightTen1Duty;
+        rowToAdd["rightTen2Duty"] = pl.rightTen2Duty;
+        rowToAdd["w_sup_avg"] = pl.w_sup_avg;
+        rowToAdd["wErr"] = pl.wErr;
+        rowToAdd["injDuty"] = pl.injDuty;
+        rowToAdd["rate_Cps"] = pl.rate_Cps;
+        rowToAdd["fishHot_C"] = pl.fishHot_C;
+        rowToAdd["fishCold_C"] = pl.fishCold_C;
+        if (dataGridView != nullptr && !dataGridView->IsDisposed) {
+            dataGridView->SuspendLayout();
+        }
+        try {
+            dataTable->Rows->Add(rowToAdd);
+            dataExportedToExcel = false;
+            // Лог параметров передаётся только в автоматическом режиме — выставляем состояние «программа запущена»
+            // Используем EnsureProgramRunningStateFromLog, чтобы запоздалый лог после команды СТОП не затирал состояние кнопок.
+            if (this->InvokeRequired) {
+                this->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(this, &DataForm::EnsureProgramRunningStateFromLog));
+            }
+            else {
+                EnsureProgramRunningStateFromLog();
+            }
+        }
+        finally {
+            if (dataGridView != nullptr && !dataGridView->IsDisposed) {
+                dataGridView->ResumeLayout(false);
+            }
+        }
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage("Error: AppendControlLogToDataRow exception: " + ex->ToString());
     }
     finally {
-        System::Threading::Monitor::Exit(controlLogSync);
+        System::Threading::Monitor::Exit(dataTableSync);
     }
 }
 
@@ -1007,7 +972,7 @@ void ProjectServerW::DataForm::SaveSettings() {
     catch (Exception^ ex) {
         // Ошибка при записи настроек в файл
         MessageBox::Show("Не удалось сохранить настройки в файл: " + ex->Message);
-        GlobalLogger::LogMessage(ConvertToStdString("Не удалось сохранить настройки в файл: " + ex->Message));
+        GlobalLogger::LogMessage("Не удалось сохранить настройки в файл: " + ex->Message);
     }
 }
 
@@ -1081,7 +1046,7 @@ void ProjectServerW::DataForm::LoadSettings() {
     catch (Exception^ ex) {
         // Ошибка при загрузке настроек
         MessageBox::Show("Не удалось загрузить настройки: " + ex->Message);
-        GlobalLogger::LogMessage(ConvertToStdString("Не удалось загрузить настройки: " + ex->Message));
+        GlobalLogger::LogMessage("Не удалось загрузить настройки: " + ex->Message);
     }
     finally {
         settingsLoading = false;
@@ -1370,12 +1335,12 @@ System::Void ProjectServerW::DataForm::dataGridView2_RowChanged(System::Object^ 
     dataGridView2Dirty = true;
 }
 
-// ВВВВВВВВВВВ ВВВ ВВВВВВВВВ (Parameter2) В ВВВВВВВВВВВВВВ ВВВВВВВВВ: groupId, paramId, ВВВ (1=U8, 2=U16, 3=F32)
+// Преобразование имени параметра (колонка Parameter2) в идентификаторы: groupId, paramId, тип значения (1=U8, 2=U16, 3=F32).
 static bool GetDefrostParamId(System::String^ paramName, uint8_t% outGroupId, uint8_t% outParamId, uint8_t% outValueType) {
     if (paramName == nullptr) return false;
     String^ p = paramName->Trim();
     if (String::IsNullOrEmpty(p)) return false;
-    // ВВВВВВ: 1=SENSORS, 2=TEMPERATURE, 3=HUMIDITY, 4=PWM (ВВВВВВВВВВВВ В DefrostControl.h)
+    // Группы: 1=SENSORS, 2=TEMPERATURE, 3=HUMIDITY, 4=PWM (как в DefrostControl.h)
     if (p->StartsWith("Sensor", StringComparison::OrdinalIgnoreCase) && p->Contains("use in defrost")) {
         int i = -1; if (p->Length >= 7) Int32::TryParse(p->Substring(6, 1), i);
         if (i >= 0 && i <= 6) { outGroupId = 1; outParamId = (uint8_t)i; outValueType = DefrostParamType::U8; return true; }
@@ -1477,12 +1442,12 @@ System::Void ProjectServerW::DataForm::buttonReadParameters_Click(System::Object
             Label_Commands->Text = String::Format("Считать с устройства: прочитано {0} параметров" + (fail > 0 ? ", ошибок: " + fail : ""), ok);
             Label_Commands->ForeColor = System::Drawing::Color::DarkGreen;
         }
-        GlobalLogger::LogMessage(ConvertToStdString(String::Format("Information: Read {0} params from defroster" + (fail > 0 ? ", {1} failed" : ""), ok, fail)));
+        GlobalLogger::LogMessage(String::Format("Information: Read {0} params from defroster" + (fail > 0 ? ", {1} failed" : ""), ok, fail));
     }
     catch (Exception^ ex) {
         String^ msg = "Ошибка при считывании параметров: " + (ex->Message != nullptr ? ex->Message : "");
         MessageBox::Show(msg, "Считать параметры", MessageBoxButtons::OK, MessageBoxIcon::Warning);
-        GlobalLogger::LogMessage(ConvertToStdString("Error: buttonReadParameters_Click: " + msg));
+        GlobalLogger::LogMessage("Error: buttonReadParameters_Click: " + msg);
         if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
             Label_Commands->Text = "Ошибка при считывании параметров";
             Label_Commands->ForeColor = System::Drawing::Color::Red;
@@ -1553,7 +1518,7 @@ System::Void ProjectServerW::DataForm::buttonWriteParameters_Click(System::Objec
         Label_Commands->Text = String::Format("Запись в устройство: записано {0} параметров" + (fail > 0 ? ", ошибок: " + fail : ""), ok);
         Label_Commands->ForeColor = System::Drawing::Color::DarkGreen;
     }
-    GlobalLogger::LogMessage(ConvertToStdString(String::Format("Information: Wrote {0} params to defroster" + (fail > 0 ? ", {1} failed" : ""), ok, fail)));
+    GlobalLogger::LogMessage(String::Format("Information: Wrote {0} params to defroster" + (fail > 0 ? ", {1} failed" : ""), ok, fail));
 }
 
 //*******************************************************************************************
@@ -1619,7 +1584,7 @@ System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ send
                 }
 
                 // Аварийный экспорт при закрытии
-                GlobalLogger::LogMessage("Information: Экспортируем данные в Excel при закрытии формы... " + ConvertToStdString(excelFileName));
+                GlobalLogger::LogMessage("Information: \u042D\u043A\u0441\u043F\u043E\u0440\u0442\u0438\u0440\u0443\u0435\u043C \u0434\u0430\u043D\u043D\u044B\u0435 \u0432 Excel \u043F\u0440\u0438 \u0437\u0430\u043A\u0440\u044B\u0442\u0438\u0438 \u0444\u043E\u0440\u043C\u044B... " + excelFileName);
 
                 // Вызов экспорта в потоке для выполнения в UI-потоке при закрытии формы
                 StartExcelExportThread(true);
@@ -1634,7 +1599,7 @@ System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ send
         e->Cancel = false;
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage("Ошибка при записи параметров в устройство: " + ConvertToStdString(ex->Message));
+        GlobalLogger::LogMessage("Ошибка при записи параметров в устройство: " + ex->Message);
         // При ошибке всё равно разрешаем закрытие формы
         e->Cancel = false;
     }
@@ -1661,7 +1626,7 @@ System::Void DataForm::DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ 
     }
     
     if (!formFoundInMap) {
-        GlobalLogger::LogMessage("Information: Форма уже была удалена из карты ранее");
+        GlobalLogger::LogMessage(gcnew String(L"Information: \u0424\u043E\u0440\u043C\u0430 \u0443\u0436\u0435 \u0431\u044B\u043B\u0430 \u0443\u0434\u0430\u043B\u0435\u043D\u0430 \u0438\u0437 \u043A\u0430\u0440\u0442\u044B \u0440\u0430\u043D\u0435\u0435"));
     }
     
     // Закрываем сокет клиента
@@ -1705,36 +1670,54 @@ System::Void DataForm::DataForm_HandleDestroyed(Object^ sender, EventArgs^ e)
         inactivityTimer = nullptr;
     }
 
-    if (workStopFinalizeTimer != nullptr) {
-        try {
-            workStopFinalizeTimer->Stop();
-            workStopFinalizeTimer->Tick -= gcnew EventHandler(this, &DataForm::OnWorkStopFinalizeTimerTick);
-        }
-        catch (...) {}
-        workStopFinalizeTimer = nullptr;
-    }
 }
 
 // Отправка команды дефроста на устройство (реализация в CommandsDefroster.cpp)
 
+// Состояние «программа остановлена»: после успешной команды СТОП — лампы и блокировка кнопок
 void ProjectServerW::DataForm::buttonSTARTstate_TRUE()
 {
+    if (buttonSTART == nullptr || buttonSTOP == nullptr || labelSTART == nullptr || labelSTOP == nullptr)
+        return;
     buttonSTART->Enabled = true;
-    labelSTART->BackColor = System::Drawing::Color::Snow;
+    labelSTART->BackColor = System::Drawing::Color::Red;
     labelSTART->Text = "0";
     buttonSTOP->Enabled = false;
-    labelSTOP->BackColor = System::Drawing::Color::OrangeRed;
+    labelSTOP->BackColor = System::Drawing::Color::Lime;
     labelSTOP->Text = "1";
+    if (this->IsHandleCreated && !this->IsDisposed)
+        this->Refresh();
 }
 
+void ProjectServerW::DataForm::EnsureProgramRunningStateFromLog()
+{
+    // Лог параметров идёт только при работе в автоматическом режиме — выставляем «программа запущена».
+    // Не перезаписывать только если недавно (10 с) получен ответ на СТОП — запоздалый лог не должен затирать кнопки.
+    if (buttonSTART == nullptr || buttonSTOP == nullptr)
+        return;
+    if (buttonSTART->Enabled && !buttonSTOP->Enabled) {
+        if (lastStopSuccessTime != DateTime::MinValue) {
+            TimeSpan elapsed = DateTime::Now.Subtract(lastStopSuccessTime);
+            if (elapsed.TotalSeconds < 10.0)
+                return;
+        }
+    }
+    buttonSTOPstate_TRUE();
+}
+
+// Состояние «программа запущена»: после успешной команды ПУСК — лампы и блокировка кнопок
 void ProjectServerW::DataForm::buttonSTOPstate_TRUE()
 {
+    if (buttonSTART == nullptr || buttonSTOP == nullptr || labelSTART == nullptr || labelSTOP == nullptr)
+        return;
     buttonSTART->Enabled = false;
     labelSTART->BackColor = System::Drawing::Color::Lime;
     labelSTART->Text = "1";
     buttonSTOP->Enabled = true;
-    labelSTOP->BackColor = System::Drawing::Color::Snow;
+    labelSTOP->BackColor = System::Drawing::Color::Red;
     labelSTOP->Text = "0";
+    if (this->IsHandleCreated && !this->IsDisposed)
+        this->Refresh();
 }
 
 //  ===========================================================================
@@ -1748,7 +1731,7 @@ void ProjectServerW::DataForm::TriggerExcelExport() {
             this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::TriggerExcelExport));
         }
         catch (Exception^ ex) {
-            GlobalLogger::LogMessage("Error invoking TriggerExcelExport: " + ConvertToStdString(ex->Message));
+            GlobalLogger::LogMessage("Error invoking TriggerExcelExport: " + ex->Message);
         }
         return;
     }
@@ -1757,7 +1740,7 @@ void ProjectServerW::DataForm::TriggerExcelExport() {
         StartExcelExportThread(false);
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage("Error in TriggerExcelExport: " + ConvertToStdString(ex->Message));
+        GlobalLogger::LogMessage("Error in TriggerExcelExport: " + ex->Message);
     }
 }
 
@@ -1771,9 +1754,9 @@ System::Void ProjectServerW::DataForm::checkBoxAutoStart_CheckedChanged(System::
     if (checkBoxAutoStart->Checked) {
         // Запуск таймера
         timerAutoStart->Start();
-        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+        GlobalLogger::LogMessage(String::Format(
             "Information: Автозапуск установлен на {0}",
-            dateTimePickerAutoStart->Value.ToString("HH:mm"))));
+            dateTimePickerAutoStart->Value.ToString("HH:mm")));
         
         // Включаем элементы (метка зелёная, выбор времени доступен)
         labelAutoStart->ForeColor = System::Drawing::Color::Green;
@@ -1802,10 +1785,10 @@ System::Void ProjectServerW::DataForm::timerAutoStart_Tick(System::Object^ sende
     // Сравниваем текущее время с целевым (час и минута)
     if (now.Hour == targetTime.Hour && now.Minute == targetTime.Minute) {
         // Время пришло — срабатывание автозапуска
-        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+        GlobalLogger::LogMessage(String::Format(
             "Information: Автозапуск сработал в {0} (целевое: {1})",
             now.ToString("HH:mm:ss"),
-            targetTime.ToString("HH:mm"))));
+            targetTime.ToString("HH:mm")));
         
         // Проверяем, что кнопка START доступна (нажатие по таймеру)
         if (buttonSTART->Enabled) {
@@ -1813,23 +1796,22 @@ System::Void ProjectServerW::DataForm::timerAutoStart_Tick(System::Object^ sende
             labelAutoStart->ForeColor = System::Drawing::Color::Blue;
             Label_Commands->Text = "[Ожидание] Выполняется команда остановки...";
             Label_Commands->ForeColor = System::Drawing::Color::Blue;
-            GlobalLogger::LogMessage(ConvertToStdString(Label_Commands->Text));
+            GlobalLogger::LogMessage(Label_Commands->Text);
             
             CommandResponse startResp{};
             CommandAckResult startResult = SendControlCommandWithAck(CmdProgControl::START, "START", 2000, 2, startResp);
 
             if (startResult == CommandAckResult::NoResponse) {
-                // Замечание: команда отправлена на устройство, но ACK не получен; ожидание по биту Work в следующем пакете.
-                GlobalLogger::LogMessage("Warning: Автозапуск: START не подтверждён, ожидание по биту Work");
-                Label_Commands->Text = "[Ожидание] START не отправлен, ожидание по Work...";
+                GlobalLogger::LogMessage("Warning: Автозапуск: START не подтверждён (нет ответа от устройства)");
+                Label_Commands->Text = "[Ожидание] START не подтверждён...";
                 Label_Commands->ForeColor = System::Drawing::Color::Orange;
-                GlobalLogger::LogMessage(ConvertToStdString(Label_Commands->Text));
+                GlobalLogger::LogMessage(Label_Commands->Text);
             }
             else if (startResult != CommandAckResult::Ok) {
                 GlobalLogger::LogMessage("Warning: Автозапуск: START не выполнен (ошибка связи/таймаут)");
                 Label_Commands->Text = "[!] Ошибка: START не отправлен";
                 Label_Commands->ForeColor = System::Drawing::Color::Orange;
-                GlobalLogger::LogMessage(ConvertToStdString(Label_Commands->Text));
+                GlobalLogger::LogMessage(Label_Commands->Text);
             }
             
             // Отключаем чекбокс автозапуска
@@ -1846,7 +1828,7 @@ System::Void ProjectServerW::DataForm::timerAutoStart_Tick(System::Object^ sende
             GlobalLogger::LogMessage("Warning: Автозапуск не выполнен — кнопка недоступна");
             Label_Commands->Text = "[!] Таймаут операции - проверьте подключение";
             Label_Commands->ForeColor = System::Drawing::Color::Orange;
-            GlobalLogger::LogMessage(ConvertToStdString(Label_Commands->Text));
+            GlobalLogger::LogMessage(Label_Commands->Text);
             
             // Отключаем автозапуск
             checkBoxAutoStart->Checked = false;
@@ -1866,7 +1848,7 @@ System::Void ProjectServerW::DataForm::RestoreAutoStartColor(System::Object^ sen
         labelAutoStart->ForeColor = System::Drawing::SystemColors::ControlText;
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage(ConvertToStdString("Error in RestoreAutoStartColor: " + ex->Message));
+        GlobalLogger::LogMessage("Error in RestoreAutoStartColor: " + ex->Message);
     }
 }
 
@@ -1877,9 +1859,9 @@ System::Void ProjectServerW::DataForm::RestoreAutoStartColor(System::Object^ sen
 System::Void ProjectServerW::DataForm::checkBoxAutoRestart_CheckedChanged(System::Object^ sender, System::EventArgs^ e) {
     if (checkBoxAutoRestart->Checked) {
         timerAutoRestart->Start();
-        GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+        GlobalLogger::LogMessage(String::Format(
             "Information: Автоперезапуск установлен на {0}",
-            dateTimePickerAutoRestart->Value.ToString("HH:mm"))));
+            dateTimePickerAutoRestart->Value.ToString("HH:mm")));
 
         labelAutoRestart->ForeColor = System::Drawing::Color::Green;
     }
@@ -1891,7 +1873,7 @@ System::Void ProjectServerW::DataForm::checkBoxAutoRestart_CheckedChanged(System
         else {
             autoRestartPending = false;
         }
-        GlobalLogger::LogMessage("Information: Автоперезапуск отключён");
+        GlobalLogger::LogMessage(gcnew String(L"Information: \u0410\u0432\u0442\u043E\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A \u043E\u0442\u043A\u043B\u044E\u0447\u0451\u043D"));
 
         labelAutoRestart->ForeColor = System::Drawing::SystemColors::ControlText;
     }
@@ -1924,24 +1906,23 @@ System::Void ProjectServerW::DataForm::timerAutoRestart_Tick(System::Object^ sen
         return;
     }
 
-    GlobalLogger::LogMessage(ConvertToStdString(String::Format(
+    GlobalLogger::LogMessage(String::Format(
         "Information: Автоперезапуск сработал в {0} (целевое: {1})",
         now.ToString("HH:mm:ss"),
-        targetTime.ToString("HH:mm"))));
+        targetTime.ToString("HH:mm")));
 
     // Если ни STOP ни START недоступны (устройство отключено), то "автоперезапуск" отменяется.
     if (!buttonSTOP->Enabled && !buttonSTART->Enabled) {
-        GlobalLogger::LogMessage("Warning: Автоперезапуск: устройство отключено (нет связи), отмена...");
+        GlobalLogger::LogMessage(gcnew String(L"Warning: \u0410\u0432\u0442\u043E\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A: \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u043E \u043E\u0442\u043A\u043B\u044E\u0447\u0435\u043D\u043E (\u043D\u0435\u0442 \u0441\u0432\u044F\u0437\u0438), \u043E\u0442\u043C\u0435\u043D\u0430..."));
         return;
     }
 
     labelAutoRestart->ForeColor = System::Drawing::Color::Blue;
 
-    // Если нажата кнопка STOP доступна (отправка STOP) — отправляем STOP и ждём подтверждения Work=0.
     if (buttonSTOP->Enabled) {
         Label_Commands->Text = "[Выполняется] Отправлена команда STOP...";
         Label_Commands->ForeColor = System::Drawing::Color::Blue;
-        GlobalLogger::LogMessage(ConvertToStdString(Label_Commands->Text));
+        GlobalLogger::LogMessage(Label_Commands->Text);
 
         CommandResponse stopResp{};
         CommandAckResult stopResult = SendControlCommandWithAck(CmdProgControl::STOP, "STOP", 2000, 2, stopResp);
@@ -1951,24 +1932,23 @@ System::Void ProjectServerW::DataForm::timerAutoRestart_Tick(System::Object^ sen
             autoRestartStopIssuedTime = DateTime::Now;
             Label_Commands->Text = "[Выполняется] STOP отправлена, ожидание экспорта данных...";
             Label_Commands->ForeColor = System::Drawing::Color::Blue;
-            GlobalLogger::LogMessage(ConvertToStdString(Label_Commands->Text));
+            GlobalLogger::LogMessage(Label_Commands->Text);
         }
         else if (stopResult == CommandAckResult::NoResponse) {
-            // Замечание: команда отправлена STOP, но ACK не получен; считаем отправленной и ожидаем по биту Work.
             autoRestartPending = true;
             autoRestartStopIssuedTime = DateTime::Now;
-            GlobalLogger::LogMessage("Warning: Автоперезапуск: STOP не подтверждён, ожидание по биту Work");
-            Label_Commands->Text = "[Выполняется] STOP не отправлен, ожидание по Work...";
+            GlobalLogger::LogMessage(gcnew String(L"Warning: \u0410\u0432\u0442\u043E\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A: STOP \u043D\u0435 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D (\u043D\u0435\u0442 \u043E\u0442\u0432\u0435\u0442\u0430)"));
+            Label_Commands->Text = "[Выполняется] STOP не подтверждён, ожидание...";
             Label_Commands->ForeColor = System::Drawing::Color::Orange;
-            GlobalLogger::LogMessage(ConvertToStdString(Label_Commands->Text));
+            GlobalLogger::LogMessage(Label_Commands->Text);
         }
         else {
             autoRestartPending = false;
             autoRestartStopIssuedTime = DateTime::MinValue;
-            GlobalLogger::LogMessage("Warning: Автоперезапуск: STOP не выполнен (ошибка связи/таймаут)");
+            GlobalLogger::LogMessage(gcnew String(L"Warning: \u0410\u0432\u0442\u043E\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A: STOP \u043D\u0435 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D (\u043E\u0448\u0438\u0431\u043A\u0430 \u0441\u0432\u044F\u0437\u0438/\u0442\u0430\u0439\u043C\u0430\u0443\u0442)"));
             Label_Commands->Text = "[!] Ошибка выполнения: STOP не отправлен";
             Label_Commands->ForeColor = System::Drawing::Color::Orange;
-            GlobalLogger::LogMessage(ConvertToStdString(Label_Commands->Text));
+            GlobalLogger::LogMessage(Label_Commands->Text);
         }
 
             autoRestartInternalUncheck = true;
@@ -1978,7 +1958,7 @@ System::Void ProjectServerW::DataForm::timerAutoRestart_Tick(System::Object^ sen
         // Устройство уже остановлено в этот момент — отправляем START.
         Label_Commands->Text = "[Выполняется] Ожидание отключения, отправка START...";
         Label_Commands->ForeColor = System::Drawing::Color::Blue;
-        GlobalLogger::LogMessage(ConvertToStdString(Label_Commands->Text));
+        GlobalLogger::LogMessage(Label_Commands->Text);
 
         CommandResponse startResp{};
         CommandAckResult startResult = SendControlCommandWithAck(CmdProgControl::START, "START", 2000, 2, startResp);
@@ -1986,20 +1966,19 @@ System::Void ProjectServerW::DataForm::timerAutoRestart_Tick(System::Object^ sen
         if (startResult == CommandAckResult::Ok) {
             Label_Commands->Text = "[Выполняется] START отправлен";
             Label_Commands->ForeColor = System::Drawing::Color::Blue;
-            GlobalLogger::LogMessage(ConvertToStdString(Label_Commands->Text));
+            GlobalLogger::LogMessage(Label_Commands->Text);
         }
         else if (startResult == CommandAckResult::NoResponse) {
-            // Замечание: устройство ответило по приёму ACK, но подтверждение бита Work придет в следующем пакете.
-            GlobalLogger::LogMessage("Warning: Автоперезапуск: START не подтверждён, ожидание по биту Work");
-            Label_Commands->Text = "[Выполняется] START не отправлен, ожидание по Work...";
+            GlobalLogger::LogMessage(gcnew String(L"Warning: \u0410\u0432\u0442\u043E\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A: START \u043D\u0435 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D (\u043D\u0435\u0442 \u043E\u0442\u0432\u0435\u0442\u0430)"));
+            Label_Commands->Text = "[Выполняется] START не подтверждён...";
             Label_Commands->ForeColor = System::Drawing::Color::Orange;
-            GlobalLogger::LogMessage(ConvertToStdString(Label_Commands->Text));
+            GlobalLogger::LogMessage(Label_Commands->Text);
         }
         else {
-            GlobalLogger::LogMessage("Warning: Автоперезапуск: START не выполнен (ошибка связи/таймаут)");
+            GlobalLogger::LogMessage(gcnew String(L"Warning: \u0410\u0432\u0442\u043E\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A: START \u043D\u0435 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D (\u043E\u0448\u0438\u0431\u043A\u0430 \u0441\u0432\u044F\u0437\u0438/\u0442\u0430\u0439\u043C\u0430\u0443\u0442)"));
             Label_Commands->Text = "[!] Ошибка выполнения: START не отправлен";
             Label_Commands->ForeColor = System::Drawing::Color::Orange;
-            GlobalLogger::LogMessage(ConvertToStdString(Label_Commands->Text));
+            GlobalLogger::LogMessage(Label_Commands->Text);
         }
         autoRestartInternalUncheck = true;
         checkBoxAutoRestart->Checked = false;
@@ -2020,7 +1999,7 @@ System::Void ProjectServerW::DataForm::RestoreAutoRestartColor(System::Object^ s
         labelAutoRestart->ForeColor = System::Drawing::SystemColors::ControlText;
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage(ConvertToStdString("Error in RestoreAutoRestartColor: " + ex->Message));
+        GlobalLogger::LogMessage("Error in RestoreAutoRestartColor: " + ex->Message);
     }
 }
 
@@ -2030,17 +2009,17 @@ void ProjectServerW::DataForm::ExecuteAutoRestartStart() {
             return;
         }
         if (!buttonSTART->Enabled) {
-            GlobalLogger::LogMessage("Warning: Автоперезапуск: START не выполнен (кнопка недоступна)");
+            GlobalLogger::LogMessage(gcnew String(L"Warning: \u0410\u0432\u0442\u043E\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A: START \u043D\u0435 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D (\u043A\u043D\u043E\u043F\u043A\u0430 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430)"));
             return;
         }
 
         Label_Commands->Text = "[Выполняется] Выполняется команда остановки...";
         Label_Commands->ForeColor = System::Drawing::Color::Blue;
-        GlobalLogger::LogMessage(ConvertToStdString(Label_Commands->Text));
+        GlobalLogger::LogMessage(Label_Commands->Text);
         SendStartCommand();
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage(ConvertToStdString("Error: Exception in ExecuteAutoRestartStart: " + ex->ToString()));
+        GlobalLogger::LogMessage("Error: Exception in ExecuteAutoRestartStart: " + ex->ToString());
     }
 }
 
