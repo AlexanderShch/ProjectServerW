@@ -922,9 +922,10 @@ private: System::ComponentModel::IContainer^ components;
 				});
 				this->dataGridView2->Location = System::Drawing::Point(23, 96);
 				this->dataGridView2->Name = L"dataGridView2";
-				this->dataGridView2->RowHeadersWidth = 62;
-				this->dataGridView2->RowTemplate->Height = 28;
+				this->dataGridView2->RowHeadersWidth = 42;
+				this->dataGridView2->RowTemplate->Height = 16;
 				this->dataGridView2->Size = System::Drawing::Size(564, 377);
+				this->dataGridView2->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::Fill;
 				this->dataGridView2->TabIndex = 1;
 				this->dataGridView2->CellValueChanged += gcnew System::Windows::Forms::DataGridViewCellEventHandler(this, &DataForm::dataGridView2_CellValueChanged);
 				this->dataGridView2->UserAddedRow += gcnew System::Windows::Forms::DataGridViewRowEventHandler(this, &DataForm::dataGridView2_RowChanged);
@@ -933,23 +934,23 @@ private: System::ComponentModel::IContainer^ components;
 				// Parameter2
 				// 
 				this->Parameter2->HeaderText = L"Параметр";
-				this->Parameter2->MinimumWidth = 8;
+				this->Parameter2->MinimumWidth = 60;
 				this->Parameter2->Name = L"Parameter2";
-				this->Parameter2->Width = 150;
+				this->Parameter2->Width = 120;
 				// 
 				// Description
 				// 
 				this->Description->HeaderText = L"Описание параметра";
-				this->Description->MinimumWidth = 8;
+				this->Description->MinimumWidth = 80;
 				this->Description->Name = L"Description";
-				this->Description->Width = 150;
+				this->Description->Width = 220;
 				// 
 				// Value
 				// 
 				this->Value->HeaderText = L"Величина";
-				this->Value->MinimumWidth = 8;
+				this->Value->MinimumWidth = 50;
 				this->Value->Name = L"Value";
-				this->Value->Width = 150;
+				this->Value->Width = 80;
 				// 
 				// dataGridView1
 				// 
@@ -960,9 +961,10 @@ private: System::ComponentModel::IContainer^ components;
 				});
 				this->dataGridView1->Location = System::Drawing::Point(593, 96);
 				this->dataGridView1->Name = L"dataGridView1";
-				this->dataGridView1->RowHeadersWidth = 62;
-				this->dataGridView1->RowTemplate->Height = 28;
+				this->dataGridView1->RowHeadersWidth = 42;
+				this->dataGridView1->RowTemplate->Height = 16;
 				this->dataGridView1->Size = System::Drawing::Size(691, 377);
+				this->dataGridView1->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::Fill;
 				this->dataGridView1->TabIndex = 0;
 				this->dataGridView1->CellValueChanged += gcnew System::Windows::Forms::DataGridViewCellEventHandler(this, &DataForm::dataGridView1_CellValueChanged);
 				this->dataGridView1->UserAddedRow += gcnew System::Windows::Forms::DataGridViewRowEventHandler(this, &DataForm::dataGridView1_RowChanged);
@@ -971,30 +973,30 @@ private: System::ComponentModel::IContainer^ components;
 				// Parameter
 				// 
 				this->Parameter->HeaderText = L"Параметр";
-				this->Parameter->MinimumWidth = 8;
+				this->Parameter->MinimumWidth = 80;
 				this->Parameter->Name = L"Parameter";
-				this->Parameter->Width = 150;
+				this->Parameter->Width = 160;
 				// 
 				// WarmUP
 				// 
 				this->WarmUP->HeaderText = L"WarmUp";
-				this->WarmUP->MinimumWidth = 8;
+				this->WarmUP->MinimumWidth = 50;
 				this->WarmUP->Name = L"WarmUP";
-				this->WarmUP->Width = 150;
+				this->WarmUP->Width = 100;
 				// 
 				// Plateau
 				// 
 				this->Plateau->HeaderText = L"Plateau";
-				this->Plateau->MinimumWidth = 8;
+				this->Plateau->MinimumWidth = 50;
 				this->Plateau->Name = L"Plateau";
-				this->Plateau->Width = 150;
+				this->Plateau->Width = 100;
 				// 
 				// Finish
 				// 
 				this->Finish->HeaderText = L"Finish";
-				this->Finish->MinimumWidth = 8;
+				this->Finish->MinimumWidth = 50;
 				this->Finish->Name = L"Finish";
-				this->Finish->Width = 150;
+				this->Finish->Width = 100;
 				// 
 				// timerAutoStart
 				// 
@@ -1237,6 +1239,10 @@ private: System::Void button_CMDINFO_Click(System::Object^ sender, System::Event
 	void LoadDataGridView2Defaults();
 	void LoadDataGridView2FromFile();
 	void SaveDataGridView2ToFile();
+	/** Заполнить dataGridView1 из payload ответа GET_DEFROST_GROUP(groupId=5). Параметры по фазам (WarmUP, Plateau, Finish). */
+	void FillDataGridView1FromGroup5Payload(const uint8_t* payload, uint8_t payloadLen);
+	/** Заполнить dataGridView2 из payload ответа GET_DEFROST_GROUP(groupId=6). Общие параметры. */
+	void FillDataGridView2FromGroup6Payload(const uint8_t* payload, uint8_t payloadLen);
 	
 };  // Конец класса DataForm
 

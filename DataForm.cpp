@@ -43,6 +43,37 @@ typedef struct {
     float rate_Cps;
     float fishHot_C, fishCold_C;
 } ControlLogPayload_t;
+
+/* Ответ GET_DEFROST_GROUP(groupId=5): структура совпадает с DefrostLogPhasePayload_t на контроллере. */
+#define DEFROST_PHASE_COUNT_SERVER 3
+typedef struct {
+    float fishHotMax_C[DEFROST_PHASE_COUNT_SERVER];
+    float fishHotRateMax_Cps[DEFROST_PHASE_COUNT_SERVER];
+    float fishDeltaMax_C[DEFROST_PHASE_COUNT_SERVER];
+    float supplySet_C[DEFROST_PHASE_COUNT_SERVER];
+    float supplyMax_C[DEFROST_PHASE_COUNT_SERVER];
+    float returnTargetRH_percent[DEFROST_PHASE_COUNT_SERVER];
+} DefrostLogPhasePayload_t;
+
+/* Ответ GET_DEFROST_GROUP(groupId=6): структура совпадает с DefrostLogGlobalPayload_t на контроллере. */
+#define DEFROST_MAX_SENSOR_COUNT_SERVER 16
+typedef struct {
+    float leftRightTrimGain;
+    float leftRightTrimMaxEq;
+    float piKp;
+    float piKi;
+    float wDeadband_kgkg;
+    float injGain;
+    uint16_t outDamperTimer_s;
+    uint16_t outFanDelay_s;
+    uint16_t outHold_s;
+    uint16_t tenMinHold_s;
+    uint16_t injMinHold_s;
+    uint16_t airOnlyPhaseWarmUp_s;
+    uint16_t airOnlyPhasePlateau_s;
+    uint16_t maxRuntime_s;
+    uint8_t sensorUseInDefrost[DEFROST_MAX_SENSOR_COUNT_SERVER];
+} DefrostLogGlobalPayload_t;
 #pragma pack(pop)
 
 // Совпадает с форматом пакета в типе MSGQUEUE_OBJ_t на STM32
@@ -1100,6 +1131,76 @@ void ProjectServerW::DataForm::LoadDataGridView2Defaults() {
     dataGridView2->Rows->Add("maxRuntime_s", "Air-only: Max process duration (s)", "7200");
 }
 
+// Имена параметров группы 5 (LOG_PHASE): порядок полей в DefrostLogPhasePayload_t
+static const char* const kGroup5ParamNames[] = {
+    "fishHotMax_C", "fishHotRateMax_Cps", "fishDeltaMax_C", "supplySet_C", "supplyMax_C", "returnTargetRH_percent"
+};
+
+void ProjectServerW::DataForm::FillDataGridView1FromGroup5Payload(const uint8_t* payload, uint8_t payloadLen) {
+    if (dataGridView1 == nullptr || dataGridView1->IsDisposed || payload == nullptr) return;
+    dataGridView1->Rows->Clear();
+    const size_t expectedSize = sizeof(DefrostLogPhasePayload_t);
+    if ((size_t)payloadLen < expectedSize) return;
+    DefrostLogPhasePayload_t s;
+    memcpy(&s, payload, expectedSize);
+    const float* phaseRows[6] = {
+        s.fishHotMax_C, s.fishHotRateMax_Cps, s.fishDeltaMax_C,
+        s.supplySet_C, s.supplyMax_C, s.returnTargetRH_percent
+    };
+    System::Globalization::CultureInfo^ inv = System::Globalization::CultureInfo::InvariantCulture;
+    for (int row = 0; row < 6; row++) {
+        cli::array<Object^>^ rowData = gcnew cli::array<Object^>(4);
+        rowData[0] = gcnew System::String(kGroup5ParamNames[row]);
+        rowData[1] = phaseRows[row][0].ToString(inv);
+        rowData[2] = phaseRows[row][1].ToString(inv);
+        rowData[3] = phaseRows[row][2].ToString(inv);
+        dataGridView1->Rows->Add(rowData);
+    }
+    dataGridView1Dirty = false;
+}
+
+// Имена и описания для группы 6 (LOG_GLOBAL): порядок полей в DefrostLogGlobalPayload_t
+struct Group6Row { const char* name; const char* desc; };
+static const Group6Row kGroup6Rows[] = {
+    {"leftRightTrimGain", "Heater trim per degC difference"},
+    {"leftRightTrimMaxEq", "Max trim heater equivalent"},
+    {"piKp", "PI proportional gain (supply temp)"},
+    {"piKi", "PI integral gain (supply temp)"},
+    {"wDeadband_kgkg", "Humidity deadband"},
+    {"injGain", "Injection gain (duty per kg/kg humidity error)"},
+    {"outDamperTimer_s", "Damper open time"},
+    {"outFanDelay_s", "Fan delay after damper open"},
+    {"outHold_s", "Damper and exhaust fan min hold"},
+    {"tenMinHold_s", "Heater min hold between switches"},
+    {"injMinHold_s", "Injector min hold between switches"},
+    {"airOnlyPhaseWarmUp_s", "Air-only: WarmUp phase duration (s)"},
+    {"airOnlyPhasePlateau_s", "Air-only: Plateau end time from start (s)"},
+    {"maxRuntime_s", "Air-only: Max process duration (s)"}
+};
+
+void ProjectServerW::DataForm::FillDataGridView2FromGroup6Payload(const uint8_t* payload, uint8_t payloadLen) {
+    if (dataGridView2 == nullptr || dataGridView2->IsDisposed || payload == nullptr) return;
+    dataGridView2->Rows->Clear();
+    const size_t expectedSize = sizeof(DefrostLogGlobalPayload_t);
+    if ((size_t)payloadLen < expectedSize) return;
+    DefrostLogGlobalPayload_t s;
+    memcpy(&s, payload, expectedSize);
+    System::Globalization::CultureInfo^ inv = System::Globalization::CultureInfo::InvariantCulture;
+    const float* fFields[] = { &s.leftRightTrimGain, &s.leftRightTrimMaxEq, &s.piKp, &s.piKi, &s.wDeadband_kgkg, &s.injGain };
+    const uint16_t* u16Fields[] = { &s.outDamperTimer_s, &s.outFanDelay_s, &s.outHold_s, &s.tenMinHold_s, &s.injMinHold_s, &s.airOnlyPhaseWarmUp_s, &s.airOnlyPhasePlateau_s, &s.maxRuntime_s };
+    for (int i = 0; i < 6; i++)
+        dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[i].name), gcnew System::String(kGroup6Rows[i].desc), (*fFields[i]).ToString(inv));
+    for (int i = 0; i < 8; i++)
+        dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[6 + i].name), gcnew System::String(kGroup6Rows[6 + i].desc), System::Convert::ToString((int)(*u16Fields[i])));
+    for (int i = 0; i < DEFROST_MAX_SENSOR_COUNT_SERVER; i++) {
+        dataGridView2->Rows->Add(
+            System::String::Format("Sensor{0} use in defrost", i),
+            System::String::Format("Use sensor {0} in algorithm", i),
+            System::Convert::ToString((int)s.sensorUseInDefrost[i]));
+    }
+    dataGridView2Dirty = false;
+}
+
 void ProjectServerW::DataForm::LoadDataGridView2FromFile() {
     if (dataGridView2 == nullptr || dataGridView2->IsDisposed) return;
     try {
@@ -1401,48 +1502,34 @@ System::Void ProjectServerW::DataForm::buttonReadParameters_Click(System::Object
             }
             return;
         }
-        int ok = 0, fail = 0;
+        uint8_t buffer[256];
+        const uint8_t kPayloadCapacity = 255; // максимум для uint8_t, буфер 256 байт
+        uint8_t len = 0;
+        bool ok1 = false, ok2 = false;
+        // Запросить лог по группе 5 (параметры по фазам) и загрузить в dataGridView1
         if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
-            for (int r = 0; r < dataGridView1->Rows->Count; r++) {
-                DataGridViewRow^ row = dataGridView1->Rows[r];
-                if (row->IsNewRow) continue;
-                Object^ v0 = row->Cells["Parameter"]->Value;
-                String^ paramName = v0 != nullptr ? v0->ToString() : "";
-                for (int ph = 0; ph < 3; ph++) {
-                    uint8_t g, id;
-                    if (!GetDefrostParamIdGrid1(paramName, ph, g, id)) continue;
-                    DefrostParamValue val;
-                    if (!GetDefrostParam(g, id, &val)) { fail++; continue; }
-                    String^ valueStr = (val.valueType == DefrostParamType::F32) ? val.value.f32.ToString(System::Globalization::CultureInfo::InvariantCulture) : "";
-                    String^ colName = (ph == 0) ? "WarmUP" : (ph == 1) ? "Plateau" : "Finish";
-                    row->Cells[colName]->Value = valueStr;
-                    ok++;
-                }
+            ok1 = GetDefrostGroup(5, 0, buffer, kPayloadCapacity, &len);
+            if (ok1 && len > 0) {
+                FillDataGridView1FromGroup5Payload(buffer, len);
             }
         }
+        // Запросить лог по группе 6 (общие параметры) и загрузить в dataGridView2
         if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
-            for (int r = 0; r < dataGridView2->Rows->Count; r++) {
-                DataGridViewRow^ row = dataGridView2->Rows[r];
-                if (row->IsNewRow) continue;
-                Object^ v0 = row->Cells["Parameter2"]->Value;
-                String^ paramName = v0 != nullptr ? v0->ToString() : "";
-                uint8_t g, id, vt;
-                if (!GetDefrostParamId(paramName, g, id, vt)) continue;
-                DefrostParamValue val;
-                if (!GetDefrostParam(g, id, &val)) { fail++; continue; }
-                String^ valueStr = "";
-                if (val.valueType == DefrostParamType::U8) valueStr = val.value.u8.ToString();
-                else if (val.valueType == DefrostParamType::U16) valueStr = val.value.u16.ToString();
-                else if (val.valueType == DefrostParamType::F32) valueStr = val.value.f32.ToString(System::Globalization::CultureInfo::InvariantCulture);
-                row->Cells["Value"]->Value = valueStr;
-                ok++;
+            ok2 = GetDefrostGroup(6, 0, buffer, kPayloadCapacity, &len);
+            if (ok2 && len > 0) {
+                FillDataGridView2FromGroup6Payload(buffer, len);
             }
         }
         if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
-            Label_Commands->Text = String::Format("Считать с устройства: прочитано {0} параметров" + (fail > 0 ? ", ошибок: " + fail : ""), ok);
-            Label_Commands->ForeColor = System::Drawing::Color::DarkGreen;
+            if (ok1 || ok2) {
+                Label_Commands->Text = "Параметры загружены с устройства (группа 5 → таблица 1, группа 6 → таблица 2)";
+                Label_Commands->ForeColor = System::Drawing::Color::DarkGreen;
+            } else {
+                Label_Commands->Text = "Не удалось получить параметры с устройства";
+                Label_Commands->ForeColor = System::Drawing::Color::Red;
+            }
         }
-        GlobalLogger::LogMessage(String::Format("Information: Read {0} params from defroster" + (fail > 0 ? ", {1} failed" : ""), ok, fail));
+        GlobalLogger::LogMessage(String::Format("Information: Read params from defroster: group5={0}, group6={1}", ok1 ? "OK" : "fail", ok2 ? "OK" : "fail"));
     }
     catch (Exception^ ex) {
         String^ msg = "Ошибка при считывании параметров: " + (ex->Message != nullptr ? ex->Message : "");

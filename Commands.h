@@ -60,8 +60,8 @@ struct DefrostParamValue {
     DefrostParamValue() : valueType(0) { value.u8 = 0; }
 };
 
-// Максимальный размер команды
-const size_t MAX_COMMAND_SIZE = 64;
+// Максимальный размер кадра команды/ответа (буфер приёма). Ответ GET_DEFROST_GROUP(5) = 81 байт (5+74+2), (6) = 65 байт.
+const size_t MAX_COMMAND_SIZE = 96;
 
 // Структура команды
 struct Command {
