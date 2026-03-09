@@ -242,9 +242,12 @@ void ProjectServerW::DataForm::SendResetCommand() {
             break;
 
         case CmdStatus::TIMEOUT:
-            // Контроллер не успел выполнить сброс
-            Label_Commands->Text = "[!] Таймаут сброса контроллера";
-            Label_Commands->ForeColor = System::Drawing::Color::Orange;
+            // После RESET контроллер перезагружается и не успевает ответить — ожидаем переподключение и запускаем отложенную инициализацию.
+            if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+                Label_Commands->Text = "[i] Сброс отправлен, ожидание переподключения...";
+                Label_Commands->ForeColor = System::Drawing::Color::Blue;
+            }
+            SchedulePostResetInit();
             break;
 
         default:
@@ -753,9 +756,16 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
                 response.dataLength = 0;
                 GlobalLogger::LogMessage("Error: No response received from controller");
                 if (!isCmdInfoRequest) {
-                    ScheduleCommandInfoProbe(String::Format(
-                        "timeout waiting response Type=0x{0:X2}, Code=0x{1:X2}",
-                        cmd.commandType, cmd.commandCode));
+                    // После RESET контроллер перезагружается и не отвечает; зонд GET_CMD_INFO бесполезен и долго ждёт на мёртвом сокете.
+                    const bool isResetCmd = (cmd.commandType == CmdType::PROG_CONTROL && cmd.commandCode == CmdProgControl::RESET);
+                    if (isResetCmd) {
+                        SchedulePostResetInit();
+                    }
+                    else {
+                        ScheduleCommandInfoProbe(String::Format(
+                            "timeout waiting response Type=0x{0:X2}, Code=0x{1:X2}",
+                            cmd.commandType, cmd.commandCode));
+                    }
                 }
                 return false;
             }
@@ -784,9 +794,12 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
                         "Warning: Discarding unrelated response. Expected Type=0x{0:X2}, Code=0x{1:X2}; Got Type=0x{2:X2}, Code=0x{3:X2}; Raw={4}",
                         cmd.commandType, cmd.commandCode, candidate.commandType, candidate.commandCode, hex));
                     if (!isCmdInfoRequest) {
-                        ScheduleCommandInfoProbe(String::Format(
-                            "discarded unrelated response while waiting Type=0x{0:X2}, Code=0x{1:X2}",
-                            cmd.commandType, cmd.commandCode));
+                        const bool isResetCmd = (cmd.commandType == CmdType::PROG_CONTROL && cmd.commandCode == CmdProgControl::RESET);
+                        if (!isResetCmd) {
+                            ScheduleCommandInfoProbe(String::Format(
+                                "discarded unrelated response while waiting Type=0x{0:X2}, Code=0x{1:X2}",
+                                cmd.commandType, cmd.commandCode));
+                        }
                     }
                 }
                 continue;
