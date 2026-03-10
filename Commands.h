@@ -31,7 +31,8 @@ struct CmdConfig {
     static const uint8_t SET_TEMPERATURE = 0x01;   // Установить температуру
     static const uint8_t SET_INTERVAL = 0x02;      // Установить интервал измерений
     static const uint8_t SET_MODE = 0x03;          // Установить режим работы
-    static const uint8_t SET_DEFROST_PARAM = 0x04; // Установить параметр авто-дефроста (payload: groupId, paramId, valueType, value)
+    static const uint8_t SET_DEFROST_PARAM = 0x04; // Установить один параметр авто-дефроста (payload: groupId, paramId, valueType, value)
+    static const uint8_t SET_DEFROST_GROUP  = 0x05; // Записать группу параметров (payload: groupId + данные группы 5 или 6)
 };
 
 // Коды команд запроса (тип REQUEST)
@@ -178,6 +179,9 @@ inline Command CreateRequestCommandDefrostGetGroup(uint8_t groupId, uint8_t page
     cmd.data[1] = page;
     return cmd;
 }
+
+/** Создать команду записи группы параметров дефроста. data[0]=groupId, data[1..]=payload (как в ответе GET_DEFROST_GROUP). */
+Command CreateConfigCommandSetDefrostGroup(uint8_t groupId, const uint8_t* payload, uint8_t payloadLen);
 
 // ============================
 // Структуры и функции для обработки ответов от контроллера

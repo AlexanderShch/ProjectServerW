@@ -193,7 +193,6 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 				infoSheet->Cells[5, 2] = (job->formGuid != nullptr ? job->formGuid : "");
 
 				Marshal::ReleaseComObject(infoSheet);
-				Marshal::ReleaseComObject(wb);
 			}
 			catch (...) {}
 
@@ -325,13 +324,147 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 						valueAxis->AxisTitle->Text = "T, °C";
 
 						if (xRange != nullptr) Marshal::ReleaseComObject(xRange);
-						Marshal::ReleaseComObject(wb);
 					}
 				}
 			}
 			catch (Exception^ ex) {
 				try {
 					GlobalLogger::LogMessage("Warning: Excel chart creation failed: " + ex->Message);
+				}
+				catch (...) {}
+			}
+			// Лист «Параметры по фазам»: таблица 1 (dataGridView1).
+			try {
+				if (job->paramsPhase != nullptr && job->paramsPhase->Rows->Count > 0) {
+					Microsoft::Office::Interop::Excel::Workbook^ wb = safe_cast<Microsoft::Office::Interop::Excel::Workbook^>(ws->Parent);
+					System::Object^ missing = System::Type::Missing;
+
+					// Найти существующий лист с таким именем или создать новый.
+					Microsoft::Office::Interop::Excel::Worksheet^ sheet1 = nullptr;
+					try {
+						sheet1 = safe_cast<Microsoft::Office::Interop::Excel::Worksheet^>(
+							wb->Worksheets->Item["Параметры по фазам"]);
+					}
+					catch (...) {
+						sheet1 = nullptr;
+					}
+					if (sheet1 == nullptr) {
+						sheet1 = safe_cast<Microsoft::Office::Interop::Excel::Worksheet^>(
+							wb->Worksheets->Add(missing, ws, 1, Microsoft::Office::Interop::Excel::XlSheetType::xlWorksheet));
+						sheet1->Name = "Параметры по фазам";
+					}
+					else {
+						// Очищаем старые данные, если лист уже есть.
+						try {
+							Microsoft::Office::Interop::Excel::Range^ used1 = sheet1->UsedRange;
+							used1->Clear();
+							Marshal::ReleaseComObject(used1);
+						}
+						catch (...) {}
+					}
+
+					int colCount1 = job->paramsPhase->Columns->Count;
+					int rowCount1 = job->paramsPhase->Rows->Count;
+					cli::array<System::Object^>^ header1 = gcnew cli::array<System::Object^>(colCount1);
+					for (int c = 0; c < colCount1; c++) {
+						header1[c] = job->paramsPhase->Columns[c]->ColumnName;
+					}
+					Microsoft::Office::Interop::Excel::Range^ headerRange1 =
+						sheet1->Range[sheet1->Cells[1, 1], sheet1->Cells[1, colCount1]];
+					headerRange1->Value2 = header1;
+					Marshal::ReleaseComObject(headerRange1);
+
+					cli::array<System::Object^, 2>^ data1 = gcnew cli::array<System::Object^, 2>(rowCount1, colCount1);
+					for (int r = 0; r < rowCount1; r++) {
+						System::Data::DataRow^ dr = job->paramsPhase->Rows[r];
+						for (int c = 0; c < colCount1; c++) {
+							data1[r, c] = dr[c];
+						}
+					}
+					Microsoft::Office::Interop::Excel::Range^ start1 =
+						safe_cast<Microsoft::Office::Interop::Excel::Range^>(sheet1->Cells[2, 1]);
+					Microsoft::Office::Interop::Excel::Range^ end1 =
+						safe_cast<Microsoft::Office::Interop::Excel::Range^>(sheet1->Cells[1 + rowCount1, colCount1]);
+					Microsoft::Office::Interop::Excel::Range^ dataRange1 = sheet1->Range[start1, end1];
+					dataRange1->Value2 = data1;
+					Marshal::ReleaseComObject(start1);
+					Marshal::ReleaseComObject(end1);
+					Marshal::ReleaseComObject(dataRange1);
+
+					Marshal::ReleaseComObject(sheet1);
+				}
+			}
+			catch (Exception^ ex) {
+				try {
+					GlobalLogger::LogMessage("Warning: Excel sheet 'Параметры по фазам' failed: " + ex->Message);
+				}
+				catch (...) {}
+			}
+
+			// Лист «Параметры общие»: таблица 2 (dataGridView2).
+			try {
+				if (job->paramsGlobal != nullptr && job->paramsGlobal->Rows->Count > 0) {
+					Microsoft::Office::Interop::Excel::Workbook^ wb = safe_cast<Microsoft::Office::Interop::Excel::Workbook^>(ws->Parent);
+					System::Object^ missing = System::Type::Missing;
+
+					// Найти существующий лист с таким именем или создать новый.
+					Microsoft::Office::Interop::Excel::Worksheet^ sheet2 = nullptr;
+					try {
+						sheet2 = safe_cast<Microsoft::Office::Interop::Excel::Worksheet^>(
+							wb->Worksheets->Item["Параметры общие"]);
+					}
+					catch (...) {
+						sheet2 = nullptr;
+					}
+					if (sheet2 == nullptr) {
+						sheet2 = safe_cast<Microsoft::Office::Interop::Excel::Worksheet^>(
+							wb->Worksheets->Add(missing, ws, 1, Microsoft::Office::Interop::Excel::XlSheetType::xlWorksheet));
+						sheet2->Name = "Параметры общие";
+					}
+					else {
+						// Очищаем старые данные, если лист уже есть.
+						try {
+							Microsoft::Office::Interop::Excel::Range^ used2 = sheet2->UsedRange;
+							used2->Clear();
+							Marshal::ReleaseComObject(used2);
+						}
+						catch (...) {}
+					}
+
+					int colCount2 = job->paramsGlobal->Columns->Count;
+					int rowCount2 = job->paramsGlobal->Rows->Count;
+					cli::array<System::Object^>^ header2 = gcnew cli::array<System::Object^>(colCount2);
+					for (int c = 0; c < colCount2; c++) {
+						header2[c] = job->paramsGlobal->Columns[c]->ColumnName;
+					}
+					Microsoft::Office::Interop::Excel::Range^ headerRange2 =
+						sheet2->Range[sheet2->Cells[1, 1], sheet2->Cells[1, colCount2]];
+					headerRange2->Value2 = header2;
+					Marshal::ReleaseComObject(headerRange2);
+
+					cli::array<System::Object^, 2>^ data2 = gcnew cli::array<System::Object^, 2>(rowCount2, colCount2);
+					for (int r = 0; r < rowCount2; r++) {
+						System::Data::DataRow^ dr = job->paramsGlobal->Rows[r];
+						for (int c = 0; c < colCount2; c++) {
+							data2[r, c] = dr[c];
+						}
+					}
+					Microsoft::Office::Interop::Excel::Range^ start2 =
+						safe_cast<Microsoft::Office::Interop::Excel::Range^>(sheet2->Cells[2, 1]);
+					Microsoft::Office::Interop::Excel::Range^ end2 =
+						safe_cast<Microsoft::Office::Interop::Excel::Range^>(sheet2->Cells[1 + rowCount2, colCount2]);
+					Microsoft::Office::Interop::Excel::Range^ dataRange2 = sheet2->Range[start2, end2];
+					dataRange2->Value2 = data2;
+					Marshal::ReleaseComObject(start2);
+					Marshal::ReleaseComObject(end2);
+					Marshal::ReleaseComObject(dataRange2);
+
+					Marshal::ReleaseComObject(sheet2);
+				}
+			}
+			catch (Exception^ ex) {
+				try {
+					GlobalLogger::LogMessage("Warning: Excel sheet 'Параметры общие' failed: " + ex->Message);
 				}
 				catch (...) {}
 			}

@@ -88,6 +88,7 @@ const char* GetCommandName(const Command& cmd) {
         case 0x02: return "SET_INTERVAL";
         case 0x03: return "SET_MODE";
         case 0x04: return "SET_DEFROST_PARAM";
+        case 0x05: return "SET_DEFROST_GROUP";
         default: return "CONFIG_UNKNOWN";
         }
     }
@@ -144,6 +145,21 @@ Command CreateConfigCommandDefrostSetParam(uint8_t groupId, uint8_t paramId, con
     else {
         cmd.dataLength = 0;
     }
+    return cmd;
+}
+
+Command CreateConfigCommandSetDefrostGroup(uint8_t groupId, const uint8_t* payload, uint8_t payloadLen) {
+    Command cmd;
+    cmd.commandType = CmdType::CONFIGURATION;
+    cmd.commandCode = CmdConfig::SET_DEFROST_GROUP;
+    const size_t maxPayload = sizeof(cmd.data) - 1;
+    if (payload == nullptr || payloadLen > maxPayload) {
+        cmd.dataLength = 0;
+        return cmd;
+    }
+    cmd.dataLength = 1 + payloadLen;
+    cmd.data[0] = groupId;
+    memcpy(&cmd.data[1], payload, payloadLen);
     return cmd;
 }
 

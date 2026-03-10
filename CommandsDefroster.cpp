@@ -405,6 +405,14 @@ bool ProjectServerW::DataForm::GetDefrostGroup(uint8_t groupId, uint8_t page, ui
     return true;
 }
 
+bool ProjectServerW::DataForm::SetDefrostGroup(uint8_t groupId, const uint8_t* payload, uint8_t payloadLen) {
+    if (clientSocket == INVALID_SOCKET || payload == nullptr) return false;
+    Command cmd = CreateConfigCommandSetDefrostGroup(groupId, payload, payloadLen);
+    if (cmd.dataLength == 0) return false;
+    CommandResponse response;
+    return SendCommandAndWaitResponse(cmd, response, "SET_DEFROST_GROUP") && response.status == CmdStatus::OK;
+}
+
 void ProjectServerW::DataForm::SendCommandInfoRequest() {
     // Почему: это аудит обработки команд, а не "состояние устройства" (телеметрия).
     // Ожидается, что прошивка запоминает последнюю принятую команду и отдаёт её по этому запросу.

@@ -54,7 +54,7 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::Button^ buttonWriteParameters;
 	private: System::Windows::Forms::Button^ buttonReadParameters;
 	private: System::Windows::Forms::Label^ label1;
-	private: System::Windows::Forms::Button^ buttonSaveToFile;
+
 
 	private: System::Windows::Forms::Button^ buttonLoadFromFile;
 
@@ -156,6 +156,9 @@ namespace ProjectServerW {
 	bool autoRestartPending;         // true: отправлен STOP по автоперезапуску, ждём экспорт и затем START
 		DateTime autoRestartStopIssuedTime; // Время отправки STOP для таймаута автоперезапуска
 	DateTime lastStopSuccessTime; // Время последнего успешного ответа на СТОП; лог не перезаписывает кнопки в течение 10 с
+	bool controllerAutoModeActive;   // true: хотя бы раз получен регулярный лог (Type 0x01) — контроллер в автоматическом режиме
+	DateTime lastControlLogTime;     // Время последнего приёма регулярного лога; сброс флага при отсутствии лога
+	System::Windows::Forms::Timer^ controlLogAbsenceTimer; // Таймер проверки отсутствия лога для сброса controllerAutoModeActive
 	bool autoRestartInternalUncheck; // Why: one-shot UX unchecks the box; we must not cancel the pending START.
 	bool settingsLoading;            // Why: avoid side-effects (timers/log/save) while applying persisted settings.
 	System::String^ pendingVersion;  // временное хранение версии для обновления UI из другого потока
@@ -257,6 +260,12 @@ namespace ProjectServerW {
 				inactivityTimer->Tick += gcnew EventHandler(this, &DataForm::OnInactivityTimerTick);
 				inactivityTimer->Start();
 
+				// Таймер отсутствия регулярного лога: сброс флага «контроллер в авторежиме» при отсутствии лога
+				controlLogAbsenceTimer = gcnew System::Windows::Forms::Timer();
+				controlLogAbsenceTimer->Interval = 2000; // 2 с
+				controlLogAbsenceTimer->Tick += gcnew EventHandler(this, &DataForm::OnControlLogAbsenceTimerTick);
+				controlLogAbsenceTimer->Start();
+
 			// Инициализируем путь сохранения из текстового поля
 			excelSavePath = textBoxExcelDirectory->Text;
 	excelFileName = nullptr;
@@ -264,8 +273,11 @@ namespace ProjectServerW {
 	dataExportedToExcel = false;    // Флаг экспорта данных в Excel
 	autoRestartPending = false;
 	autoRestartStopIssuedTime = DateTime::MinValue;
-	lastStopSuccessTime = DateTime::MinValue;
-	autoRestartInternalUncheck = false;
+		lastStopSuccessTime = DateTime::MinValue;
+		controllerAutoModeActive = false;
+		lastControlLogTime = DateTime::MinValue;
+		controlLogAbsenceTimer = nullptr;
+		autoRestartInternalUncheck = false;
 	settingsLoading = false;
 	pendingVersion = nullptr;       // Временная версия для обновления UI
 	// Инициализация порта клиента
@@ -411,7 +423,6 @@ private: System::ComponentModel::IContainer^ components;
 				this->buttonWriteParameters = (gcnew System::Windows::Forms::Button());
 				this->buttonReadParameters = (gcnew System::Windows::Forms::Button());
 				this->label1 = (gcnew System::Windows::Forms::Label());
-				this->buttonSaveToFile = (gcnew System::Windows::Forms::Button());
 				this->dataGridView2 = (gcnew System::Windows::Forms::DataGridView());
 				this->Parameter2 = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
 				this->Description = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
@@ -844,7 +855,6 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage3->Controls->Add(this->buttonWriteParameters);
 				this->tabPage3->Controls->Add(this->buttonReadParameters);
 				this->tabPage3->Controls->Add(this->label1);
-				this->tabPage3->Controls->Add(this->buttonSaveToFile);
 				this->tabPage3->Controls->Add(this->dataGridView2);
 				this->tabPage3->Controls->Add(this->dataGridView1);
 				this->tabPage3->Location = System::Drawing::Point(4, 29);
@@ -856,7 +866,7 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// buttonLoadFromFile
 				// 
-				this->buttonLoadFromFile->Location = System::Drawing::Point(169, 27);
+				this->buttonLoadFromFile->Location = System::Drawing::Point(1013, 8);
 				this->buttonLoadFromFile->Name = L"buttonLoadFromFile";
 				this->buttonLoadFromFile->Size = System::Drawing::Size(117, 36);
 				this->buttonLoadFromFile->TabIndex = 7;
@@ -867,16 +877,16 @@ private: System::ComponentModel::IContainer^ components;
 				// label2
 				// 
 				this->label2->AutoSize = true;
-				this->label2->Location = System::Drawing::Point(19, 35);
+				this->label2->Location = System::Drawing::Point(858, 16);
 				this->label2->Name = L"label2";
-				this->label2->Size = System::Drawing::Size(130, 20);
+				this->label2->Size = System::Drawing::Size(149, 20);
 				this->label2->TabIndex = 6;
-				this->label2->Text = L"Файл настроек:";
+				this->label2->Text = L"Данные из файла:";
 				this->label2->TextAlign = System::Drawing::ContentAlignment::TopCenter;
 				// 
 				// buttonWriteParameters
 				// 
-				this->buttonWriteParameters->Location = System::Drawing::Point(860, 27);
+				this->buttonWriteParameters->Location = System::Drawing::Point(1167, 60);
 				this->buttonWriteParameters->Name = L"buttonWriteParameters";
 				this->buttonWriteParameters->Size = System::Drawing::Size(117, 36);
 				this->buttonWriteParameters->TabIndex = 5;
@@ -886,7 +896,7 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// buttonReadParameters
 				// 
-				this->buttonReadParameters->Location = System::Drawing::Point(714, 27);
+				this->buttonReadParameters->Location = System::Drawing::Point(1013, 60);
 				this->buttonReadParameters->Name = L"buttonReadParameters";
 				this->buttonReadParameters->Size = System::Drawing::Size(117, 36);
 				this->buttonReadParameters->TabIndex = 4;
@@ -897,35 +907,25 @@ private: System::ComponentModel::IContainer^ components;
 				// label1
 				// 
 				this->label1->AutoSize = true;
-				this->label1->Location = System::Drawing::Point(589, 35);
+				this->label1->Location = System::Drawing::Point(905, 68);
 				this->label1->Name = L"label1";
 				this->label1->Size = System::Drawing::Size(102, 20);
 				this->label1->TabIndex = 3;
 				this->label1->Text = L"Дефростер:";
 				// 
-				// buttonSaveToFile
-				// 
-				this->buttonSaveToFile->Location = System::Drawing::Point(319, 27);
-				this->buttonSaveToFile->Name = L"buttonSaveToFile";
-				this->buttonSaveToFile->Size = System::Drawing::Size(117, 36);
-				this->buttonSaveToFile->TabIndex = 2;
-				this->buttonSaveToFile->Text = L"Сохранить";
-				this->buttonSaveToFile->UseVisualStyleBackColor = true;
-				this->buttonSaveToFile->Click += gcnew System::EventHandler(this, &DataForm::buttonSaveToFile_Click);
-				// 
 				// dataGridView2
 				// 
+				this->dataGridView2->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::Fill;
 				this->dataGridView2->ColumnHeadersHeightSizeMode = System::Windows::Forms::DataGridViewColumnHeadersHeightSizeMode::AutoSize;
 				this->dataGridView2->Columns->AddRange(gcnew cli::array< System::Windows::Forms::DataGridViewColumn^  >(3) {
 					this->Parameter2,
 						this->Description, this->Value
 				});
-				this->dataGridView2->Location = System::Drawing::Point(23, 96);
+				this->dataGridView2->Location = System::Drawing::Point(23, 8);
 				this->dataGridView2->Name = L"dataGridView2";
-				this->dataGridView2->RowHeadersWidth = 42;
+				this->dataGridView2->RowHeadersWidth = 24;
 				this->dataGridView2->RowTemplate->Height = 16;
-				this->dataGridView2->Size = System::Drawing::Size(564, 377);
-				this->dataGridView2->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::Fill;
+				this->dataGridView2->Size = System::Drawing::Size(564, 465);
 				this->dataGridView2->TabIndex = 1;
 				this->dataGridView2->CellValueChanged += gcnew System::Windows::Forms::DataGridViewCellEventHandler(this, &DataForm::dataGridView2_CellValueChanged);
 				this->dataGridView2->UserAddedRow += gcnew System::Windows::Forms::DataGridViewRowEventHandler(this, &DataForm::dataGridView2_RowChanged);
@@ -936,35 +936,32 @@ private: System::ComponentModel::IContainer^ components;
 				this->Parameter2->HeaderText = L"Параметр";
 				this->Parameter2->MinimumWidth = 60;
 				this->Parameter2->Name = L"Parameter2";
-				this->Parameter2->Width = 120;
 				// 
 				// Description
 				// 
 				this->Description->HeaderText = L"Описание параметра";
 				this->Description->MinimumWidth = 80;
 				this->Description->Name = L"Description";
-				this->Description->Width = 220;
 				// 
 				// Value
 				// 
 				this->Value->HeaderText = L"Величина";
 				this->Value->MinimumWidth = 50;
 				this->Value->Name = L"Value";
-				this->Value->Width = 80;
 				// 
 				// dataGridView1
 				// 
+				this->dataGridView1->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::Fill;
 				this->dataGridView1->ColumnHeadersHeightSizeMode = System::Windows::Forms::DataGridViewColumnHeadersHeightSizeMode::AutoSize;
 				this->dataGridView1->Columns->AddRange(gcnew cli::array< System::Windows::Forms::DataGridViewColumn^  >(4) {
 					this->Parameter,
 						this->WarmUP, this->Plateau, this->Finish
 				});
-				this->dataGridView1->Location = System::Drawing::Point(593, 96);
+				this->dataGridView1->Location = System::Drawing::Point(593, 115);
 				this->dataGridView1->Name = L"dataGridView1";
-				this->dataGridView1->RowHeadersWidth = 42;
+				this->dataGridView1->RowHeadersWidth = 24;
 				this->dataGridView1->RowTemplate->Height = 16;
-				this->dataGridView1->Size = System::Drawing::Size(691, 377);
-				this->dataGridView1->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::Fill;
+				this->dataGridView1->Size = System::Drawing::Size(691, 358);
 				this->dataGridView1->TabIndex = 0;
 				this->dataGridView1->CellValueChanged += gcnew System::Windows::Forms::DataGridViewCellEventHandler(this, &DataForm::dataGridView1_CellValueChanged);
 				this->dataGridView1->UserAddedRow += gcnew System::Windows::Forms::DataGridViewRowEventHandler(this, &DataForm::dataGridView1_RowChanged);
@@ -975,28 +972,24 @@ private: System::ComponentModel::IContainer^ components;
 				this->Parameter->HeaderText = L"Параметр";
 				this->Parameter->MinimumWidth = 80;
 				this->Parameter->Name = L"Parameter";
-				this->Parameter->Width = 160;
 				// 
 				// WarmUP
 				// 
 				this->WarmUP->HeaderText = L"WarmUp";
 				this->WarmUP->MinimumWidth = 50;
 				this->WarmUP->Name = L"WarmUP";
-				this->WarmUP->Width = 100;
 				// 
 				// Plateau
 				// 
 				this->Plateau->HeaderText = L"Plateau";
 				this->Plateau->MinimumWidth = 50;
 				this->Plateau->Name = L"Plateau";
-				this->Plateau->Width = 100;
 				// 
 				// Finish
 				// 
 				this->Finish->HeaderText = L"Finish";
 				this->Finish->MinimumWidth = 50;
 				this->Finish->Name = L"Finish";
-				this->Finish->Width = 100;
 				// 
 				// timerAutoStart
 				// 
@@ -1131,6 +1124,8 @@ private: System::ComponentModel::IContainer^ components;
 		bool SetDefrostParam(uint8_t groupId, uint8_t paramId, const ::DefrostParamValue& value);
 		bool GetDefrostParam(uint8_t groupId, uint8_t paramId, ::DefrostParamValue* outValue);
 		bool GetDefrostGroup(uint8_t groupId, uint8_t page, uint8_t* outData, uint8_t outCapacity, uint8_t* outLength);
+		/** Отправить группу параметров (payload как в GET_DEFROST_GROUP). groupId 5 или 6. */
+		bool SetDefrostGroup(uint8_t groupId, const uint8_t* payload, uint8_t payloadLen);
 		void UpdateVersionLabelInternal(); // Вспомогательный метод для обновления label_Version из UI потока
 		
 		// Методы для обработки ответов от контроллера
@@ -1147,6 +1142,7 @@ private: System::ComponentModel::IContainer^ components;
 			void buttonSTOPstate_TRUE();	// Метод для изменения статуса кнопок Старт и Стоп
 			/** Вызвать из обработчика лога: переключить в «программа запущена», только если ещё не в состоянии «остановлена» (чтобы запоздалый лог после СТОП не затирал кнопки). */
 			void EnsureProgramRunningStateFromLog();
+			void OnControlLogAbsenceTimerTick(System::Object^ sender, System::EventArgs^ e);
 			System::Void DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ e);
 			System::Void DataForm_HandleDestroyed(Object^ sender, EventArgs^ e);
 		private:
@@ -1239,6 +1235,10 @@ private: System::Void button_CMDINFO_Click(System::Object^ sender, System::Event
 	void LoadDataGridView2Defaults();
 	void LoadDataGridView2FromFile();
 	void SaveDataGridView2ToFile();
+	/** Загрузить параметры в таблицы 1 и 2 из листов Excel (Параметры по фазам, Параметры общие). */
+	void LoadParamsFromExcelFile(System::String^ filePath);
+	System::Data::DataTable^ BuildPhaseParamsDataTableForExcel();
+	System::Data::DataTable^ BuildGlobalParamsDataTableForExcel();
 	/** Заполнить dataGridView1 из payload ответа GET_DEFROST_GROUP(groupId=5). Параметры по фазам (WarmUP, Plateau, Finish). */
 	void FillDataGridView1FromGroup5Payload(const uint8_t* payload, uint8_t payloadLen);
 	/** Заполнить dataGridView2 из payload ответа GET_DEFROST_GROUP(groupId=6). Общие параметры. */

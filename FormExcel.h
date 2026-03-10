@@ -9,6 +9,8 @@ namespace ProjectServerW {
 		ref class ExcelExportJob sealed {
 		public:
 			System::Data::DataTable^ tableSnapshot;
+			System::Data::DataTable^ paramsPhase;
+			System::Data::DataTable^ paramsGlobal;
 			System::String^ saveDirectory;
 			System::DateTime sessionStart;
 			System::DateTime sessionEnd;

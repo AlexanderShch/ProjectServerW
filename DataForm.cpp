@@ -45,7 +45,7 @@ typedef struct {
 } ControlLogPayload_t;
 
 /* Ответ GET_DEFROST_GROUP(groupId=5): структура совпадает с DefrostLogPhasePayload_t на контроллере. */
-#define DEFROST_PHASE_COUNT_SERVER 3
+static constexpr int DEFROST_PHASE_COUNT_SERVER = 3;
 typedef struct {
     float fishHotMax_C[DEFROST_PHASE_COUNT_SERVER];
     float fishHotRateMax_Cps[DEFROST_PHASE_COUNT_SERVER];
@@ -56,7 +56,7 @@ typedef struct {
 } DefrostLogPhasePayload_t;
 
 /* Ответ GET_DEFROST_GROUP(groupId=6): структура совпадает с DefrostLogGlobalPayload_t на контроллере. */
-#define DEFROST_MAX_SENSOR_COUNT_SERVER 16
+static constexpr int DEFROST_MAX_SENSOR_COUNT_SERVER = 6;   /* совпадает с DEFROST_MAX_SENSOR_COUNT на контроллере (датчики 0..5) */
 typedef struct {
     float leftRightTrimGain;
     float leftRightTrimMaxEq;
@@ -177,6 +177,9 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency) {
 
         ProjectServerW::FormExcel::ExcelExportJob^ job = gcnew ProjectServerW::FormExcel::ExcelExportJob();
         job->tableSnapshot = snapshot;
+        // Снимок параметров для листа «Параметры»
+        job->paramsPhase = BuildPhaseParamsDataTableForExcel();
+        job->paramsGlobal = BuildGlobalParamsDataTableForExcel();
         job->saveDirectory = excelSavePath;
         job->sessionStart = dataCollectionStartTime;
         job->sessionEnd = dataCollectionEndTime;
@@ -907,6 +910,10 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
     ControlLogPayload_t pl;
     memcpy(&pl, raw + 2, sizeof(ControlLogPayload_t));
 
+    // Регулярный лог (Type 0x01) передаётся только в автоматическом режиме — взводим флаг и фиксируем время
+    controllerAutoModeActive = true;
+    lastControlLogTime = DateTime::Now;
+
     System::Threading::Monitor::Enter(dataTableSync);
     try {
         if (dataTable == nullptr) {
@@ -1114,7 +1121,6 @@ void ProjectServerW::DataForm::LoadDataGridView2Defaults() {
     dataGridView2->Rows->Add("Sensor3 use in defrost", "Use sensor 3 in algorithm", "1");
     dataGridView2->Rows->Add("Sensor4 use in defrost", "Use sensor 4 in algorithm", "1");
     dataGridView2->Rows->Add("Sensor5 use in defrost", "Use sensor 5 in algorithm", "1");
-    dataGridView2->Rows->Add("Sensor6 use in defrost", "Use sensor 6 in algorithm", "1");
     dataGridView2->Rows->Add("leftRightTrimGain", "Heater trim per degC difference", "0.08");
     dataGridView2->Rows->Add("leftRightTrimMaxEq", "Max trim heater equivalent", "0.6");
     dataGridView2->Rows->Add("piKp", "PI proportional gain (supply temp)", "0.18");
@@ -1135,6 +1141,31 @@ void ProjectServerW::DataForm::LoadDataGridView2Defaults() {
 static const char* const kGroup5ParamNames[] = {
     "fishHotMax_C", "fishHotRateMax_Cps", "fishDeltaMax_C", "supplySet_C", "supplyMax_C", "returnTargetRH_percent"
 };
+
+/** Заполнить payload группы 5 из dataGridView1 (порядок строк 0..5 = fishHotMax_C, fishHotRateMax_Cps, ...). */
+static bool BuildPhasePayloadFromGrid1(DataGridView^ grid, DefrostLogPhasePayload_t* outPayload) {
+    if (grid == nullptr || grid->IsDisposed || outPayload == nullptr) return false;
+    memset(outPayload, 0, sizeof(DefrostLogPhasePayload_t));
+    System::Globalization::CultureInfo^ inv = System::Globalization::CultureInfo::InvariantCulture;
+    for (int r = 0; r < 6 && r < grid->Rows->Count; r++) {
+        DataGridViewRow^ row = grid->Rows[r];
+        if (row->IsNewRow) continue;
+        for (int ph = 0; ph < 3; ph++) {
+            String^ colName = (ph == 0) ? "WarmUP" : (ph == 1) ? "Plateau" : "Finish";
+            Object^ v = row->Cells[colName]->Value;
+            String^ s = v != nullptr ? v->ToString()->Trim()->Replace(",", ".") : "";
+            float f = 0.0f;
+            Single::TryParse(s, System::Globalization::NumberStyles::Float, inv, f);
+            if (r == 0) outPayload->fishHotMax_C[ph] = f;
+            else if (r == 1) outPayload->fishHotRateMax_Cps[ph] = f;
+            else if (r == 2) outPayload->fishDeltaMax_C[ph] = f;
+            else if (r == 3) outPayload->supplySet_C[ph] = f;
+            else if (r == 4) outPayload->supplyMax_C[ph] = f;
+            else if (r == 5) outPayload->returnTargetRH_percent[ph] = f;
+        }
+    }
+    return true;
+}
 
 void ProjectServerW::DataForm::FillDataGridView1FromGroup5Payload(const uint8_t* payload, uint8_t payloadLen) {
     if (dataGridView1 == nullptr || dataGridView1->IsDisposed || payload == nullptr) return;
@@ -1178,6 +1209,44 @@ static const Group6Row kGroup6Rows[] = {
     {"maxRuntime_s", "Air-only: Max process duration (s)"}
 };
 
+/** Заполнить payload группы 6 из dataGridView2 по имени параметра (Parameter2). */
+static bool BuildGlobalPayloadFromGrid2(DataGridView^ grid, DefrostLogGlobalPayload_t* outPayload) {
+    if (grid == nullptr || grid->IsDisposed || outPayload == nullptr) return false;
+    memset(outPayload, 0, sizeof(DefrostLogGlobalPayload_t));
+    System::Globalization::CultureInfo^ inv = System::Globalization::CultureInfo::InvariantCulture;
+    for (int r = 0; r < grid->Rows->Count; r++) {
+        DataGridViewRow^ row = grid->Rows[r];
+        if (row->IsNewRow) continue;
+        Object^ nameObj = row->Cells["Parameter2"]->Value;
+        Object^ valueObj = row->Cells["Value"]->Value;
+        String^ name = nameObj != nullptr ? nameObj->ToString()->Trim() : "";
+        String^ valueStr = valueObj != nullptr ? valueObj->ToString()->Trim()->Replace(",", ".") : "";
+        if (String::IsNullOrEmpty(name)) continue;
+        if (name->Equals("leftRightTrimGain", StringComparison::OrdinalIgnoreCase)) { float f; if (Single::TryParse(valueStr, System::Globalization::NumberStyles::Float, inv, f)) outPayload->leftRightTrimGain = f; continue; }
+        if (name->Equals("leftRightTrimMaxEq", StringComparison::OrdinalIgnoreCase)) { float f; if (Single::TryParse(valueStr, System::Globalization::NumberStyles::Float, inv, f)) outPayload->leftRightTrimMaxEq = f; continue; }
+        if (name->Equals("piKp", StringComparison::OrdinalIgnoreCase)) { float f; if (Single::TryParse(valueStr, System::Globalization::NumberStyles::Float, inv, f)) outPayload->piKp = f; continue; }
+        if (name->Equals("piKi", StringComparison::OrdinalIgnoreCase)) { float f; if (Single::TryParse(valueStr, System::Globalization::NumberStyles::Float, inv, f)) outPayload->piKi = f; continue; }
+        if (name->Equals("wDeadband_kgkg", StringComparison::OrdinalIgnoreCase)) { float f; if (Single::TryParse(valueStr, System::Globalization::NumberStyles::Float, inv, f)) outPayload->wDeadband_kgkg = f; continue; }
+        if (name->Equals("injGain", StringComparison::OrdinalIgnoreCase)) { float f; if (Single::TryParse(valueStr, System::Globalization::NumberStyles::Float, inv, f)) outPayload->injGain = f; continue; }
+        if (name->Equals("outDamperTimer_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->outDamperTimer_s = (uint16_t)(u & 0xFFFF); continue; }
+        if (name->Equals("outFanDelay_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->outFanDelay_s = (uint16_t)(u & 0xFFFF); continue; }
+        if (name->Equals("outHold_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->outHold_s = (uint16_t)(u & 0xFFFF); continue; }
+        if (name->Equals("tenMinHold_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->tenMinHold_s = (uint16_t)(u & 0xFFFF); continue; }
+        if (name->Equals("injMinHold_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->injMinHold_s = (uint16_t)(u & 0xFFFF); continue; }
+        if (name->Equals("airOnlyPhaseWarmUp_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->airOnlyPhaseWarmUp_s = (uint16_t)(u & 0xFFFF); continue; }
+        if (name->Equals("airOnlyPhasePlateau_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->airOnlyPhasePlateau_s = (uint16_t)(u & 0xFFFF); continue; }
+        if (name->Equals("maxRuntime_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->maxRuntime_s = (uint16_t)(u & 0xFFFF); continue; }
+        for (int i = 0; i <= 5; i++) {
+            String^ sensorName = System::String::Format("Sensor{0} use in defrost", i);
+            if (name->Equals(sensorName, StringComparison::OrdinalIgnoreCase)) {
+                unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->sensorUseInDefrost[i] = (uint8_t)(u & 0xFF);
+                break;
+            }
+        }
+    }
+    return true;
+}
+
 void ProjectServerW::DataForm::FillDataGridView2FromGroup6Payload(const uint8_t* payload, uint8_t payloadLen) {
     if (dataGridView2 == nullptr || dataGridView2->IsDisposed || payload == nullptr) return;
     dataGridView2->Rows->Clear();
@@ -1192,7 +1261,7 @@ void ProjectServerW::DataForm::FillDataGridView2FromGroup6Payload(const uint8_t*
         dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[i].name), gcnew System::String(kGroup6Rows[i].desc), (*fFields[i]).ToString(inv));
     for (int i = 0; i < 8; i++)
         dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[6 + i].name), gcnew System::String(kGroup6Rows[6 + i].desc), System::Convert::ToString((int)(*u16Fields[i])));
-    for (int i = 0; i < DEFROST_MAX_SENSOR_COUNT_SERVER; i++) {
+    for (int i = 0; i <= 5; i++) {
         dataGridView2->Rows->Add(
             System::String::Format("Sensor{0} use in defrost", i),
             System::String::Format("Use sensor {0} in algorithm", i),
@@ -1240,57 +1309,9 @@ void ProjectServerW::DataForm::LoadDataGridView2FromFile() {
 }
 
 void ProjectServerW::DataForm::SaveDataGridView2ToFile() {
-    if (dataGridView2 == nullptr || dataGridView2->IsDisposed) return;
-    try {
-        String^ appPath = System::IO::Path::GetDirectoryName(System::Windows::Forms::Application::ExecutablePath);
-        String^ settingsPath = System::IO::Path::Combine(appPath, "ExcelSettings.txt");
-        cli::array<String^>^ allLines = System::IO::File::Exists(settingsPath) ? System::IO::File::ReadAllLines(settingsPath) : gcnew cli::array<String^>(0);
-        System::Collections::Generic::List<String^>^ outLines = gcnew System::Collections::Generic::List<String^>();
-        bool sectionReplaced = false;
-        for (int i = 0; i < allLines->Length; i++) {
-            String^ line = allLines[i];
-            String^ trimmed = line->Trim();
-            if (trimmed->Equals("[DataGridView2]", StringComparison::OrdinalIgnoreCase)) {
-                outLines->Add("[DataGridView2]");
-                for (int r = 0; r < dataGridView2->Rows->Count; r++) {
-                    DataGridViewRow^ row = dataGridView2->Rows[r];
-                    if (row->IsNewRow) continue;
-                    Object^ v0 = row->Cells["Parameter2"]->Value;
-                    Object^ v1 = row->Cells["Description"]->Value;
-                    Object^ v2 = row->Cells["Value"]->Value;
-                    String^ s0 = v0 != nullptr ? v0->ToString() : "";
-                    String^ s1 = v1 != nullptr ? v1->ToString() : "";
-                    String^ s2 = v2 != nullptr ? v2->ToString() : "";
-                    outLines->Add(s0 + "\t" + s1 + "\t" + s2);
-                }
-                sectionReplaced = true;
-                i++;
-                while (i < allLines->Length && !allLines[i]->Trim()->StartsWith("[")) i++;
-                i--;
-                continue;
-            }
-            outLines->Add(line);
-        }
-        if (!sectionReplaced) {
-            outLines->Add("[DataGridView2]");
-            for (int r = 0; r < dataGridView2->Rows->Count; r++) {
-                DataGridViewRow^ row = dataGridView2->Rows[r];
-                if (row->IsNewRow) continue;
-                Object^ v0 = row->Cells["Parameter2"]->Value;
-                Object^ v1 = row->Cells["Description"]->Value;
-                Object^ v2 = row->Cells["Value"]->Value;
-                String^ s0 = v0 != nullptr ? v0->ToString() : "";
-                String^ s1 = v1 != nullptr ? v1->ToString() : "";
-                String^ s2 = v2 != nullptr ? v2->ToString() : "";
-                outLines->Add(s0 + "\t" + s1 + "\t" + s2);
-            }
-        }
-        System::IO::File::WriteAllLines(settingsPath, outLines->ToArray());
-        dataGridView2Dirty = false;
-    }
-    catch (Exception^ ex) {
-        MessageBox::Show("Не удалось сохранить данные таблицы: " + ex->Message);
-    }
+    // Параметры больше не сохраняются в ExcelSettings.txt.
+    // Текущее состояние таблицы параметров попадает в лист \"Параметры\" Excel при экспорте данных.
+    dataGridView2Dirty = false;
 }
 
 void ProjectServerW::DataForm::LoadDataGridView1FromFile() {
@@ -1331,71 +1352,62 @@ void ProjectServerW::DataForm::LoadDataGridView1FromFile() {
 }
 
 void ProjectServerW::DataForm::SaveDataGridView1ToFile() {
-    if (dataGridView1 == nullptr || dataGridView1->IsDisposed) return;
-    try {
-        String^ appPath = System::IO::Path::GetDirectoryName(System::Windows::Forms::Application::ExecutablePath);
-        String^ settingsPath = System::IO::Path::Combine(appPath, "ExcelSettings.txt");
-        cli::array<String^>^ allLines = System::IO::File::Exists(settingsPath) ? System::IO::File::ReadAllLines(settingsPath) : gcnew cli::array<String^>(0);
-        System::Collections::Generic::List<String^>^ outLines = gcnew System::Collections::Generic::List<String^>();
-        bool sectionReplaced = false;
-        for (int i = 0; i < allLines->Length; i++) {
-            String^ line = allLines[i];
-            String^ trimmed = line->Trim();
-            if (trimmed->Equals("[DataGridView1]", StringComparison::OrdinalIgnoreCase)) {
-                outLines->Add("[DataGridView1]");
-                for (int r = 0; r < dataGridView1->Rows->Count; r++) {
-                    DataGridViewRow^ row = dataGridView1->Rows[r];
-                    if (row->IsNewRow) continue;
-                    Object^ v0 = row->Cells["Parameter"]->Value;
-                    Object^ v1 = row->Cells["WarmUP"]->Value;
-                    Object^ v2 = row->Cells["Plateau"]->Value;
-                    Object^ v3 = row->Cells["Finish"]->Value;
-                    String^ s0 = v0 != nullptr ? v0->ToString() : "";
-                    String^ s1 = v1 != nullptr ? v1->ToString() : "";
-                    String^ s2 = v2 != nullptr ? v2->ToString() : "";
-                    String^ s3 = v3 != nullptr ? v3->ToString() : "";
-                    outLines->Add(s0 + "\t" + s1 + "\t" + s2 + "\t" + s3);
-                }
-                sectionReplaced = true;
-                i++;
-                while (i < allLines->Length && !allLines[i]->Trim()->StartsWith("[")) i++;
-                i--;
-                continue;
-            }
-            outLines->Add(line);
-        }
-        if (!sectionReplaced) {
-            outLines->Add("[DataGridView1]");
-            for (int r = 0; r < dataGridView1->Rows->Count; r++) {
-                DataGridViewRow^ row = dataGridView1->Rows[r];
-                if (row->IsNewRow) continue;
-                Object^ v0 = row->Cells["Parameter"]->Value;
-                Object^ v1 = row->Cells["WarmUP"]->Value;
-                Object^ v2 = row->Cells["Plateau"]->Value;
-                Object^ v3 = row->Cells["Finish"]->Value;
-                String^ s0 = v0 != nullptr ? v0->ToString() : "";
-                String^ s1 = v1 != nullptr ? v1->ToString() : "";
-                String^ s2 = v2 != nullptr ? v2->ToString() : "";
-                String^ s3 = v3 != nullptr ? v3->ToString() : "";
-                outLines->Add(s0 + "\t" + s1 + "\t" + s2 + "\t" + s3);
-            }
-        }
-        System::IO::File::WriteAllLines(settingsPath, outLines->ToArray());
-        dataGridView1Dirty = false;
-    }
-    catch (Exception^ ex) {
-        MessageBox::Show("Не удалось сохранить данные таблицы: " + ex->Message);
-    }
+    // Параметры больше не сохраняются в ExcelSettings.txt.
+    // Текущее состояние таблицы параметров попадает в лист \"Параметры\" Excel при экспорте данных.
+    dataGridView1Dirty = false;
 }
 
-// On entering tabPage3: load both grids from file. On leaving: ask to save if either grid was changed.
+System::Data::DataTable^ ProjectServerW::DataForm::BuildPhaseParamsDataTableForExcel() {
+    System::Data::DataTable^ t = gcnew System::Data::DataTable("PhaseParams");
+    t->Columns->Add("Parameter", System::String::typeid);
+    t->Columns->Add("WarmUP", System::String::typeid);
+    t->Columns->Add("Plateau", System::String::typeid);
+    t->Columns->Add("Finish", System::String::typeid);
+    if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
+        for (int r = 0; r < dataGridView1->Rows->Count; r++) {
+            System::Windows::Forms::DataGridViewRow^ row = dataGridView1->Rows[r];
+            if (row->IsNewRow) continue;
+            System::Data::DataRow^ dr = t->NewRow();
+            dr[0] = row->Cells["Parameter"]->Value;
+            dr[1] = row->Cells["WarmUP"]->Value;
+            dr[2] = row->Cells["Plateau"]->Value;
+            dr[3] = row->Cells["Finish"]->Value;
+            t->Rows->Add(dr);
+        }
+    }
+    return t;
+}
+
+System::Data::DataTable^ ProjectServerW::DataForm::BuildGlobalParamsDataTableForExcel() {
+    System::Data::DataTable^ t = gcnew System::Data::DataTable("GlobalParams");
+    t->Columns->Add("Parameter", System::String::typeid);
+    t->Columns->Add("Description", System::String::typeid);
+    t->Columns->Add("Value", System::String::typeid);
+    if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
+        for (int r = 0; r < dataGridView2->Rows->Count; r++) {
+            System::Windows::Forms::DataGridViewRow^ row = dataGridView2->Rows[r];
+            if (row->IsNewRow) continue;
+            System::Data::DataRow^ dr = t->NewRow();
+            dr[0] = row->Cells["Parameter2"]->Value;
+            dr[1] = row->Cells["Description"]->Value;
+            dr[2] = row->Cells["Value"]->Value;
+            t->Rows->Add(dr);
+        }
+    }
+    return t;
+}
+
+// При переходе с вкладки с параметрами (tabPage3) спрашиваем про сохранение.
+// Раньше при входе на tabPage3 таблицы перечитывались из файла, из-за чего значения,
+// загруженные с контроллера по кнопке «Чтение параметров», терялись при переключении вкладок.
+// Теперь таблицы живут в памяти формы и не очищаются при переходах между вкладками.
 System::Void ProjectServerW::DataForm::tabControl1_SelectedIndexChanged(System::Object^ sender, System::EventArgs^ e) {
     TabControl^ tc = safe_cast<TabControl^>(sender);
     if (tabControl1PrevTab == tabPage3 && tc->SelectedTab != tabPage3) {
         if (dataGridView1Dirty || dataGridView2Dirty) {
             System::Windows::Forms::DialogResult dr = MessageBox::Show(
-                "Сохранить изменения в ExcelSettings.txt?",
-                "Сохранение",
+                "Сохранить изменения параметров (они будут добавлены на лист \"Параметры\" при экспорте в Excel)?",
+                "Сохранение параметров",
                 MessageBoxButtons::YesNoCancel,
                 MessageBoxIcon::Question);
             if (dr == System::Windows::Forms::DialogResult::Yes) {
@@ -1408,12 +1420,9 @@ System::Void ProjectServerW::DataForm::tabControl1_SelectedIndexChanged(System::
                 return;
             }
         }
+        // После выхода с вкладки считаем текущее состояние базовым (без незаписанных изменений).
         dataGridView1Dirty = false;
         dataGridView2Dirty = false;
-    }
-    if (tc->SelectedTab == tabPage3) {
-        LoadDataGridView1FromFile();
-        LoadDataGridView2FromFile();
     }
     tabControl1PrevTab = tc->SelectedTab;
 }
@@ -1444,7 +1453,7 @@ static bool GetDefrostParamId(System::String^ paramName, uint8_t% outGroupId, ui
     // Группы: 1=SENSORS, 2=TEMPERATURE, 3=HUMIDITY, 4=PWM (как в DefrostControl.h)
     if (p->StartsWith("Sensor", StringComparison::OrdinalIgnoreCase) && p->Contains("use in defrost")) {
         int i = -1; if (p->Length >= 7) Int32::TryParse(p->Substring(6, 1), i);
-        if (i >= 0 && i <= 6) { outGroupId = 1; outParamId = (uint8_t)i; outValueType = DefrostParamType::U8; return true; }
+        if (i >= 0 && i <= 5) { outGroupId = 1; outParamId = (uint8_t)i; outValueType = DefrostParamType::U8; return true; }
     }
     if (p->Equals("leftRightTrimGain", StringComparison::OrdinalIgnoreCase)) { outGroupId = 2; outParamId = 15; outValueType = DefrostParamType::F32; return true; }
     if (p->Equals("leftRightTrimMaxEq", StringComparison::OrdinalIgnoreCase)) { outGroupId = 2; outParamId = 16; outValueType = DefrostParamType::F32; return true; }
@@ -1479,8 +1488,123 @@ static bool GetDefrostParamIdGrid1(System::String^ paramName, int phaseIndex, ui
 }
 
 System::Void ProjectServerW::DataForm::buttonLoadFromFile_Click(System::Object^ sender, System::EventArgs^ e) {
-    LoadDataGridView1FromFile();
-    LoadDataGridView2FromFile();
+    OpenFileDialog^ openDialog = gcnew OpenFileDialog();
+    openDialog->Title = "Выберите файл данных (WorkData_...xlsx)";
+    openDialog->Filter = "Файлы Excel (*.xlsx)|*.xlsx|Все файлы (*.*)|*.*";
+    openDialog->DefaultExt = "xlsx";
+    openDialog->RestoreDirectory = true;
+    if (textBoxExcelDirectory != nullptr && !textBoxExcelDirectory->IsDisposed && textBoxExcelDirectory->Text->Length > 0) {
+        openDialog->InitialDirectory = textBoxExcelDirectory->Text;
+    }
+    if (openDialog->ShowDialog() != System::Windows::Forms::DialogResult::OK)
+        return;
+    LoadParamsFromExcelFile(openDialog->FileName);
+}
+
+void ProjectServerW::DataForm::LoadParamsFromExcelFile(System::String^ filePath) {
+    if (System::String::IsNullOrEmpty(filePath) || !System::IO::File::Exists(filePath)) {
+        MessageBox::Show("Файл не выбран или не существует.", "Загрузка параметров");
+        return;
+    }
+    if ((dataGridView1 == nullptr || dataGridView1->IsDisposed) && (dataGridView2 == nullptr || dataGridView2->IsDisposed)) {
+        MessageBox::Show("Таблицы параметров недоступны.", "Загрузка параметров");
+        return;
+    }
+    bool mutexAcquired = false;
+    try {
+        System::Threading::Mutex^ excelMutex = FormExcel::GetExcelGlobalMutex();
+        mutexAcquired = excelMutex->WaitOne(15000);
+        if (!mutexAcquired) {
+            MessageBox::Show("Не удалось получить доступ к Excel (таймаут). Закройте другие операции с Excel и повторите.", "Загрузка параметров");
+            return;
+        }
+        Microsoft::Office::Interop::Excel::Application^ app = gcnew Microsoft::Office::Interop::Excel::ApplicationClass();
+        app->Visible = false;
+        app->DisplayAlerts = false;
+        System::Object^ missing = System::Type::Missing;
+        Microsoft::Office::Interop::Excel::Workbook^ wb = nullptr;
+        try {
+            // Workbooks.Open имеет 15 параметров; в C++/CLI нужно передать все (остальные — Type::Missing)
+            wb = app->Workbooks->Open(
+                filePath,
+                missing, missing, missing, missing, missing, missing, missing,
+                missing, missing, missing, missing, missing, missing, missing);
+            Microsoft::Office::Interop::Excel::Sheets^ sheets = wb->Worksheets;
+            bool foundPhase = false, foundGlobal = false;
+            for (int s = 1; s <= sheets->Count; s++) {
+                Microsoft::Office::Interop::Excel::Worksheet^ sh = safe_cast<Microsoft::Office::Interop::Excel::Worksheet^>(sheets->Item[s]);
+                System::String^ name = safe_cast<System::String^>(sh->Name);
+                if (name != nullptr && name->Equals("Параметры по фазам", System::StringComparison::OrdinalIgnoreCase) &&
+                    dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
+                    foundPhase = true;
+                    dataGridView1->Rows->Clear();
+                    Microsoft::Office::Interop::Excel::Range^ used = sh->UsedRange;
+                    int lastRow = used->Rows->Count;
+                    for (int r = 2; r <= lastRow; r++) {
+                        cli::array<Object^>^ rowData = gcnew cli::array<Object^>(4);
+                        for (int c = 1; c <= 4; c++) {
+                            try {
+                                Microsoft::Office::Interop::Excel::Range^ cell = safe_cast<Microsoft::Office::Interop::Excel::Range^>(sh->Cells[r, c]);
+                                System::Object^ val = cell->Value2;
+                                rowData[c - 1] = (val != nullptr) ? val->ToString() : "";
+                            }
+                            catch (...) { rowData[c - 1] = ""; }
+                        }
+                        dataGridView1->Rows->Add(rowData);
+                    }
+                    dataGridView1Dirty = false;
+                }
+                else if (name != nullptr && name->Equals("Параметры общие", System::StringComparison::OrdinalIgnoreCase) &&
+                    dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
+                    foundGlobal = true;
+                    dataGridView2->Rows->Clear();
+                    Microsoft::Office::Interop::Excel::Range^ used = sh->UsedRange;
+                    int lastRow = used->Rows->Count;
+                    for (int r = 2; r <= lastRow; r++) {
+                        cli::array<Object^>^ rowData = gcnew cli::array<Object^>(3);
+                        for (int c = 1; c <= 3; c++) {
+                            try {
+                                Microsoft::Office::Interop::Excel::Range^ cell = safe_cast<Microsoft::Office::Interop::Excel::Range^>(sh->Cells[r, c]);
+                                System::Object^ val = cell->Value2;
+                                rowData[c - 1] = (val != nullptr) ? val->ToString() : "";
+                            }
+                            catch (...) { rowData[c - 1] = ""; }
+                        }
+                        dataGridView2->Rows->Add(rowData);
+                    }
+                    dataGridView2Dirty = false;
+                }
+                System::Runtime::InteropServices::Marshal::ReleaseComObject(sh);
+            }
+            if (!foundPhase && !foundGlobal) {
+                MessageBox::Show("В выбранном файле не найдены листы «Параметры по фазам» и «Параметры общие».", "Загрузка параметров");
+            }
+            wb->Close(false, missing, missing);
+            System::Runtime::InteropServices::Marshal::ReleaseComObject(wb);
+        }
+        catch (System::Exception^ ex) {
+            MessageBox::Show("Ошибка при чтении файла: " + ex->Message, "Загрузка параметров");
+            if (wb != nullptr) {
+                try { wb->Close(false, missing, missing); } catch (...) {}
+                try { System::Runtime::InteropServices::Marshal::ReleaseComObject(wb); } catch (...) {}
+            }
+        }
+        app->Quit();
+        System::Runtime::InteropServices::Marshal::ReleaseComObject(app);
+    }
+    catch (System::Exception^ ex) {
+        MessageBox::Show("Ошибка: " + ex->Message, "Загрузка параметров");
+        GlobalLogger::LogMessage("Error: LoadParamsFromExcelFile: " + ex->ToString());
+    }
+    finally {
+        if (mutexAcquired && FormExcel::GetExcelGlobalMutex() != nullptr) {
+            try { FormExcel::GetExcelGlobalMutex()->ReleaseMutex(); } catch (...) {}
+        }
+    }
+    if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+        Label_Commands->Text = "Параметры загружены из файла";
+        Label_Commands->ForeColor = System::Drawing::Color::DarkGreen;
+    }
 }
 
 System::Void ProjectServerW::DataForm::buttonSaveToFile_Click(System::Object^ sender, System::EventArgs^ e) {
@@ -1552,60 +1676,50 @@ System::Void ProjectServerW::DataForm::buttonWriteParameters_Click(System::Objec
         }
         return;
     }
-    int ok = 0, fail = 0;
+    // Проверка: если обе таблицы параметров пусты (нет ни одной строки с данными), не отправлять команды.
+    int dataRows1 = 0, dataRows2 = 0;
     if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
-        for (int r = 0; r < dataGridView1->Rows->Count; r++) {
-            DataGridViewRow^ row = dataGridView1->Rows[r];
-            if (row->IsNewRow) continue;
-            Object^ v0 = row->Cells["Parameter"]->Value;
-            String^ paramName = v0 != nullptr ? v0->ToString() : "";
-            for (int ph = 0; ph < 3; ph++) {
-                uint8_t g, id;
-                if (!GetDefrostParamIdGrid1(paramName, ph, g, id)) continue;
-                String^ colName = (ph == 0) ? "WarmUP" : (ph == 1) ? "Plateau" : "Finish";
-                Object^ vc = row->Cells[colName]->Value;
-                String^ valueStr = vc != nullptr ? vc->ToString() : "";
-                float f;
-                if (!Single::TryParse(valueStr->Trim()->Replace(",", "."), System::Globalization::NumberStyles::Float, System::Globalization::CultureInfo::InvariantCulture, f)) { fail++; continue; }
-                DefrostParamValue val;
-                val.valueType = DefrostParamType::F32;
-                val.value.f32 = f;
-                if (!SetDefrostParam(g, id, val)) { fail++; continue; }
-                ok++;
-            }
-        }
+        for (int r = 0; r < dataGridView1->Rows->Count; r++)
+            if (!dataGridView1->Rows[r]->IsNewRow) dataRows1++;
     }
     if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
-        for (int r = 0; r < dataGridView2->Rows->Count; r++) {
-            DataGridViewRow^ row = dataGridView2->Rows[r];
-            if (row->IsNewRow) continue;
-            Object^ v0 = row->Cells["Parameter2"]->Value;
-            Object^ v2 = row->Cells["Value"]->Value;
-            String^ paramName = v0 != nullptr ? v0->ToString() : "";
-            String^ valueStr = v2 != nullptr ? v2->ToString() : "";
-            uint8_t g, id, vt;
-            if (!GetDefrostParamId(paramName, g, id, vt)) continue;
-            DefrostParamValue val;
-            val.valueType = vt;
-            if (vt == DefrostParamType::U8) {
-                unsigned int u; if (!UInt32::TryParse(valueStr->Trim(), u)) { fail++; continue; }
-                val.value.u8 = (uint8_t)(u & 0xFF);
-            } else if (vt == DefrostParamType::U16) {
-                unsigned int u; if (!UInt32::TryParse(valueStr->Trim(), u)) { fail++; continue; }
-                val.value.u16 = (uint16_t)(u & 0xFFFF);
-            } else if (vt == DefrostParamType::F32) {
-                float f; if (!Single::TryParse(valueStr->Trim()->Replace(",", "."), System::Globalization::NumberStyles::Float, System::Globalization::CultureInfo::InvariantCulture, f)) { fail++; continue; }
-                val.value.f32 = f;
-            } else { fail++; continue; }
-            if (!SetDefrostParam(g, id, val)) { fail++; continue; }
-            ok++;
+        for (int r = 0; r < dataGridView2->Rows->Count; r++)
+            if (!dataGridView2->Rows[r]->IsNewRow) dataRows2++;
+    }
+    if (dataRows1 == 0 && dataRows2 == 0) {
+        MessageBox::Show("Таблицы параметров пусты. Заполните таблицы или загрузите параметры из файла.", "Запись параметров");
+        if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+            Label_Commands->Text = "Запись в устройство: нечего записывать (таблицы пусты)";
+            Label_Commands->ForeColor = System::Drawing::Color::Orange;
+        }
+        return;
+    }
+    bool ok5 = false, ok6 = false;
+    if (dataRows1 > 0 && dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
+        DefrostLogPhasePayload_t payload5;
+        if (BuildPhasePayloadFromGrid1(dataGridView1, &payload5)) {
+            ok5 = SetDefrostGroup(5, (const uint8_t*)&payload5, (uint8_t)sizeof(DefrostLogPhasePayload_t));
+        }
+    }
+    if (dataRows2 > 0 && dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
+        DefrostLogGlobalPayload_t payload6;
+        if (BuildGlobalPayloadFromGrid2(dataGridView2, &payload6)) {
+            ok6 = SetDefrostGroup(6, (const uint8_t*)&payload6, (uint8_t)sizeof(DefrostLogGlobalPayload_t));
         }
     }
     if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
-        Label_Commands->Text = String::Format("Запись в устройство: записано {0} параметров" + (fail > 0 ? ", ошибок: " + fail : ""), ok);
-        Label_Commands->ForeColor = System::Drawing::Color::DarkGreen;
+        if (ok5 && ok6) {
+            Label_Commands->Text = "Запись в устройство: группы 5 и 6 записаны";
+            Label_Commands->ForeColor = System::Drawing::Color::DarkGreen;
+        } else if (ok5 || ok6) {
+            Label_Commands->Text = String::Format("Запись в устройство: группа 5 = {0}, группа 6 = {1}", ok5 ? "OK" : "ошибка", ok6 ? "OK" : "ошибка");
+            Label_Commands->ForeColor = System::Drawing::Color::Orange;
+        } else {
+            Label_Commands->Text = "Запись в устройство: ошибка отправки групп параметров";
+            Label_Commands->ForeColor = System::Drawing::Color::Red;
+        }
     }
-    GlobalLogger::LogMessage(String::Format("Information: Wrote {0} params to defroster" + (fail > 0 ? ", {1} failed" : ""), ok, fail));
+    GlobalLogger::LogMessage(String::Format("Information: Wrote defrost params by group: group5={0}, group6={1}", ok5 ? "OK" : "fail", ok6 ? "OK" : "fail"));
 }
 
 //*******************************************************************************************
@@ -1756,6 +1870,14 @@ System::Void DataForm::DataForm_HandleDestroyed(Object^ sender, EventArgs^ e)
         catch (...) {}
         inactivityTimer = nullptr;
     }
+    if (controlLogAbsenceTimer != nullptr) {
+        try {
+            controlLogAbsenceTimer->Stop();
+            controlLogAbsenceTimer->Tick -= gcnew EventHandler(this, &DataForm::OnControlLogAbsenceTimerTick);
+        }
+        catch (...) {}
+        controlLogAbsenceTimer = nullptr;
+    }
 
 }
 
@@ -1790,6 +1912,29 @@ void ProjectServerW::DataForm::EnsureProgramRunningStateFromLog()
         }
     }
     buttonSTOPstate_TRUE();
+}
+
+void ProjectServerW::DataForm::OnControlLogAbsenceTimerTick(System::Object^ sender, System::EventArgs^ e)
+{
+    try {
+        if (!controllerAutoModeActive || lastControlLogTime == DateTime::MinValue)
+            return;
+        TimeSpan elapsed = DateTime::Now.Subtract(lastControlLogTime);
+        // Таймаут отсутствия лога = интервал измерений (с вкладки «Настройки») + 1 с
+        int intervalSec = 10;
+        if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed)
+            intervalSec = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
+        double absenceThresholdSec = (double)intervalSec + 1.0;
+        if (elapsed.TotalSeconds < absenceThresholdSec)
+            return;
+        controllerAutoModeActive = false;
+        lastControlLogTime = DateTime::MinValue;
+        if (buttonSTART != nullptr && !buttonSTART->IsDisposed && buttonSTOP != nullptr && !buttonSTOP->IsDisposed)
+            buttonSTARTstate_TRUE(); // состояние «можно запустить»
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage("Error: Exception in OnControlLogAbsenceTimerTick: " + ex->ToString());
+    }
 }
 
 // Состояние «программа запущена»: после успешной команды ПУСК — лампы и блокировка кнопок
