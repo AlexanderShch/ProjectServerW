@@ -72,6 +72,7 @@ typedef struct {
     uint16_t airOnlyPhaseWarmUp_s;
     uint16_t airOnlyPhasePlateau_s;
     uint16_t maxRuntime_s;
+    float fishColdTarget_C;          /* целевая мин. Т рыбы °C; при достижении — автоостанов алгоритма */
     uint8_t sensorUseInDefrost[DEFROST_MAX_SENSOR_COUNT_SERVER];
 } DefrostLogGlobalPayload_t;
 #pragma pack(pop)
@@ -517,6 +518,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();
 
     uint16_t bitField;
+    // Первая группа (Heat0..Alrm) — входы DI модуля ввода-вывода. В контроллере: Read_Data_2 → T.
     bitField = data.T[SQ - 1];
 
     if (reconnectFixationLogPending) {
@@ -559,16 +561,44 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         }
     }
 
-    // Записываем биты первой группы в строку таблицы
+    // Записываем биты первой группы (Heat0..Alrm) — DI, тот же битовый порядок, что в модуле.
     for (int bit = 0; bit < 16; bit++) {
         bool bitValue = (bitField & (1 << bit)) != 0;
         row[bitNames[0][bit]] = bitValue;
     }
+    // Вторая группа (_V0.._Stp) — выходы DO модуля ввода-вывода. В контроллере: Read_Data_1 → H.
     bitField = data.H[SQ - 1];
-    // Записываем биты второй группы в строку таблицы
+    // Записываем биты второй группы (DO), тот же битовый порядок, что в модуле.
     for (int bit = 0; bit < 16; bit++) {
         bool bitValue = (bitField & (1 << bit)) != 0;
         row[bitNames[1][bit]] = bitValue;
+    }
+
+    // Определение автоматического режима по биту _Wrk (бит 14 DO): _Wrk == 1 — контроллер в автоматическом режиме.
+    const uint16_t doBits = data.H[SQ - 1];
+    const bool wrkBit = (doBits & (1u << 14)) != 0;
+    if (controllerAutoModeActive && !wrkBit) {
+        // Переход в остановку: пишем в лог дату/время остановки и достигнутую мин. Т рыбы.
+        DateTime stopTime = now;
+        String^ tempStr = lastFishCold_C_Valid ? String::Format(System::Globalization::CultureInfo::InvariantCulture, "{0:F1}", lastFishCold_C) : "—";
+        GlobalLogger::LogMessage(String::Format(
+            "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}. Достигнутая мин. Т рыбы: {1} °C",
+            stopTime, tempStr));
+    }
+    controllerAutoModeActive = wrkBit;
+    if (wrkBit)
+        lastControlLogTime = now;
+    if (this->InvokeRequired) {
+        if (wrkBit)
+            this->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(this, &DataForm::buttonSTOPstate_TRUE));
+        else
+            this->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(this, &DataForm::buttonSTARTstate_TRUE));
+    }
+    else {
+        if (wrkBit)
+            buttonSTOPstate_TRUE();
+        else
+            buttonSTARTstate_TRUE();
     }
 
     // Колонки лога параметров процесса (группа 3): до прихода пакета лога — пусто
@@ -903,10 +933,10 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
     const uint8_t* raw = reinterpret_cast<const uint8_t*>(pinned);
     ControlLogPayload_t pl;
     memcpy(&pl, raw + 2, sizeof(ControlLogPayload_t));
+    lastFishCold_C = pl.fishCold_C;
+    lastFishCold_C_Valid = true;
 
-    // Регулярный лог (Type 0x01) передаётся только в автоматическом режиме — взводим флаг и фиксируем время
-    controllerAutoModeActive = true;
-    lastControlLogTime = DateTime::Now;
+    // Автоматический режим сервер определяет по биту _Wrk в телеметрии, а не по приходу лога.
 
     System::Threading::Monitor::Enter(dataTableSync);
     try {
@@ -947,14 +977,7 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
         try {
             dataTable->Rows->Add(rowToAdd);
             dataExportedToExcel = false;
-            // Лог параметров передаётся только в автоматическом режиме — выставляем состояние «программа запущена»
-            // Используем EnsureProgramRunningStateFromLog, чтобы запоздалый лог после команды СТОП не затирал состояние кнопок.
-            if (this->InvokeRequired) {
-                this->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(this, &DataForm::EnsureProgramRunningStateFromLog));
-            }
-            else {
-                EnsureProgramRunningStateFromLog();
-            }
+            // Состояние кнопок ПУСК/СТОП задаётся по биту _Wrk в телеметрии, не по логу.
         }
         finally {
             if (dataGridView != nullptr && !dataGridView->IsDisposed) {
@@ -1131,6 +1154,7 @@ void ProjectServerW::DataForm::LoadDataGridView2Defaults() {
     dataGridView2->Rows->Add("airOnlyPhaseWarmUp_s", "Air-only: WarmUp phase duration (s)", "600");
     dataGridView2->Rows->Add("airOnlyPhasePlateau_s", "Air-only: Plateau end time from start (s)", "1800");
     dataGridView2->Rows->Add("maxRuntime_s", "Air-only: Max process duration (s)", "7200");
+    dataGridView2->Rows->Add("fishColdTarget_C", "Target min fish temp °C (auto-stop when reached)", "6");
 }
 
 // Имена параметров группы 5 (LOG_PHASE): порядок полей в DefrostLogPhasePayload_t
@@ -1202,7 +1226,8 @@ static const Group6Row kGroup6Rows[] = {
     {"injMinHold_s", "Injector min hold between switches"},
     {"airOnlyPhaseWarmUp_s", "Air-only: WarmUp phase duration (s)"},
     {"airOnlyPhasePlateau_s", "Air-only: Plateau end time from start (s)"},
-    {"maxRuntime_s", "Air-only: Max process duration (s)"}
+    {"maxRuntime_s", "Air-only: Max process duration (s)"},
+    {"fishColdTarget_C", "Target min fish temp °C (auto-stop when reached)"}
 };
 
 /** Заполнить payload группы 6 из dataGridView2 по имени параметра (Parameter2). */
@@ -1232,6 +1257,7 @@ static bool BuildGlobalPayloadFromGrid2(DataGridView^ grid, DefrostLogGlobalPayl
         if (name->Equals("airOnlyPhaseWarmUp_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->airOnlyPhaseWarmUp_s = (uint16_t)(u & 0xFFFF); continue; }
         if (name->Equals("airOnlyPhasePlateau_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->airOnlyPhasePlateau_s = (uint16_t)(u & 0xFFFF); continue; }
         if (name->Equals("maxRuntime_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->maxRuntime_s = (uint16_t)(u & 0xFFFF); continue; }
+        if (name->Equals("fishColdTarget_C", StringComparison::OrdinalIgnoreCase)) { float f; if (Single::TryParse(valueStr, System::Globalization::NumberStyles::Float, inv, f)) outPayload->fishColdTarget_C = f; continue; }
         for (int i = 0; i <= 5; i++) {
             String^ sensorName = System::String::Format("Sensor{0} use in defrost", i);
             if (name->Equals(sensorName, StringComparison::OrdinalIgnoreCase)) {
@@ -1257,6 +1283,7 @@ void ProjectServerW::DataForm::FillDataGridView2FromGroup6Payload(const uint8_t*
         dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[i].name), gcnew System::String(kGroup6Rows[i].desc), (*fFields[i]).ToString(inv));
     for (int i = 0; i < 8; i++)
         dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[6 + i].name), gcnew System::String(kGroup6Rows[6 + i].desc), System::Convert::ToString((int)(*u16Fields[i])));
+    dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[14].name), gcnew System::String(kGroup6Rows[14].desc), s.fishColdTarget_C.ToString(inv));
     for (int i = 0; i <= 5; i++) {
         dataGridView2->Rows->Add(
             System::String::Format("Sensor{0} use in defrost", i),
@@ -1748,8 +1775,8 @@ void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::ar
         "_Opn",     // Открытие шторки
         "_Dbl",     // Дверь заблокирована
         "_Cls",     // Шторка закрыта
-        "_Wrk",     // Устройство в режиме работы цикла
-        "_Red"      // Устройство в аварии
+        "_Wrk",     // Устройство в режиме работы цикла (зелёная лампа ПУСК)
+        "_Stp"      // DO15: красная лампа СТОП (1 при остановке программы авторежима)
     };
 
     // Остальные группы при необходимости расширяются
@@ -1924,13 +1951,18 @@ void ProjectServerW::DataForm::OnControlLogAbsenceTimerTick(System::Object^ send
         if (!controllerAutoModeActive || lastControlLogTime == DateTime::MinValue)
             return;
         TimeSpan elapsed = DateTime::Now.Subtract(lastControlLogTime);
-        // Таймаут отсутствия лога = интервал измерений (с вкладки «Настройки») + 1 с
+        // Таймаут отсутствия телеметрии с _Wrk=1 = интервал измерений (с вкладки «Настройки») + 1 с
         int intervalSec = 10;
         if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed)
             intervalSec = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
         double absenceThresholdSec = (double)intervalSec + 1.0;
         if (elapsed.TotalSeconds < absenceThresholdSec)
             return;
+        DateTime stopTime = DateTime::Now;
+        String^ tempStr = lastFishCold_C_Valid ? String::Format(System::Globalization::CultureInfo::InvariantCulture, "{0:F1}", lastFishCold_C) : "—";
+        GlobalLogger::LogMessage(String::Format(
+            "Information: Останов автоматического алгоритма дефростации (по таймауту отсутствия _Wrk=1). Время: {0:dd.MM.yyyy HH:mm:ss}. Достигнутая мин. Т рыбы: {1} °C",
+            stopTime, tempStr));
         controllerAutoModeActive = false;
         lastControlLogTime = DateTime::MinValue;
         if (buttonSTART != nullptr && !buttonSTART->IsDisposed && buttonSTOP != nullptr && !buttonSTOP->IsDisposed)

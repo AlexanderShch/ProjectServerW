@@ -156,9 +156,11 @@ namespace ProjectServerW {
 	bool autoRestartPending;         // true: отправлен STOP по автоперезапуску, ждём экспорт и затем START
 		DateTime autoRestartStopIssuedTime; // Время отправки STOP для таймаута автоперезапуска
 	DateTime lastStopSuccessTime; // Время последнего успешного ответа на СТОП; лог не перезаписывает кнопки в течение 10 с
-	bool controllerAutoModeActive;   // true: хотя бы раз получен регулярный лог (Type 0x01) — контроллер в автоматическом режиме
-	DateTime lastControlLogTime;     // Время последнего приёма регулярного лога; сброс флага при отсутствии лога
-	System::Windows::Forms::Timer^ controlLogAbsenceTimer; // Таймер проверки отсутствия лога для сброса controllerAutoModeActive
+	bool controllerAutoModeActive;   // true: в телеметрии бит _Wrk (DO) == 1 — контроллер в автоматическом режиме
+	DateTime lastControlLogTime;     // Время последней телеметрии с _Wrk=1; сброс флага при отсутствии такой телеметрии
+	float lastFishCold_C;            // Последняя мин. Т рыбы из лога параметров (для записи в лог при остановке алгоритма)
+	bool lastFishCold_C_Valid;       // true: lastFishCold_C получен из лога
+	System::Windows::Forms::Timer^ controlLogAbsenceTimer; // Таймер: при отсутствии телеметрии с _Wrk=1 сбрасывает controllerAutoModeActive
 	System::Windows::Forms::Timer^ sendStateTimer;        // Таймер команды «Отправить состояние» по интервалу измерений
 	bool autoRestartInternalUncheck; // Why: one-shot UX unchecks the box; we must not cancel the pending START.
 	bool settingsLoading;            // Why: avoid side-effects (timers/log/save) while applying persisted settings.
@@ -287,6 +289,7 @@ namespace ProjectServerW {
 		lastStopSuccessTime = DateTime::MinValue;
 		controllerAutoModeActive = false;
 		lastControlLogTime = DateTime::MinValue;
+		lastFishCold_C_Valid = false;
 		controlLogAbsenceTimer = nullptr;
 		autoRestartInternalUncheck = false;
 	settingsLoading = false;
