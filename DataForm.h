@@ -159,6 +159,7 @@ namespace ProjectServerW {
 	bool controllerAutoModeActive;   // true: хотя бы раз получен регулярный лог (Type 0x01) — контроллер в автоматическом режиме
 	DateTime lastControlLogTime;     // Время последнего приёма регулярного лога; сброс флага при отсутствии лога
 	System::Windows::Forms::Timer^ controlLogAbsenceTimer; // Таймер проверки отсутствия лога для сброса controllerAutoModeActive
+	System::Windows::Forms::Timer^ sendStateTimer;        // Таймер команды «Отправить состояние» по интервалу измерений
 	bool autoRestartInternalUncheck; // Why: one-shot UX unchecks the box; we must not cancel the pending START.
 	bool settingsLoading;            // Why: avoid side-effects (timers/log/save) while applying persisted settings.
 	System::String^ pendingVersion;  // временное хранение версии для обновления UI из другого потока
@@ -265,6 +266,16 @@ namespace ProjectServerW {
 				controlLogAbsenceTimer->Interval = 2000; // 2 с
 				controlLogAbsenceTimer->Tick += gcnew EventHandler(this, &DataForm::OnControlLogAbsenceTimerTick);
 				controlLogAbsenceTimer->Start();
+
+				sendStateTimer = gcnew System::Windows::Forms::Timer();
+				{
+					int intervalSec = 10;
+					if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed)
+						intervalSec = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
+					sendStateTimer->Interval = Math::Max(1000, intervalSec * 1000);
+				}
+				sendStateTimer->Tick += gcnew EventHandler(this, &DataForm::OnSendStateTimerTick);
+				sendStateTimer->Start();
 
 			// Инициализируем путь сохранения из текстового поля
 			excelSavePath = textBoxExcelDirectory->Text;
@@ -1143,6 +1154,7 @@ private: System::ComponentModel::IContainer^ components;
 			/** Вызвать из обработчика лога: переключить в «программа запущена», только если ещё не в состоянии «остановлена» (чтобы запоздалый лог после СТОП не затирал кнопки). */
 			void EnsureProgramRunningStateFromLog();
 			void OnControlLogAbsenceTimerTick(System::Object^ sender, System::EventArgs^ e);
+			void OnSendStateTimerTick(System::Object^ sender, System::EventArgs^ e);
 			System::Void DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ e);
 			System::Void DataForm_HandleDestroyed(Object^ sender, EventArgs^ e);
 		private:
@@ -1205,6 +1217,8 @@ private: System::Void button_RESET_Click(System::Object^ sender, System::EventAr
 private: System::Void buttonSaveMeasurementInterval_Click(System::Object^ sender, System::EventArgs^ e) {
 	int intervalSeconds = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
 	SendSetIntervalCommand(intervalSeconds);
+	if (sendStateTimer != nullptr)
+		sendStateTimer->Interval = Math::Max(1000, intervalSeconds * 1000);
 }
 private: System::Void button_CMDINFO_Click(System::Object^ sender, System::EventArgs^ e);
 

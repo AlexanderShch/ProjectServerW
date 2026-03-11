@@ -310,15 +310,11 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	const int MAX_FRAMED_PAYLOAD_LEN = 128;
 
 	// Бесконечный цикл считывания данных
+	// Важно: recv() вызываем БЕЗ удержания recvGate, иначе UI/таймер SEND_STATE не смогут отправить команду —
+	// контроллер шлёт данные только по запросу SEND_STATE, получается deadlock (пустая шина, окно не реагирует).
 	while (true) {
-		// Полудуплекс: блокируем отправку команд на время приёма и обработки (включая ожидание в recv).
-		System::Object^ recvGate = PacketQueueProcessor::GetReceivingGate(clientSocket);
-		System::Threading::Monitor::Enter(recvGate);
-		try {
-		// Принимаем данные в конец накопительного буфера
 		int spaceAvailable = sizeof(accumulatedBuffer) - accumulatedBytes;
 		if (spaceAvailable <= 0) {
-			// Буфер переполнен - это ошибка
 			GlobalLogger::LogMessage("Error: Accumulated buffer overflow! Resetting buffer.");
 			accumulatedBytes = 0;
 			continue;
@@ -326,16 +322,9 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 
 		bytesReceived = recv(clientSocket, accumulatedBuffer + accumulatedBytes, spaceAvailable, 0);
 
-		/* ОБРАБОТКА ОШИБОК
-		Если функция recv возвращает 0, это означает, что соединение было закрыто клиентом.
-		Если функция recv возвращает SOCKET_ERROR, проверяется код ошибки с помощью функции WSAGetLastError.
-		Если код ошибки равен WSAETIMEDOUT, это означает, что операция чтения завершилась по тайм-ауту.
-		*/
 		if (bytesReceived == SOCKET_ERROR) {
 			int error = WSAGetLastError();
 			if (error == WSAETIMEDOUT) {
-				// Причина: таймаут здесь используется как "тик" — даём шанс выйти, если этот сокет уже не актуален
-				// (например, пришло переподключение и форма получила новый ClientSocket).
 				try {
 					DataForm^ currentForm = DataForm::GetFormByGuid(guid);
 					if (currentForm == nullptr || currentForm->IsDisposed || currentForm->Disposing) {
@@ -348,7 +337,6 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				catch (...) {
 					break;
 				}
-
 				continue;
 			}
 			else {
@@ -357,19 +345,22 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 					GlobalLogger::LogMessage("Attention: Recv failed: " + error);
 				}
 			}
-			break;	// Выходим из цикла
+			break;
 		}
 		if (bytesReceived == 0) {
 			if (form != nullptr && !form->IsDisposed) {
 				form->SetMessage_TextValue("Attention: Connection closed by client");
 				GlobalLogger::LogMessage("Attention: Connection closed by client");
 			}
-			break;	// Выходим из цикла
+			break;
 		}
 
-		// Добавляем полученные байты к накопленным
 		accumulatedBytes += bytesReceived;
 
+		// Захватываем recvGate только на время разбора буфера, чтобы не пересекаться с отправкой команд.
+		System::Object^ recvGate = PacketQueueProcessor::GetReceivingGate(clientSocket);
+		System::Threading::Monitor::Enter(recvGate);
+		try {
 		// Обрабатываем все полные пакеты в буфере
 		int processedBytes = 0;
 		while (accumulatedBytes - processedBytes > 0) {
@@ -530,9 +521,9 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		finally {
 			System::Threading::Monitor::Exit(recvGate);
 		}
-		// Даём шанс потоку отправки (UI) захватить recvGate для стартовых команд до следующего recv().
-		// 300 мс: при 50 мс поток UI часто не успевал захватить замок, старт затягивался на 10+ с.
-		System::Threading::Thread::Sleep(300);
+		// Уступаем планировщику: поток отправки (UI/таймер SEND_STATE) может сразу захватить recvGate и отправить команды. 
+		// Один мастер — задержка не нужна.
+		System::Threading::Thread::Sleep(0);
 	}	// конец while (основной цикл)
 
 	// Соединение оборвалось. Форму НЕ закрываем: устройство может вернуться в течение 30 минут,

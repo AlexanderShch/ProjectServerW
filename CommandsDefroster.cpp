@@ -43,13 +43,11 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
         }
 
         int bytesSent = SOCKET_ERROR;
-        // Полудуплекс: не отправлять команду, пока recv()-поток обрабатывает принятые от контроллера данные.
-        // Мы получаем recvGate только после того, как recv() вернул данные (телеметрию). Сразу после этого
-        // контроллер может быть ещё занят передачей или не готов принять команду — даём время на "разворот" линии.
+        // Полудуплекс: не отправлять команду, пока recv()-поток обрабатывает принятые данные. 
+        // Шина с одним мастером (сервером) — после приёма сразу можно отправлять.
         System::Object^ recvGate = PacketQueueProcessor::GetReceivingGate(clientSocket);
         System::Threading::Monitor::Enter(recvGate);
         try {
-            System::Threading::Thread::Sleep(150);  // задержка разворота полудуплекса (мс)
             // Сериализуем send() на сокет, чтобы байтовые потоки не перемешивались с ACK телеметрии.
             System::Object^ sendGate = PacketQueueProcessor::GetSendGate(clientSocket);
             System::Threading::Monitor::Enter(sendGate);

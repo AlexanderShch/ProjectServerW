@@ -41,6 +41,7 @@ struct CmdRequest {
     static const uint8_t GET_CMD_INFO = 0x04;     // Запросить информацию о последней принятой команде
     static const uint8_t GET_DEFROST_PARAM = 0x06; // Запросить один параметр дефроста (payload: groupId, paramId)
     static const uint8_t GET_DEFROST_GROUP = 0x07;  // Запросить пачку параметров группы (payload: groupId, page)
+    static const uint8_t SEND_STATE = 0x08;       // Отправить состояние (телеметрия + при авторежиме лог)
 };
 
 // Типы значения параметра дефроста (совместимо с DefrostControl.h)
@@ -178,6 +179,11 @@ inline Command CreateRequestCommandDefrostGetGroup(uint8_t groupId, uint8_t page
     cmd.data[0] = groupId;
     cmd.data[1] = page;
     return cmd;
+}
+
+/** Создать команду «Отправить состояние» (телеметрия + при авторежиме лог). */
+inline Command CreateRequestCommandSendState() {
+    return CreateRequestCommand(CmdRequest::SEND_STATE);
 }
 
 /** Создать команду записи группы параметров дефроста. data[0]=groupId, data[1..]=payload (как в ответе GET_DEFROST_GROUP). */

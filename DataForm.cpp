@@ -45,7 +45,7 @@ typedef struct {
 } ControlLogPayload_t;
 
 /* Ответ GET_DEFROST_GROUP(groupId=5): структура совпадает с DefrostLogPhasePayload_t на контроллере. */
-static constexpr int DEFROST_PHASE_COUNT_SERVER = 3;
+namespace { constexpr int DEFROST_PHASE_COUNT_SERVER = 3; }
 typedef struct {
     float fishHotMax_C[DEFROST_PHASE_COUNT_SERVER];
     float fishHotRateMax_Cps[DEFROST_PHASE_COUNT_SERVER];
@@ -56,7 +56,7 @@ typedef struct {
 } DefrostLogPhasePayload_t;
 
 /* Ответ GET_DEFROST_GROUP(groupId=6): структура совпадает с DefrostLogGlobalPayload_t на контроллере. */
-static constexpr int DEFROST_MAX_SENSOR_COUNT_SERVER = 6;   /* совпадает с DEFROST_MAX_SENSOR_COUNT на контроллере (датчики 0..5) */
+namespace { constexpr int DEFROST_MAX_SENSOR_COUNT_SERVER = 6; }   /* совпадает с DEFROST_MAX_SENSOR_COUNT на контроллере (датчики 0..5) */
 typedef struct {
     float leftRightTrimGain;
     float leftRightTrimMaxEq;
@@ -722,10 +722,6 @@ void ProjectServerW::DataForm::OnReconnectSendStartupCommands() {
             return;
         }
 
-        // Пауза после переподключения: мосту TCP↔UART нужно время переключиться на новый сокет,
-        // иначе первая команда (GET_VERSION) может теряться или ответ приходит с большой задержкой.
-        System::Threading::Thread::Sleep(1500);
-
         // Отправляем версию и интервал измерения на устройство. Состояние ПУСК/СТОП выставляется по приходу лога параметров.
         const bool okVersion = SendVersionRequest();
 
@@ -766,7 +762,8 @@ void ProjectServerW::DataForm::SchedulePostResetInit() {
     }
 
     postResetInitTimer->Stop();
-    postResetInitTimer->Interval = 7000; // 7 секунд на ожидание ответа устройства по порту UART4
+    // После RESET контроллер уже через ~1 с шлёт телеметрию, поэтому не тянем время: первая попытка через 1 с.
+    postResetInitTimer->Interval = 1000;
     postResetInitTimer->Start();
 }
 
@@ -801,9 +798,6 @@ void ProjectServerW::DataForm::OnPostResetInitTimerTick(System::Object^ sender, 
         }
 
         postResetInitAttempt++;
-
-        // Пауза для моста TCP↔UART после переподключения (аналогично OnReconnectSendStartupCommands).
-        System::Threading::Thread::Sleep(1500);
 
         const bool okVersion = SendVersionRequest();
         int intervalSeconds = 10;
@@ -1075,6 +1069,8 @@ void ProjectServerW::DataForm::LoadSettings() {
                             if (parsed < minVal) parsed = minVal;
                             if (parsed > maxVal) parsed = maxVal;
                             numericUpDownMeasurementInterval->Value = System::Decimal(parsed);
+                            if (sendStateTimer != nullptr)
+                                sendStateTimer->Interval = Math::Max(1000, parsed * 1000);
                         }
                     }
                 }
@@ -1878,6 +1874,14 @@ System::Void DataForm::DataForm_HandleDestroyed(Object^ sender, EventArgs^ e)
         catch (...) {}
         controlLogAbsenceTimer = nullptr;
     }
+    if (sendStateTimer != nullptr) {
+        try {
+            sendStateTimer->Stop();
+            sendStateTimer->Tick -= gcnew EventHandler(this, &DataForm::OnSendStateTimerTick);
+        }
+        catch (...) {}
+        sendStateTimer = nullptr;
+    }
 
 }
 
@@ -1934,6 +1938,40 @@ void ProjectServerW::DataForm::OnControlLogAbsenceTimerTick(System::Object^ send
     }
     catch (Exception^ ex) {
         GlobalLogger::LogMessage("Error: Exception in OnControlLogAbsenceTimerTick: " + ex->ToString());
+    }
+}
+
+void ProjectServerW::DataForm::OnSendStateTimerTick(System::Object^ sender, System::EventArgs^ e)
+{
+    try {
+        if (ClientSocket == INVALID_SOCKET)
+            return;
+        Command cmd = CreateRequestCommandSendState();
+        uint8_t buffer[MAX_COMMAND_SIZE];
+        size_t commandLength = BuildCommandBuffer(cmd, buffer, sizeof(buffer));
+        if (commandLength == 0)
+            return;
+        System::Object^ recvGate = PacketQueueProcessor::GetReceivingGate(ClientSocket);
+        System::Threading::Monitor::Enter(recvGate);
+        try {
+            System::Object^ sendGate = PacketQueueProcessor::GetSendGate(ClientSocket);
+            System::Threading::Monitor::Enter(sendGate);
+            try {
+                int bytesSent = send(ClientSocket, reinterpret_cast<const char*>(buffer),
+                    static_cast<int>(commandLength), 0);
+                if (bytesSent == SOCKET_ERROR)
+                    GlobalLogger::LogMessage("Warning: SEND_STATE send failed");
+            }
+            finally {
+                System::Threading::Monitor::Exit(sendGate);
+            }
+        }
+        finally {
+            System::Threading::Monitor::Exit(recvGate);
+        }
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage("Error: Exception in OnSendStateTimerTick: " + ex->ToString());
     }
 }
 

@@ -100,6 +100,7 @@ const char* GetCommandName(const Command& cmd) {
         case 0x04: return "GET_CMD_INFO";
         case 0x06: return "GET_DEFROST_PARAM";
         case 0x07: return "GET_DEFROST_GROUP";
+        case 0x08: return "SEND_STATE";
         default: return "REQUEST_UNKNOWN";
         }
     }
