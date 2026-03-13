@@ -32,9 +32,11 @@ typedef struct   // Формат пакета (как на STM32)
 } MSGQUEUE_OBJ_t;
 #pragma pack(pop)
 
-// Пакет лога алгоритма (Type 0x01), группа 3 — совпадает с ControlLogPayload_t на контроллере (текущая фаза + переменные алгоритма)
+// Пакет лога алгоритма (Type 0x01): сначала отфильтрованные температуры всех датчиков (°C),
+// затем текущая фаза + группа 3 — переменные алгоритма (совпадает с ControlLogPayload_t на контроллере).
 #pragma pack(push, 1)
 typedef struct {
+    float T_filt_C[7];           // 0..6: отфильтрованные T датчиков (см. индексы Sensor_array на контроллере)
     uint8_t phase;
     float eT_common, heatScale01;
     float uCommon_TEN, trim_TEN, uLeft_TEN, uRight_TEN;
@@ -453,7 +455,16 @@ void ProjectServerW::DataForm::InitializeDataTable() {
         }
     }
 
-    // Колонки лога параметров процесса (группа 3): имена — как в ControlLogPayload_t на контроллере
+    // Колонки лога параметров процесса (группа 3): сначала отфильтрованные температуры,
+    // затем переменные алгоритма (имена — как в ControlLogPayload_t на контроллере).
+    dataTable->Columns->Add("T_filt_0", float::typeid);
+    dataTable->Columns->Add("T_filt_1", float::typeid);
+    dataTable->Columns->Add("T_filt_2", float::typeid);
+    dataTable->Columns->Add("T_filt_3", float::typeid);
+    dataTable->Columns->Add("T_filt_4", float::typeid);
+    dataTable->Columns->Add("T_filt_5", float::typeid);
+    dataTable->Columns->Add("T_filt_6", float::typeid);
+
     dataTable->Columns->Add("phase", int::typeid);
     dataTable->Columns->Add("eT_common", float::typeid);
     dataTable->Columns->Add("heatScale01", float::typeid);
@@ -577,13 +588,31 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     // Определение автоматического режима по биту _Wrk (бит 14 DO): _Wrk == 1 — контроллер в автоматическом режиме.
     const uint16_t doBits = data.H[SQ - 1];
     const bool wrkBit = (doBits & (1u << 14)) != 0;
-    if (controllerAutoModeActive && !wrkBit) {
+    const bool wasAuto = controllerAutoModeActive;
+    if (!wasAuto && wrkBit) {
+        // Переход в автоматический режим: автоматически запросить параметры дефростации (группы 5 и 6).
+        try {
+            this->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(
+                this, &DataForm::AutoReadParametersFromController));
+        }
+        catch (Exception^) {
+            // Игнорируем ошибки авто-запроса параметров, чтобы не мешать основному обмену.
+        }
+    }
+    if (wasAuto && !wrkBit) {
         // Переход в остановку: пишем в лог дату/время остановки и достигнутую мин. Т рыбы.
         DateTime stopTime = now;
         String^ tempStr = lastFishCold_C_Valid ? String::Format(System::Globalization::CultureInfo::InvariantCulture, "{0:F1}", lastFishCold_C) : "—";
         GlobalLogger::LogMessage(String::Format(
             "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}. Достигнутая мин. Т рыбы: {1} °C",
             stopTime, tempStr));
+        // По окончании работы алгоритма — автоматически сохраняем таблицу данных в Excel (аварийный режим, без трогания UI-кнопки).
+        try {
+            StartExcelExportThread(true);
+        }
+        catch (Exception^ ex) {
+            GlobalLogger::LogMessage("Error: Auto Excel export on defrost stop failed: " + ex->ToString());
+        }
     }
     controllerAutoModeActive = wrkBit;
     if (wrkBit)
@@ -601,7 +630,9 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
             buttonSTARTstate_TRUE();
     }
 
-    // Колонки лога параметров процесса (группа 3): до прихода пакета лога — пусто
+    // Колонки T_filt_0…T_filt_6 и лога параметров (группа 3): заполняются только из пакета лога при активном _Wrk (AppendControlLogToDataRow).
+    for (int i = 0; i < 7; i++)
+        row[String::Format("T_filt_{0}", i)] = System::DBNull::Value;
     row["phase"] = System::DBNull::Value;
     row["eT_common"] = System::DBNull::Value;
     row["heatScale01"] = System::DBNull::Value;
@@ -620,9 +651,16 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     row["fishHot_C"] = System::DBNull::Value;
     row["fishCold_C"] = System::DBNull::Value;
 
-    // Строку в таблицу не добавляем здесь: добавление только при приходе лога параметров (авто-режим).
-    // Всегда сохраняем последнюю телеметрию, чтобы при приходе лога (AppendControlLogToDataRow) была строка с данными.
+    // Всегда сохраняем последнюю телеметрию, чтобы при приходе лога (AppendControlLogToDataRow)
+    // была строка с данными для дополнения параметрами алгоритма.
     lastPendingTelemetryRow = row;
+
+    // В таблицу добавляем строку только при активном _Wrk; T_filt_0…T_filt_6 и phase заполняются только из пакета лога (AppendControlLogToDataRow).
+    // Экспорт в Excel (dataTable->Copy()) выгружает таблицу полностью — все колонки и все строки.
+    if (wrkBit) {
+        table->Rows->Add(row);
+        dataExportedToExcel = false;
+    }
 }
 
 
@@ -938,6 +976,11 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
 
     // Автоматический режим сервер определяет по биту _Wrk в телеметрии, а не по приходу лога.
 
+    // Лог параметров имеет смысл только в автоматическом режиме (бит _Wrk=1).
+    if (!controllerAutoModeActive) {
+        return;
+    }
+
     System::Threading::Monitor::Enter(dataTableSync);
     try {
         if (dataTable == nullptr) {
@@ -945,15 +988,28 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
             return;
         }
         DataRow^ rowToAdd = nullptr;
+        bool rowAlreadyInTable = false;
         if (lastPendingTelemetryRow != nullptr) {
+            // Строка телеметрии уже добавлена в таблицу в момент прихода кадра с _Wrk=1.
             rowToAdd = lastPendingTelemetryRow;
             lastPendingTelemetryRow = nullptr;
+            rowAlreadyInTable = true;
         } else {
+            // На всякий случай: если лог пришёл без свежей телеметрии, создаём новую строку.
             rowToAdd = dataTable->NewRow();
             for (int c = 0; c < dataTable->Columns->Count; c++) {
                 rowToAdd[c] = System::DBNull::Value;
             }
         }
+        // Отфильтрованные температуры датчиков (°C)
+        rowToAdd["T_filt_0"] = pl.T_filt_C[0];
+        rowToAdd["T_filt_1"] = pl.T_filt_C[1];
+        rowToAdd["T_filt_2"] = pl.T_filt_C[2];
+        rowToAdd["T_filt_3"] = pl.T_filt_C[3];
+        rowToAdd["T_filt_4"] = pl.T_filt_C[4];
+        rowToAdd["T_filt_5"] = pl.T_filt_C[5];
+        rowToAdd["T_filt_6"] = pl.T_filt_C[6];
+
         rowToAdd["phase"] = (int)pl.phase;
         rowToAdd["eT_common"] = pl.eT_common;
         rowToAdd["heatScale01"] = pl.heatScale01;
@@ -975,7 +1031,9 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
             dataGridView->SuspendLayout();
         }
         try {
-            dataTable->Rows->Add(rowToAdd);
+            if (!rowAlreadyInTable) {
+                dataTable->Rows->Add(rowToAdd);
+            }
             dataExportedToExcel = false;
             // Состояние кнопок ПУСК/СТОП задаётся по биту _Wrk в телеметрии, не по логу.
         }
@@ -1426,6 +1484,32 @@ System::Data::DataTable^ ProjectServerW::DataForm::BuildGlobalParamsDataTableFor
 // Теперь таблицы живут в памяти формы и не очищаются при переходах между вкладками.
 System::Void ProjectServerW::DataForm::tabControl1_SelectedIndexChanged(System::Object^ sender, System::EventArgs^ e) {
     TabControl^ tc = safe_cast<TabControl^>(sender);
+
+    // При первом входе на вкладку «Параметры» (tabPage3), если таблицы пустые и есть соединение с устройством,
+    // автоматически запросить параметры дефростации с контроллера (аналог кнопки «Считать из дефростера»).
+    if (tc->SelectedTab == tabPage3 && tabControl1PrevTab != tabPage3) {
+        bool grid1Empty = true;
+        bool grid2Empty = true;
+        if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
+            for (int r = 0; r < dataGridView1->Rows->Count; r++) {
+                if (!dataGridView1->Rows[r]->IsNewRow) { grid1Empty = false; break; }
+            }
+        }
+        if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
+            for (int r = 0; r < dataGridView2->Rows->Count; r++) {
+                if (!dataGridView2->Rows[r]->IsNewRow) { grid2Empty = false; break; }
+            }
+        }
+        if ((grid1Empty && grid2Empty) && ClientSocket != INVALID_SOCKET) {
+            try {
+                buttonReadParameters_Click(nullptr, nullptr);
+            }
+            catch (Exception^) {
+                // Автоматическое чтение не должно ронять UI; пользователь всегда может нажать кнопку вручную.
+            }
+        }
+    }
+
     if (tabControl1PrevTab == tabPage3 && tc->SelectedTab != tabPage3) {
         if (dataGridView1Dirty || dataGridView2Dirty) {
             System::Windows::Forms::DialogResult dr = MessageBox::Show(
@@ -1633,6 +1717,12 @@ void ProjectServerW::DataForm::LoadParamsFromExcelFile(System::String^ filePath)
 System::Void ProjectServerW::DataForm::buttonSaveToFile_Click(System::Object^ sender, System::EventArgs^ e) {
     SaveDataGridView1ToFile();
     SaveDataGridView2ToFile();
+}
+
+System::Void ProjectServerW::DataForm::AutoReadParametersFromController() {
+    // Вспомогательный колбэк без параметров для MethodInvoker:
+    // вызывает стандартный обработчик чтения параметров.
+    buttonReadParameters_Click(nullptr, nullptr);
 }
 
 System::Void ProjectServerW::DataForm::buttonReadParameters_Click(System::Object^ sender, System::EventArgs^ e) {

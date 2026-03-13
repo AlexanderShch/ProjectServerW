@@ -305,7 +305,9 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	// Причина: TCP — это поток байтов; маркер начала кадра нужен для ресинхронизации после склеек/разрывов,
 	//          а длина позволяет корректно выделять кадр, даже если AA55/55AA встречаются внутри данных (например, в счётчике секунд).
 	const int TELEMETRY_FRAME_PAYLOAD_LEN = 45; // Для телеметрии: после Len идут 45 байт данных до CRC (Time..H..).
-	const int CONTROL_LOG_PAYLOAD_LEN = 65;   // Пакет лога (Type 0x01): после Len идут 65 байт (phase + группа 3, ControlLogPayload_t packed).
+	// Пакет лога (Type 0x01): после Len идут байты структуры ControlLogPayload_t (packed).
+	// Старое значение было 65; теперь 93 (7 float T_filt_C[0..6] + phase + 15 float).
+	const int CONTROL_LOG_PAYLOAD_LEN = 93;
 	// Макс. размер блока [Type][Len][Payload][CRC] для кадров AA 55 (телеметрия 49, лог 73; команды до 64).
 	const int MAX_FRAMED_PAYLOAD_LEN = 128;
 

@@ -1241,6 +1241,7 @@ private: System::Void button_CMDINFO_Click(System::Object^ sender, System::Event
 	private: System::Void buttonLoadFromFile_Click(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void buttonSaveToFile_Click(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void buttonReadParameters_Click(System::Object^ sender, System::EventArgs^ e);
+	private: System::Void AutoReadParametersFromController();
 	private: System::Void buttonWriteParameters_Click(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void dataGridView1_CellValueChanged(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e);
 	private: System::Void dataGridView1_RowChanged(System::Object^ sender, System::Windows::Forms::DataGridViewRowEventArgs^ e);
