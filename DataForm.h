@@ -105,8 +105,9 @@ namespace ProjectServerW {
 			System::Data::DataTable^ dataTable;  // Объявление таблицы как члена класса
 			// Critical: DataTable is not thread-safe; lock when copying for Excel while UI is appending rows.
 			System::Object^ dataTableSync;
-			// Строка, накопленная по телеметрии; добавляется в таблицу только при приходе лога (авто-режим).
-			System::Data::DataRow^ lastPendingTelemetryRow;
+			// Строка, накопленная телеметрией; после прихода лога дополняется параметрами и при _Wrk=1 добавляется в таблицу.
+			System::Data::DataRow^ pendingRow;
+			bool pendingRowWrkBit;  // значение _Wrk из телеметрии для этой строки
 			// Critical: explicit lock object for export state.
 			System::Object^ excelExportSync;
 			// Critical: prevents starting multiple Excel export threads per form (they would only stack up on the global mutex).
@@ -231,7 +232,8 @@ namespace ProjectServerW {
 				exportCompletedEvent = gcnew System::Threading::ManualResetEvent(false);
 				// Критично: защищает DataTable от гонок между UI-обновлениями и фоновой копией в Excel.
 				dataTableSync = gcnew System::Object();
-				lastPendingTelemetryRow = nullptr;
+				pendingRow = nullptr;
+				pendingRowWrkBit = false;
 				excelExportSync = gcnew System::Object();
 				excelExportInProgress = 0;
 				formGuid = nullptr;
@@ -1108,8 +1110,7 @@ private: System::ComponentModel::IContainer^ components;
 			}
 			void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, System::Data::DataTable^ table);
 			void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size, int port);
-			// Парсинг лога (Type 0x01, группа 3) и добавление лога в строку данных: дополняет lastPendingTelemetryRow
-			// параметрами лога и добавляет эту строку в таблицу (лог передаётся только в автоматическом режиме).
+			// Парсинг лога (Type 0x01): дополняет pendingRow параметрами; при _Wrk=1 добавляет строку в таблицу.
 			void AppendControlLogToDataRow(cli::array<System::Byte>^ packet, int size);
 
 			static cli::array<cli::array<String^>^>^ GetBitFieldNames() {

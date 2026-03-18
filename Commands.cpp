@@ -213,13 +213,44 @@ bool ParseResponseBuffer(const uint8_t* buffer, size_t bufferSize, CommandRespon
     // Поддерживаются 2 формата ответа:
     // 1) Legacy: [Type][Code][Status][DataLen][Data...][CRC]
     // 2) Новый (во втором байте после Type идёт Len): [Type][Len][Code][Status][DataLen][Data...][CRC]
-    // где Len = количество байт после Len и до CRC, CRC считается по всем байтам кроме CRC (включая Type и Len).
 
     if (buffer == nullptr) {
         return false;
     }
 
-    // Пробуем новый формат ответа.
+    // Сначала пробуем Legacy, чтобы не было ложных срабатываний "new format"
+    // (во втором байте в Legacy лежит Code, который может случайно совпасть с Len).
+    if (bufferSize >= 6) { // Type + Code + Status + DataLen + CRC(2)
+        size_t offset = 0;
+        const uint8_t commandType = buffer[offset++];
+        const uint8_t commandCode = buffer[offset++];
+        const uint8_t status = buffer[offset++];
+        const uint8_t dataLength = buffer[offset++];
+
+        const size_t expectedSize = 4 + static_cast<size_t>(dataLength) + 2;
+        if (bufferSize >= expectedSize) {
+            if (dataLength > sizeof(response.data)) {
+                return false;
+            }
+
+            response.commandType = commandType;
+            response.commandCode = commandCode;
+            response.status = status;
+            response.dataLength = dataLength;
+
+            if (dataLength > 0) {
+                memcpy(response.data, &buffer[offset], dataLength);
+            }
+
+            memcpy(&response.crc, &buffer[expectedSize - 2], 2);
+
+            if (ValidateResponseCRC(buffer, expectedSize)) {
+                return true;
+            }
+        }
+    }
+
+    // Пробуем новый формат (если Legacy не подошёл).
     if (bufferSize >= 7) { // Type + Len + Code + Status + DataLen + CRC(2)
         const uint8_t len = buffer[1];
         const size_t expectedByLen = static_cast<size_t>(1 + 1 + len + 2);
@@ -257,37 +288,7 @@ bool ParseResponseBuffer(const uint8_t* buffer, size_t bufferSize, CommandRespon
         }
     }
 
-    // Legacy формат.
-    if (bufferSize < 6) { // Type + Code + Status + DataLen + CRC(2)
-        return false;
-    }
-
-    size_t offset = 0;
-    response.commandType = buffer[offset++];
-    response.commandCode = buffer[offset++];
-    response.status = buffer[offset++];
-    response.dataLength = buffer[offset++];
-
-    size_t expectedSize = 4 + static_cast<size_t>(response.dataLength) + 2;
-    if (bufferSize < expectedSize) {
-        return false;
-    }
-
-    if (response.dataLength > 0) {
-        if (response.dataLength > sizeof(response.data)) {
-            return false;
-        }
-        memcpy(response.data, &buffer[offset], response.dataLength);
-        offset += response.dataLength;
-    }
-
-    memcpy(&response.crc, &buffer[offset], 2);
-
-    if (!ValidateResponseCRC(buffer, bufferSize)) {
-        return false;
-    }
-
-    return true;
+    return false;
 }
 
 // Получение строкового имени статуса ответа (английский)

@@ -153,7 +153,7 @@ namespace ProjectServerW {
 					continue;
 				}
 
-				// Пакет лога (Type 0x01): доставка на форму в потоке UI, после телеметрии (чтобы lastPendingTelemetryRow уже был установлен).
+				// Пакет лога (Type 0x01): доставка на форму в потоке UI; строка для лога берётся из очереди rowsPendingLog (1:1 с телеметрией).
 				if (item->itemType == 1) {
 					if (String::IsNullOrEmpty(item->formGuid)) {
 						GlobalLogger::LogMessage("Warning: Log packet (itemType=1): formGuid empty, log dropped");

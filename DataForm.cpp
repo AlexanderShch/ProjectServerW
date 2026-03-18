@@ -20,15 +20,12 @@ std::map<std::wstring, gcroot<DataForm^>> formData_Map; // глобальная 
 #pragma pack(push, 1)
 typedef struct   // Формат пакета (как на STM32)
 {
-    uint8_t DataType;           // тип пакета телеметрии (0x00 или служебный)
-    uint8_t Len;                // длина полезной нагрузки (байты после Len и до CRC), не включая CRC
     uint16_t Time;				// время в секундах с включения
     uint8_t SensorQuantity;		// количество датчиков
     uint8_t SensorType[SQ];		// тип датчика
     uint8_t Active[SQ];			// маска активных
     short T[SQ];				// температура 1 группы (испаритель)
     short H[SQ];				// влажность 2 группы (относительная)
-    uint16_t CRC_SUM;			// контрольная сумма
 } MSGQUEUE_OBJ_t;
 #pragma pack(pop)
 
@@ -36,7 +33,9 @@ typedef struct   // Формат пакета (как на STM32)
 // затем текущая фаза + группа 3 — переменные алгоритма (совпадает с ControlLogPayload_t на контроллере).
 #pragma pack(push, 1)
 typedef struct {
-    float T_filt_C[7];           // 0..6: отфильтрованные T датчиков (см. индексы Sensor_array на контроллере)
+    uint8_t DataType;			// Байт типа передаваемых данных (0x01 для лога)
+    uint8_t Len;               // Длина полезной части после Len и до CRC (в байтах)
+    float T_filt_C[6];           /* 0..5: отфильтрованные T датчиков */
     uint8_t phase;
     float eT_common, heatScale01;
     float uCommon_TEN, trim_TEN, uLeft_TEN, uRight_TEN;
@@ -44,6 +43,7 @@ typedef struct {
     float w_sup_avg, wErr, injDuty;
     float rate_Cps;
     float fishHot_C, fishCold_C;
+    uint16_t CRC_SUM;			// Контрольное значение
 } ControlLogPayload_t;
 
 /* Ответ GET_DEFROST_GROUP(groupId=5): структура совпадает с DefrostLogPhasePayload_t на контроллере. */
@@ -84,10 +84,11 @@ void ProjectServerW::DataForm::ParseBuffer(const char* buffer, size_t size) {
 
     MSGQUEUE_OBJ_t data;
 
-    if (size < sizeof(data)) {
+    // buffer содержит: [Type][Cmd][Status][DataLen][Data...][CRC16]
+    if (size < 4 + sizeof(data) + 2) {
         return; // недостаточно байт для пакета
     }
-    memcpy(&data, buffer, sizeof(data));
+    memcpy(&data, buffer + 4, sizeof(data));
 }
 
 System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e)
@@ -494,10 +495,19 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     DateTime now = DateTime::Now;   // Текущее время сервера
     String^ data_String{};
 
-    if (size < sizeof(data)) {
+    // На вход приходит фрейм от контроллера (без AA55):
+    // [Type][Cmd][Status][DataLen][Data...][CRC16]
+    // Сам массив Data (MSGQUEUE_OBJ_t) начинается с offset=4.
+    if (size < 4 + sizeof(data) + 2) {
         return; // недостаточно байт для пакета
     }
-    memcpy(&data, buffer, sizeof(data));
+    const uint8_t* raw = reinterpret_cast<const uint8_t*>(buffer);
+    const uint8_t dataLenByte = raw[3];
+    if (dataLenByte != sizeof(data)) {
+        // DataLen должен совпадать с размером MSGQUEUE_OBJ_t на сервере.
+        return;
+    }
+    memcpy(&data, raw + 4, sizeof(data));
 
     data_String = bufferToHex(buffer, size);
     // Выводим содержимое пакета data_String в поле Label_Data
@@ -630,37 +640,10 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
             buttonSTARTstate_TRUE();
     }
 
-    // Колонки T_filt_0…T_filt_6 и лога параметров (группа 3): заполняются только из пакета лога при активном _Wrk (AppendControlLogToDataRow).
-    for (int i = 0; i < 7; i++)
-        row[String::Format("T_filt_{0}", i)] = System::DBNull::Value;
-    row["phase"] = System::DBNull::Value;
-    row["eT_common"] = System::DBNull::Value;
-    row["heatScale01"] = System::DBNull::Value;
-    row["uCommon_TEN"] = System::DBNull::Value;
-    row["trim_TEN"] = System::DBNull::Value;
-    row["uLeft_TEN"] = System::DBNull::Value;
-    row["uRight_TEN"] = System::DBNull::Value;
-    row["leftTen1Duty"] = System::DBNull::Value;
-    row["leftTen2Duty"] = System::DBNull::Value;
-    row["rightTen1Duty"] = System::DBNull::Value;
-    row["rightTen2Duty"] = System::DBNull::Value;
-    row["w_sup_avg"] = System::DBNull::Value;
-    row["wErr"] = System::DBNull::Value;
-    row["injDuty"] = System::DBNull::Value;
-    row["rate_Cps"] = System::DBNull::Value;
-    row["fishHot_C"] = System::DBNull::Value;
-    row["fishCold_C"] = System::DBNull::Value;
-
-    // Всегда сохраняем последнюю телеметрию, чтобы при приходе лога (AppendControlLogToDataRow)
-    // была строка с данными для дополнения параметрами алгоритма.
-    lastPendingTelemetryRow = row;
-
-    // В таблицу добавляем строку только при активном _Wrk; T_filt_0…T_filt_6 и phase заполняются только из пакета лога (AppendControlLogToDataRow).
-    // Экспорт в Excel (dataTable->Copy()) выгружает таблицу полностью — все колонки и все строки.
-    if (wrkBit) {
-        table->Rows->Add(row);
-        dataExportedToExcel = false;
-    }
+    // Строка готова с телеметрией; ждём пакет лога (AppendControlLogToDataRow).
+    // Добавление в таблицу выполняется после прихода лога и только при _Wrk == 1 (см. AppendControlLogToDataRow).
+    pendingRow = row;
+    pendingRowWrkBit = wrkBit;
 }
 
 
@@ -955,31 +938,27 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
 // телеметрии параметрами лога и добавляет эту строку в таблицу (только при приходе лога, авто-режим).
 void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte>^ packet, int size) {
     const int expectedPayloadSize = (int)sizeof(ControlLogPayload_t);
-    const int minPacketSize = 2 + expectedPayloadSize + 2;
+    // Входной массив содержит: [Type][Cmd][Status][DataLen][Data...][CRC16]
+    const int minPacketSize = 4 + expectedPayloadSize + 2;
     if (packet == nullptr || size < minPacketSize) {
         GlobalLogger::LogMessage(String::Format(
             "Warning: AppendControlLogToDataRow: packet null or size {0} < {1}", size, minPacketSize));
         return;
     }
-    const int lenByte = (int)packet[1];
-    if (lenByte != expectedPayloadSize) {
+    const int dataLenByte = (int)packet[3];
+    if (dataLenByte != expectedPayloadSize) {
         GlobalLogger::LogMessage(String::Format(
-            "Warning: AppendControlLogToDataRow: Len byte {0} != sizeof(ControlLogPayload_t)={1}, packet dropped", lenByte, expectedPayloadSize));
+            "Warning: AppendControlLogToDataRow: DataLen byte {0} != sizeof(ControlLogPayload_t)={1}, packet dropped", dataLenByte, expectedPayloadSize));
         return;
     }
     pin_ptr<System::Byte> pinned = &packet[0];
     const uint8_t* raw = reinterpret_cast<const uint8_t*>(pinned);
     ControlLogPayload_t pl;
-    memcpy(&pl, raw + 2, sizeof(ControlLogPayload_t));
+    memcpy(&pl, raw + 4, sizeof(ControlLogPayload_t));
     lastFishCold_C = pl.fishCold_C;
     lastFishCold_C_Valid = true;
 
-    // Автоматический режим сервер определяет по биту _Wrk в телеметрии, а не по приходу лога.
-
-    // Лог параметров имеет смысл только в автоматическом режиме (бит _Wrk=1).
-    if (!controllerAutoModeActive) {
-        return;
-    }
+    // Дополняем накопленную строку телеметрии (pendingRow) параметрами лога; при _Wrk=1 добавляем строку в таблицу.
 
     System::Threading::Monitor::Enter(dataTableSync);
     try {
@@ -987,59 +966,58 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
             GlobalLogger::LogMessage("Warning: AppendControlLogToDataRow: dataTable == nullptr");
             return;
         }
-        DataRow^ rowToAdd = nullptr;
-        bool rowAlreadyInTable = false;
-        if (lastPendingTelemetryRow != nullptr) {
-            // Строка телеметрии уже добавлена в таблицу в момент прихода кадра с _Wrk=1.
-            rowToAdd = lastPendingTelemetryRow;
-            lastPendingTelemetryRow = nullptr;
-            rowAlreadyInTable = true;
-        } else {
-            // На всякий случай: если лог пришёл без свежей телеметрии, создаём новую строку.
-            rowToAdd = dataTable->NewRow();
-            for (int c = 0; c < dataTable->Columns->Count; c++) {
-                rowToAdd[c] = System::DBNull::Value;
-            }
-        }
-        // Отфильтрованные температуры датчиков (°C)
-        rowToAdd["T_filt_0"] = pl.T_filt_C[0];
-        rowToAdd["T_filt_1"] = pl.T_filt_C[1];
-        rowToAdd["T_filt_2"] = pl.T_filt_C[2];
-        rowToAdd["T_filt_3"] = pl.T_filt_C[3];
-        rowToAdd["T_filt_4"] = pl.T_filt_C[4];
-        rowToAdd["T_filt_5"] = pl.T_filt_C[5];
-        rowToAdd["T_filt_6"] = pl.T_filt_C[6];
+        DataRow^ rowToUpdate = pendingRow;
+        const bool shouldAddToTable = pendingRowWrkBit;
+        pendingRow = nullptr;
+        pendingRowWrkBit = false;
 
-        rowToAdd["phase"] = (int)pl.phase;
-        rowToAdd["eT_common"] = pl.eT_common;
-        rowToAdd["heatScale01"] = pl.heatScale01;
-        rowToAdd["uCommon_TEN"] = pl.uCommon_TEN;
-        rowToAdd["trim_TEN"] = pl.trim_TEN;
-        rowToAdd["uLeft_TEN"] = pl.uLeft_TEN;
-        rowToAdd["uRight_TEN"] = pl.uRight_TEN;
-        rowToAdd["leftTen1Duty"] = pl.leftTen1Duty;
-        rowToAdd["leftTen2Duty"] = pl.leftTen2Duty;
-        rowToAdd["rightTen1Duty"] = pl.rightTen1Duty;
-        rowToAdd["rightTen2Duty"] = pl.rightTen2Duty;
-        rowToAdd["w_sup_avg"] = pl.w_sup_avg;
-        rowToAdd["wErr"] = pl.wErr;
-        rowToAdd["injDuty"] = pl.injDuty;
-        rowToAdd["rate_Cps"] = pl.rate_Cps;
-        rowToAdd["fishHot_C"] = pl.fishHot_C;
-        rowToAdd["fishCold_C"] = pl.fishCold_C;
-        if (dataGridView != nullptr && !dataGridView->IsDisposed) {
-            dataGridView->SuspendLayout();
-        }
-        try {
-            if (!rowAlreadyInTable) {
-                dataTable->Rows->Add(rowToAdd);
+        if (rowToUpdate == nullptr) {
+            // Лог пришёл без телеметрии: создаём строку только с логом.
+            rowToUpdate = dataTable->NewRow();
+            for (int c = 0; c < dataTable->Columns->Count; c++) {
+                rowToUpdate[c] = System::DBNull::Value;
             }
-            dataExportedToExcel = false;
-            // Состояние кнопок ПУСК/СТОП задаётся по биту _Wrk в телеметрии, не по логу.
         }
-        finally {
+        // Заполняем параметрами из лога
+        rowToUpdate["T_filt_0"] = pl.T_filt_C[0];
+        rowToUpdate["T_filt_1"] = pl.T_filt_C[1];
+        rowToUpdate["T_filt_2"] = pl.T_filt_C[2];
+        rowToUpdate["T_filt_3"] = pl.T_filt_C[3];
+        rowToUpdate["T_filt_4"] = pl.T_filt_C[4];
+        rowToUpdate["T_filt_5"] = pl.T_filt_C[5];
+        // На контроллере T_filt_C[0..5]; T_filt_6 в UI оставляем пустым.
+        rowToUpdate["T_filt_6"] = System::DBNull::Value;
+
+        rowToUpdate["phase"] = (int)pl.phase;
+        rowToUpdate["eT_common"] = pl.eT_common;
+        rowToUpdate["heatScale01"] = pl.heatScale01;
+        rowToUpdate["uCommon_TEN"] = pl.uCommon_TEN;
+        rowToUpdate["trim_TEN"] = pl.trim_TEN;
+        rowToUpdate["uLeft_TEN"] = pl.uLeft_TEN;
+        rowToUpdate["uRight_TEN"] = pl.uRight_TEN;
+        rowToUpdate["leftTen1Duty"] = pl.leftTen1Duty;
+        rowToUpdate["leftTen2Duty"] = pl.leftTen2Duty;
+        rowToUpdate["rightTen1Duty"] = pl.rightTen1Duty;
+        rowToUpdate["rightTen2Duty"] = pl.rightTen2Duty;
+        rowToUpdate["w_sup_avg"] = pl.w_sup_avg;
+        rowToUpdate["wErr"] = pl.wErr;
+        rowToUpdate["injDuty"] = pl.injDuty;
+        rowToUpdate["rate_Cps"] = pl.rate_Cps;
+        rowToUpdate["fishHot_C"] = pl.fishHot_C;
+        rowToUpdate["fishCold_C"] = pl.fishCold_C;
+
+        if (shouldAddToTable) {
             if (dataGridView != nullptr && !dataGridView->IsDisposed) {
-                dataGridView->ResumeLayout(false);
+                dataGridView->SuspendLayout();
+            }
+            try {
+                dataTable->Rows->Add(rowToUpdate);
+                dataExportedToExcel = false;
+            }
+            finally {
+                if (dataGridView != nullptr && !dataGridView->IsDisposed) {
+                    dataGridView->ResumeLayout(false);
+                }
             }
         }
     }
