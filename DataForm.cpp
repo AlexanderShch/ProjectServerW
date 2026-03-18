@@ -33,9 +33,7 @@ typedef struct   // Формат пакета (как на STM32)
 // затем текущая фаза + группа 3 — переменные алгоритма (совпадает с ControlLogPayload_t на контроллере).
 #pragma pack(push, 1)
 typedef struct {
-    uint8_t DataType;			// Байт типа передаваемых данных (0x01 для лога)
-    uint8_t Len;               // Длина полезной части после Len и до CRC (в байтах)
-    float T_filt_C[6];           /* 0..5: отфильтрованные T датчиков */
+    float T_filt_C[6];
     uint8_t phase;
     float eT_common, heatScale01;
     float uCommon_TEN, trim_TEN, uLeft_TEN, uRight_TEN;
@@ -43,7 +41,6 @@ typedef struct {
     float w_sup_avg, wErr, injDuty;
     float rate_Cps;
     float fishHot_C, fishCold_C;
-    uint16_t CRC_SUM;			// Контрольное значение
 } ControlLogPayload_t;
 
 /* Ответ GET_DEFROST_GROUP(groupId=5): структура совпадает с DefrostLogPhasePayload_t на контроллере. */
@@ -654,7 +651,7 @@ void DataForm::DelayedGarbageCollection(Object^ state) {
     try {
         // Пауза перед сборкой мусора
         //MessageBox::Show("Ошибка Excel не удалось запуститься!");
-        GlobalLogger::LogMessage("Ошибка Excel не удалось запуститься!");
+        GlobalLogger::LogMessage("Information: delayed garbage collection started");
         Thread::Sleep(500);
 
         // Сборка мусора и ожидание финализаторов
