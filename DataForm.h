@@ -79,6 +79,8 @@ namespace ProjectServerW {
 			// Вызывается при переподключении клиента (reuse формы по IP).
 			// Важно: запускать только в UI-потоке формы (через BeginInvoke), т.к. внутри есть UI и синхронное ожидание ответа.
 			void OnReconnectSendStartupCommands();
+			// Запуск отложенной инициализации после реконнекта (public wrapper for SServer).
+			void ScheduleDeferredStartupOnReconnect();
 
 			property SOCKET ClientSocket {
 				SOCKET get() { return clientSocket; }

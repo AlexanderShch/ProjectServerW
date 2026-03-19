@@ -749,9 +749,9 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
         const bool isCmdInfoRequest = (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_CMD_INFO);
         const bool isGetVersion = (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_VERSION);
 
-        // Первая команда после подключения (GET_VERSION) и зонд GET_CMD_INFO — увеличенный таймаут:
-        const int defaultTimeoutMs = 2000;
-        const int totalTimeoutMs = (isGetVersion || isCmdInfoRequest) ? 6000 : defaultTimeoutMs;
+        // Таймаут ожидания ответа на команду.
+        const int defaultTimeoutMs = 100;
+        const int totalTimeoutMs = defaultTimeoutMs;
         DateTime deadline = DateTime::Now.AddMilliseconds(totalTimeoutMs);
         while (true) {
             TimeSpan remaining = deadline.Subtract(DateTime::Now);

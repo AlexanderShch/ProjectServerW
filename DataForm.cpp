@@ -792,6 +792,10 @@ void ProjectServerW::DataForm::OnReconnectSendStartupCommands() {
     }
 }
 
+void ProjectServerW::DataForm::ScheduleDeferredStartupOnReconnect() {
+    SchedulePostResetInit();
+}
+
 void ProjectServerW::DataForm::SchedulePostResetInit() {
     if (this == nullptr || this->IsDisposed || this->Disposing) {
         return;

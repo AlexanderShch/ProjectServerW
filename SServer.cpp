@@ -1,4 +1,4 @@
-﻿#include "SServer.h" // Включает DataForm.h внутри себя
+#include "SServer.h" // Включает DataForm.h внутри себя
 #include "PacketQueueProcessor.h"
 #include "Commands.h" // MAX_COMMAND_SIZE is used for framed payload length heuristics.
 #include <fstream>
@@ -278,8 +278,11 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 			df->ClientSocket = clientSocket;
 
 			if (isReconnect && df->IsHandleCreated) {
-				// Важно: команды отправляем из UI-потока формы (они синхронно ждут ответ и обновляют UI).
-				df->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(df, &DataForm::OnReconnectSendStartupCommands));
+				// На реконнекте запускаем стартовые команды через отложенный механизм после установки нового сокета.
+				GlobalLogger::LogMessage(String::Format(
+					"Information: Reconnect deferred startup scheduled for {0}",
+					clientIPAddress));
+				df->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(df, &DataForm::ScheduleDeferredStartupOnReconnect));
 			}
 		}
 	}
