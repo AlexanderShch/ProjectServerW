@@ -29,7 +29,7 @@ typedef struct   // Формат пакета (как на STM32)
 } MSGQUEUE_OBJ_t;
 #pragma pack(pop)
 
-// Пакет лога алгоритма (Type 0x01): сначала отфильтрованные температуры всех датчиков (°C),
+// Пакет лога алгоритма (Type 0x01): сначала отфильтрованные температуры 6 датчиков 0..5 (°C),
 // затем текущая фаза + группа 3 — переменные алгоритма (совпадает с ControlLogPayload_t на контроллере).
 #pragma pack(push, 1)
 typedef struct {
@@ -42,6 +42,7 @@ typedef struct {
     float rate_Cps;
     float fishHot_C, fishCold_C;
 } ControlLogPayload_t;
+static_assert(sizeof(ControlLogPayload_t) == 89, "ControlLogPayload_t size must be 89 bytes");
 
 /* Ответ GET_DEFROST_GROUP(groupId=5): структура совпадает с DefrostLogPhasePayload_t на контроллере. */
 namespace { constexpr int DEFROST_PHASE_COUNT_SERVER = 3; }
