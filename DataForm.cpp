@@ -462,7 +462,6 @@ void ProjectServerW::DataForm::InitializeDataTable() {
     dataTable->Columns->Add("T_filt_3", float::typeid);
     dataTable->Columns->Add("T_filt_4", float::typeid);
     dataTable->Columns->Add("T_filt_5", float::typeid);
-    dataTable->Columns->Add("T_filt_6", float::typeid);
 
     dataTable->Columns->Add("phase", int::typeid);
     dataTable->Columns->Add("eT_common", float::typeid);
@@ -482,6 +481,14 @@ void ProjectServerW::DataForm::InitializeDataTable() {
     dataTable->Columns->Add("fishHot_C", float::typeid);
     dataTable->Columns->Add("fishCold_C", float::typeid);
 
+    // Fix: на некоторых сборках/сценариях Designer может держать "хвост" колонок (например T_filt_6),
+    // даже если DataTable содержит только T_filt_0..T_filt_5. Очищаем и заставляем AutoGenerateColumns
+    // пересоздать колонки строго по схеме DataTable.
+    if (dataGridView != nullptr) {
+        dataGridView->AutoGenerateColumns = true;
+        dataGridView->Columns->Clear();
+        dataGridView->DataSource = nullptr;
+    }
     dataGridView->DataSource = dataTable;
     GlobalLogger::LogMessage(gcnew String(L"Information: \u041F\u043E\u043B\u0443\u0447\u0435\u043D\u044B \u043D\u043E\u0432\u044B\u0435 \u0434\u0430\u043D\u043D\u044B\u0435"));
 }
@@ -987,8 +994,6 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
         rowToUpdate["T_filt_3"] = pl.T_filt_C[3];
         rowToUpdate["T_filt_4"] = pl.T_filt_C[4];
         rowToUpdate["T_filt_5"] = pl.T_filt_C[5];
-        // На контроллере T_filt_C[0..5]; T_filt_6 в UI оставляем пустым.
-        rowToUpdate["T_filt_6"] = System::DBNull::Value;
 
         rowToUpdate["phase"] = (int)pl.phase;
         rowToUpdate["eT_common"] = pl.eT_common;

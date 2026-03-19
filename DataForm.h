@@ -68,7 +68,12 @@ namespace ProjectServerW {
 			// Previous tab for tabControl1 (used when leaving tabPage3 to ask save)
 			System::Windows::Forms::TabPage^ tabControl1PrevTab;
 			bool dataGridView1Dirty;  // true if dataGridView1 was edited and not saved
-			bool dataGridView2Dirty;
+	private: System::Windows::Forms::Label^ label7;
+	private: System::Windows::Forms::Label^ label6;
+	private: System::Windows::Forms::Label^ label5;
+	private: System::Windows::Forms::Label^ label4;
+	private: System::Windows::Forms::Label^ label3;
+		   bool dataGridView2Dirty;
 		
 		public:
 			property System::String^ FormGuid {
@@ -452,6 +457,11 @@ private: System::ComponentModel::IContainer^ components;
 				this->Finish = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
 				this->timerAutoStart = (gcnew System::Windows::Forms::Timer(this->components));
 				this->timerAutoRestart = (gcnew System::Windows::Forms::Timer(this->components));
+				this->label3 = (gcnew System::Windows::Forms::Label());
+				this->label4 = (gcnew System::Windows::Forms::Label());
+				this->label5 = (gcnew System::Windows::Forms::Label());
+				this->label6 = (gcnew System::Windows::Forms::Label());
+				this->label7 = (gcnew System::Windows::Forms::Label());
 				this->menuStrip1->SuspendLayout();
 				this->tabControl1->SuspendLayout();
 				this->tabPage1->SuspendLayout();
@@ -507,6 +517,11 @@ private: System::ComponentModel::IContainer^ components;
 				// tabPage1
 				// 
 				this->tabPage1->AutoScroll = true;
+				this->tabPage1->Controls->Add(this->label7);
+				this->tabPage1->Controls->Add(this->label6);
+				this->tabPage1->Controls->Add(this->label5);
+				this->tabPage1->Controls->Add(this->label4);
+				this->tabPage1->Controls->Add(this->label3);
 				this->tabPage1->Controls->Add(this->T_product_right);
 				this->tabPage1->Controls->Add(this->T_product_left);
 				this->tabPage1->Controls->Add(this->LabelProduct);
@@ -528,7 +543,7 @@ private: System::ComponentModel::IContainer^ components;
 				// T_product_right
 				// 
 				this->T_product_right->AutoSize = true;
-				this->T_product_right->Location = System::Drawing::Point(858, 17);
+				this->T_product_right->Location = System::Drawing::Point(938, 18);
 				this->T_product_right->Name = L"T_product_right";
 				this->T_product_right->Size = System::Drawing::Size(23, 20);
 				this->T_product_right->TabIndex = 13;
@@ -538,7 +553,7 @@ private: System::ComponentModel::IContainer^ components;
 				// T_product_left
 				// 
 				this->T_product_left->AutoSize = true;
-				this->T_product_left->Location = System::Drawing::Point(787, 17);
+				this->T_product_left->Location = System::Drawing::Point(845, 18);
 				this->T_product_left->Name = L"T_product_left";
 				this->T_product_left->Size = System::Drawing::Size(23, 20);
 				this->T_product_left->TabIndex = 13;
@@ -548,7 +563,7 @@ private: System::ComponentModel::IContainer^ components;
 				// LabelProduct
 				// 
 				this->LabelProduct->AutoSize = true;
-				this->LabelProduct->Location = System::Drawing::Point(667, 17);
+				this->LabelProduct->Location = System::Drawing::Point(694, 18);
 				this->LabelProduct->Name = L"LabelProduct";
 				this->LabelProduct->Size = System::Drawing::Size(93, 20);
 				this->LabelProduct->TabIndex = 12;
@@ -557,7 +572,7 @@ private: System::ComponentModel::IContainer^ components;
 				// T_def_right
 				// 
 				this->T_def_right->AutoSize = true;
-				this->T_def_right->Location = System::Drawing::Point(551, 17);
+				this->T_def_right->Location = System::Drawing::Point(591, 17);
 				this->T_def_right->Name = L"T_def_right";
 				this->T_def_right->Size = System::Drawing::Size(23, 20);
 				this->T_def_right->TabIndex = 11;
@@ -567,7 +582,7 @@ private: System::ComponentModel::IContainer^ components;
 				// T_def_center
 				// 
 				this->T_def_center->AutoSize = true;
-				this->T_def_center->Location = System::Drawing::Point(469, 17);
+				this->T_def_center->Location = System::Drawing::Point(496, 18);
 				this->T_def_center->Name = L"T_def_center";
 				this->T_def_center->Size = System::Drawing::Size(23, 20);
 				this->T_def_center->TabIndex = 10;
@@ -577,7 +592,7 @@ private: System::ComponentModel::IContainer^ components;
 				// T_def_left
 				// 
 				this->T_def_left->AutoSize = true;
-				this->T_def_left->Location = System::Drawing::Point(389, 17);
+				this->T_def_left->Location = System::Drawing::Point(424, 18);
 				this->T_def_left->Name = L"T_def_left";
 				this->T_def_left->Size = System::Drawing::Size(23, 20);
 				this->T_def_left->TabIndex = 9;
@@ -1018,6 +1033,51 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				this->timerAutoRestart->Interval = 30000;
 				this->timerAutoRestart->Tick += gcnew System::EventHandler(this, &DataForm::timerAutoRestart_Tick);
+				// 
+				// label3
+				// 
+				this->label3->AutoSize = true;
+				this->label3->Location = System::Drawing::Point(375, 18);
+				this->label3->Name = L"label3";
+				this->label3->Size = System::Drawing::Size(43, 20);
+				this->label3->TabIndex = 14;
+				this->label3->Text = L"Лев:";
+				// 
+				// label4
+				// 
+				this->label4->AutoSize = true;
+				this->label4->Location = System::Drawing::Point(465, 18);
+				this->label4->Name = L"label4";
+				this->label4->Size = System::Drawing::Size(25, 20);
+				this->label4->TabIndex = 15;
+				this->label4->Text = L"Ц:";
+				// 
+				// label5
+				// 
+				this->label5->AutoSize = true;
+				this->label5->Location = System::Drawing::Point(542, 17);
+				this->label5->Name = L"label5";
+				this->label5->Size = System::Drawing::Size(43, 20);
+				this->label5->TabIndex = 16;
+				this->label5->Text = L"Прв:";
+				// 
+				// label6
+				// 
+				this->label6->AutoSize = true;
+				this->label6->Location = System::Drawing::Point(796, 18);
+				this->label6->Name = L"label6";
+				this->label6->Size = System::Drawing::Size(43, 20);
+				this->label6->TabIndex = 17;
+				this->label6->Text = L"Лев:";
+				// 
+				// label7
+				// 
+				this->label7->AutoSize = true;
+				this->label7->Location = System::Drawing::Point(889, 17);
+				this->label7->Name = L"label7";
+				this->label7->Size = System::Drawing::Size(43, 20);
+				this->label7->TabIndex = 18;
+				this->label7->Text = L"Прв:";
 				// 
 				// DataForm
 				// 
