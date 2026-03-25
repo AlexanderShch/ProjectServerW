@@ -101,6 +101,7 @@ const char* GetCommandName(const Command& cmd) {
         case 0x06: return "GET_DEFROST_PARAM";
         case 0x07: return "GET_DEFROST_GROUP";
         case 0x08: return "SEND_STATE";
+        case 0x09: return "GET_ALARM_FLAGS";
         default: return "REQUEST_UNKNOWN";
         }
     }
@@ -186,6 +187,14 @@ bool ParseDefrostParamResponse(const CommandResponse& response, uint8_t* outGrou
         return true;
     }
     return false;
+}
+
+bool ParseAlarmFlagsResponse(const CommandResponse& response, AlarmFlagsPayload* outFlags) {
+    if (outFlags == nullptr) return false;
+    if (response.dataLength != 4) return false;
+    memcpy(&outFlags->deviceAlarmFlags, &response.data[0], sizeof(uint16_t));
+    memcpy(&outFlags->sensorAlarmFlags, &response.data[2], sizeof(uint16_t));
+    return true;
 }
 
 // ============================

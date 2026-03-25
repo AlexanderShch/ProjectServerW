@@ -403,6 +403,69 @@ bool ProjectServerW::DataForm::GetDefrostGroup(uint8_t groupId, uint8_t page, ui
     return true;
 }
 
+bool ProjectServerW::DataForm::GetAlarmFlags(AlarmFlagsPayload* outFlags) {
+    if (clientSocket == INVALID_SOCKET || outFlags == nullptr) return false;
+    Command cmd = CreateRequestCommandGetAlarmFlags();
+    CommandResponse response;
+    if (!SendCommandAndWaitResponse(cmd, response, "GET_ALARM_FLAGS") || response.status != CmdStatus::OK) return false;
+    return ParseAlarmFlagsResponse(response, outFlags);
+}
+
+void ProjectServerW::DataForm::EnsureEquipmentAlarmGridColumns() {
+    if (dataGridEquipmentAlarm == nullptr || dataGridEquipmentAlarm->IsDisposed) return;
+    if (dataGridEquipmentAlarm->Columns->Count > 0) return;
+
+    dataGridEquipmentAlarm->Columns->Add("EquipmentName", "Оборудование");
+    dataGridEquipmentAlarm->Columns->Add("AlarmDescription", "Описание аварии");
+    dataGridEquipmentAlarm->AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode::Fill;
+    dataGridEquipmentAlarm->AllowUserToAddRows = false;
+    dataGridEquipmentAlarm->ReadOnly = true;
+}
+
+void ProjectServerW::DataForm::PopulateEquipmentAlarmGrid(uint16_t deviceFlags, uint16_t sensorFlags) {
+    if (dataGridEquipmentAlarm == nullptr || dataGridEquipmentAlarm->IsDisposed) return;
+    EnsureEquipmentAlarmGridColumns();
+    dataGridEquipmentAlarm->Rows->Clear();
+
+    // Биты 0..8: контролируемые устройства в Device_AlarmFlags.
+    cli::array<String^>^ deviceNames = gcnew cli::array<String^> {
+        "Вентилятор левый 1", "Вентилятор левый 2",
+        "Вентилятор правый 1", "Вентилятор правый 2",
+        "ТЭН левый 1", "ТЭН левый 2",
+        "ТЭН правый 1", "ТЭН правый 2",
+        "Вытяжной вентилятор"
+    };
+    for (int bit = 0; bit < deviceNames->Length; bit++) {
+        if ((deviceFlags & (1u << bit)) != 0) {
+            dataGridEquipmentAlarm->Rows->Add(
+                deviceNames[bit],
+                "Нет подтверждения включения (рассогласование выход/вход).");
+        }
+    }
+
+    // Биты 0..6: аварии температурных каналов и IO-модуля в Sensor_AlarmFlags.
+    cli::array<String^>^ sensorNames = gcnew cli::array<String^> {
+        "Датчик T дефрост левый",
+        "Датчик T дефрост правый",
+        "Датчик T дефрост центр",
+        "Датчик T продукт левый",
+        "Датчик T продукт правый",
+        "Датчик T корпус",
+        "Модуль ввода-вывода"
+    };
+    for (int bit = 0; bit < sensorNames->Length; bit++) {
+        if ((sensorFlags & (1u << bit)) != 0) {
+            dataGridEquipmentAlarm->Rows->Add(
+                sensorNames[bit],
+                "Зафиксирована авария датчика (избыточные выбросы/помехи).");
+        }
+    }
+
+    if (dataGridEquipmentAlarm->Rows->Count == 0) {
+        dataGridEquipmentAlarm->Rows->Add("Нет активных аварий", "-");
+    }
+}
+
 bool ProjectServerW::DataForm::SetDefrostGroup(uint8_t groupId, const uint8_t* payload, uint8_t payloadLen) {
     if (clientSocket == INVALID_SOCKET || payload == nullptr) return false;
     Command cmd = CreateConfigCommandSetDefrostGroup(groupId, payload, payloadLen);
@@ -609,6 +672,22 @@ void ProjectServerW::DataForm::ProcessResponse(const CommandResponse& response) 
                         message += "\nВерсия прошивки: " + version;
                         break;
                     }
+                    case CmdRequest::GET_ALARM_FLAGS: {
+                        AlarmFlagsPayload flags{};
+                        if (ParseAlarmFlagsResponse(response, &flags)) {
+                            PopulateEquipmentAlarmGrid(flags.deviceAlarmFlags, flags.sensorAlarmFlags);
+                            message += String::Format(
+                                "\nАварийные регистры:"
+                                "\n  Устройства: 0x{0:X4}"
+                                "\n  Датчики: 0x{1:X4}",
+                                flags.deviceAlarmFlags,
+                                flags.sensorAlarmFlags);
+                        }
+                        else {
+                            message += "\nGET_ALARM_FLAGS: некорректная длина ответа";
+                        }
+                        break;
+                    }
                     }
                 }
             }
@@ -750,8 +829,11 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
         const bool isGetVersion = (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_VERSION);
 
         // Таймаут ожидания ответа на команду.
+        // Для GET_DEFROST_GROUP нужен больший таймаут из-за объёма ответа.
         const int defaultTimeoutMs = 100;
-        const int totalTimeoutMs = defaultTimeoutMs;
+        const bool isGetDefrostGroup =
+            (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_DEFROST_GROUP);
+        const int totalTimeoutMs = isGetDefrostGroup ? 1000 : defaultTimeoutMs;
         DateTime deadline = DateTime::Now.AddMilliseconds(totalTimeoutMs);
         while (true) {
             TimeSpan remaining = deadline.Subtract(DateTime::Now);

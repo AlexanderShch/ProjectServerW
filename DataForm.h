@@ -74,7 +74,12 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::Label^ label4;
 	private: System::Windows::Forms::Label^ label3;
 		   bool dataGridView2Dirty;
-			// True only after both tables (group5->table1 and group6->table2) are loaded from controller.
+	private: System::Windows::Forms::TabPage^ tabPage4;
+	private: System::Windows::Forms::DataGridView^ dataGridEquipmentAlarm;
+	private: System::Windows::Forms::Button^ buttonCheckAlarm;
+
+
+		   // True only after both tables (group5->table1 and group6->table2) are loaded from controller.
 			bool paramsLoadedFromDevice;
 		
 		public:
@@ -170,6 +175,7 @@ namespace ProjectServerW {
 	DateTime lastControlLogTime;     // Время последней телеметрии с _Wrk=1; сброс флага при отсутствии такой телеметрии
 	float lastFishCold_C;            // Последняя мин. Т рыбы из лога параметров (для записи в лог при остановке алгоритма)
 	bool lastFishCold_C_Valid;       // true: lastFishCold_C получен из лога
+	bool lastTelemetryAlrmBit;       // Предыдущее значение бита Alrm из телеметрии (для детекта перехода 0->1)
 	System::Windows::Forms::Timer^ controlLogAbsenceTimer; // Таймер: при отсутствии телеметрии с _Wrk=1 сбрасывает controllerAutoModeActive
 	System::Windows::Forms::Timer^ sendStateTimer;        // Таймер команды «Отправить состояние» по интервалу измерений
 	bool autoRestartInternalUncheck; // Why: one-shot UX unchecks the box; we must not cancel the pending START.
@@ -302,6 +308,7 @@ namespace ProjectServerW {
 		controllerAutoModeActive = false;
 		lastControlLogTime = DateTime::MinValue;
 		lastFishCold_C_Valid = false;
+	lastTelemetryAlrmBit = false;
 		controlLogAbsenceTimer = nullptr;
 		autoRestartInternalUncheck = false;
 	settingsLoading = false;
@@ -462,6 +469,9 @@ private: System::ComponentModel::IContainer^ components;
 				this->WarmUP = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
 				this->Plateau = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
 				this->Finish = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
+				this->tabPage4 = (gcnew System::Windows::Forms::TabPage());
+				this->buttonCheckAlarm = (gcnew System::Windows::Forms::Button());
+				this->dataGridEquipmentAlarm = (gcnew System::Windows::Forms::DataGridView());
 				this->timerAutoStart = (gcnew System::Windows::Forms::Timer(this->components));
 				this->timerAutoRestart = (gcnew System::Windows::Forms::Timer(this->components));
 				this->menuStrip1->SuspendLayout();
@@ -473,6 +483,8 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage3->SuspendLayout();
 				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView2))->BeginInit();
 				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView1))->BeginInit();
+				this->tabPage4->SuspendLayout();
+				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridEquipmentAlarm))->BeginInit();
 				this->SuspendLayout();
 				// 
 				// menuStrip1
@@ -509,6 +521,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabControl1->Controls->Add(this->tabPage1);
 				this->tabControl1->Controls->Add(this->tabPage2);
 				this->tabControl1->Controls->Add(this->tabPage3);
+				this->tabControl1->Controls->Add(this->tabPage4);
 				this->tabControl1->Location = System::Drawing::Point(0, 36);
 				this->tabControl1->Name = L"tabControl1";
 				this->tabControl1->SelectedIndex = 0;
@@ -545,7 +558,7 @@ private: System::ComponentModel::IContainer^ components;
 				// label7
 				// 
 				this->label7->AutoSize = true;
-				this->label7->Location = System::Drawing::Point(889, 17);
+				this->label7->Location = System::Drawing::Point(1052, 17);
 				this->label7->Name = L"label7";
 				this->label7->Size = System::Drawing::Size(43, 20);
 				this->label7->TabIndex = 18;
@@ -554,7 +567,7 @@ private: System::ComponentModel::IContainer^ components;
 				// label6
 				// 
 				this->label6->AutoSize = true;
-				this->label6->Location = System::Drawing::Point(796, 18);
+				this->label6->Location = System::Drawing::Point(924, 17);
 				this->label6->Name = L"label6";
 				this->label6->Size = System::Drawing::Size(43, 20);
 				this->label6->TabIndex = 17;
@@ -563,7 +576,7 @@ private: System::ComponentModel::IContainer^ components;
 				// label5
 				// 
 				this->label5->AutoSize = true;
-				this->label5->Location = System::Drawing::Point(542, 17);
+				this->label5->Location = System::Drawing::Point(649, 17);
 				this->label5->Name = L"label5";
 				this->label5->Size = System::Drawing::Size(43, 20);
 				this->label5->TabIndex = 16;
@@ -572,7 +585,7 @@ private: System::ComponentModel::IContainer^ components;
 				// label4
 				// 
 				this->label4->AutoSize = true;
-				this->label4->Location = System::Drawing::Point(465, 18);
+				this->label4->Location = System::Drawing::Point(527, 17);
 				this->label4->Name = L"label4";
 				this->label4->Size = System::Drawing::Size(25, 20);
 				this->label4->TabIndex = 15;
@@ -581,7 +594,7 @@ private: System::ComponentModel::IContainer^ components;
 				// label3
 				// 
 				this->label3->AutoSize = true;
-				this->label3->Location = System::Drawing::Point(375, 18);
+				this->label3->Location = System::Drawing::Point(391, 17);
 				this->label3->Name = L"label3";
 				this->label3->Size = System::Drawing::Size(43, 20);
 				this->label3->TabIndex = 14;
@@ -590,7 +603,7 @@ private: System::ComponentModel::IContainer^ components;
 				// T_product_right
 				// 
 				this->T_product_right->AutoSize = true;
-				this->T_product_right->Location = System::Drawing::Point(938, 18);
+				this->T_product_right->Location = System::Drawing::Point(1101, 17);
 				this->T_product_right->Name = L"T_product_right";
 				this->T_product_right->Size = System::Drawing::Size(23, 20);
 				this->T_product_right->TabIndex = 13;
@@ -600,7 +613,7 @@ private: System::ComponentModel::IContainer^ components;
 				// T_product_left
 				// 
 				this->T_product_left->AutoSize = true;
-				this->T_product_left->Location = System::Drawing::Point(845, 18);
+				this->T_product_left->Location = System::Drawing::Point(973, 17);
 				this->T_product_left->Name = L"T_product_left";
 				this->T_product_left->Size = System::Drawing::Size(23, 20);
 				this->T_product_left->TabIndex = 13;
@@ -610,16 +623,18 @@ private: System::ComponentModel::IContainer^ components;
 				// LabelProduct
 				// 
 				this->LabelProduct->AutoSize = true;
-				this->LabelProduct->Location = System::Drawing::Point(694, 18);
+				this->LabelProduct->Font = (gcnew System::Drawing::Font(L"Microsoft Sans Serif", 8, System::Drawing::FontStyle::Bold, System::Drawing::GraphicsUnit::Point,
+					static_cast<System::Byte>(204)));
+				this->LabelProduct->Location = System::Drawing::Point(799, 17);
 				this->LabelProduct->Name = L"LabelProduct";
-				this->LabelProduct->Size = System::Drawing::Size(93, 20);
+				this->LabelProduct->Size = System::Drawing::Size(103, 20);
 				this->LabelProduct->TabIndex = 12;
 				this->LabelProduct->Text = L"Т продукта";
 				// 
 				// T_def_right
 				// 
 				this->T_def_right->AutoSize = true;
-				this->T_def_right->Location = System::Drawing::Point(591, 17);
+				this->T_def_right->Location = System::Drawing::Point(698, 17);
 				this->T_def_right->Name = L"T_def_right";
 				this->T_def_right->Size = System::Drawing::Size(23, 20);
 				this->T_def_right->TabIndex = 11;
@@ -629,7 +644,7 @@ private: System::ComponentModel::IContainer^ components;
 				// T_def_center
 				// 
 				this->T_def_center->AutoSize = true;
-				this->T_def_center->Location = System::Drawing::Point(496, 18);
+				this->T_def_center->Location = System::Drawing::Point(558, 17);
 				this->T_def_center->Name = L"T_def_center";
 				this->T_def_center->Size = System::Drawing::Size(23, 20);
 				this->T_def_center->TabIndex = 10;
@@ -639,7 +654,7 @@ private: System::ComponentModel::IContainer^ components;
 				// T_def_left
 				// 
 				this->T_def_left->AutoSize = true;
-				this->T_def_left->Location = System::Drawing::Point(424, 18);
+				this->T_def_left->Location = System::Drawing::Point(440, 17);
 				this->T_def_left->Name = L"T_def_left";
 				this->T_def_left->Size = System::Drawing::Size(23, 20);
 				this->T_def_left->TabIndex = 9;
@@ -649,9 +664,11 @@ private: System::ComponentModel::IContainer^ components;
 				// LabelDefroster
 				// 
 				this->LabelDefroster->AutoSize = true;
-				this->LabelDefroster->Location = System::Drawing::Point(248, 17);
+				this->LabelDefroster->Font = (gcnew System::Drawing::Font(L"Microsoft Sans Serif", 8, System::Drawing::FontStyle::Bold, System::Drawing::GraphicsUnit::Point,
+					static_cast<System::Byte>(204)));
+				this->LabelDefroster->Location = System::Drawing::Point(254, 17);
 				this->LabelDefroster->Name = L"LabelDefroster";
-				this->LabelDefroster->Size = System::Drawing::Size(119, 20);
+				this->LabelDefroster->Size = System::Drawing::Size(131, 20);
 				this->LabelDefroster->TabIndex = 8;
 				this->LabelDefroster->Text = L"Т дефростера";
 				// 
@@ -1071,6 +1088,37 @@ private: System::ComponentModel::IContainer^ components;
 				this->Finish->MinimumWidth = 50;
 				this->Finish->Name = L"Finish";
 				// 
+				// tabPage4
+				// 
+				this->tabPage4->Controls->Add(this->buttonCheckAlarm);
+				this->tabPage4->Controls->Add(this->dataGridEquipmentAlarm);
+				this->tabPage4->Location = System::Drawing::Point(4, 29);
+				this->tabPage4->Name = L"tabPage4";
+				this->tabPage4->Size = System::Drawing::Size(1486, 494);
+				this->tabPage4->TabIndex = 3;
+				this->tabPage4->Text = L"АВАРИЯ";
+				this->tabPage4->UseVisualStyleBackColor = true;
+				// 
+				// buttonCheckAlarm
+				// 
+				this->buttonCheckAlarm->Location = System::Drawing::Point(38, 18);
+				this->buttonCheckAlarm->Name = L"buttonCheckAlarm";
+				this->buttonCheckAlarm->Size = System::Drawing::Size(114, 36);
+				this->buttonCheckAlarm->TabIndex = 1;
+				this->buttonCheckAlarm->Text = L"Обновить";
+				this->buttonCheckAlarm->UseVisualStyleBackColor = true;
+				this->buttonCheckAlarm->Click += gcnew System::EventHandler(this, &DataForm::buttonCheckAlarm_Click);
+				// 
+				// dataGridEquipmentAlarm
+				// 
+				this->dataGridEquipmentAlarm->ColumnHeadersHeightSizeMode = System::Windows::Forms::DataGridViewColumnHeadersHeightSizeMode::AutoSize;
+				this->dataGridEquipmentAlarm->Location = System::Drawing::Point(34, 69);
+				this->dataGridEquipmentAlarm->Name = L"dataGridEquipmentAlarm";
+				this->dataGridEquipmentAlarm->RowHeadersWidth = 24;
+				this->dataGridEquipmentAlarm->RowTemplate->Height = 16;
+				this->dataGridEquipmentAlarm->Size = System::Drawing::Size(1132, 388);
+				this->dataGridEquipmentAlarm->TabIndex = 0;
+				// 
 				// timerAutoStart
 				// 
 				this->timerAutoStart->Interval = 30000;
@@ -1107,6 +1155,8 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage3->PerformLayout();
 				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView2))->EndInit();
 				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView1))->EndInit();
+				this->tabPage4->ResumeLayout(false);
+				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridEquipmentAlarm))->EndInit();
 				this->ResumeLayout(false);
 				this->PerformLayout();
 
@@ -1203,8 +1253,12 @@ private: System::ComponentModel::IContainer^ components;
 		bool SetDefrostParam(uint8_t groupId, uint8_t paramId, const ::DefrostParamValue& value);
 		bool GetDefrostParam(uint8_t groupId, uint8_t paramId, ::DefrostParamValue* outValue);
 		bool GetDefrostGroup(uint8_t groupId, uint8_t page, uint8_t* outData, uint8_t outCapacity, uint8_t* outLength);
+		bool GetAlarmFlags(::AlarmFlagsPayload* outFlags); // Запросить регистры аварий устройств и датчиков
 		/** Отправить группу параметров (payload как в GET_DEFROST_GROUP). groupId 5 или 6. */
 		bool SetDefrostGroup(uint8_t groupId, const uint8_t* payload, uint8_t payloadLen);
+		void EnsureEquipmentAlarmGridColumns();
+		void PopulateEquipmentAlarmGrid(uint16_t deviceFlags, uint16_t sensorFlags);
+		void RefreshAlarmFlagsFromController();
 		void UpdateVersionLabelInternal(); // Вспомогательный метод для обновления label_Version из UI потока
 		
 		// Методы для обработки ответов от контроллера
@@ -1312,6 +1366,7 @@ private: System::Void button_CMDINFO_Click(System::Object^ sender, System::Event
 	private: System::Void dataGridView1_RowChanged(System::Object^ sender, System::Windows::Forms::DataGridViewRowEventArgs^ e);
 	private: System::Void dataGridView2_CellValueChanged(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e);
 	private: System::Void dataGridView2_RowChanged(System::Object^ sender, System::Windows::Forms::DataGridViewRowEventArgs^ e);
+	private: System::Void buttonCheckAlarm_Click(System::Object^ sender, System::EventArgs^ e);
 	void LoadDataGridView1Defaults();
 	void LoadDataGridView1FromFile();
 	void SaveDataGridView1ToFile();
@@ -1322,6 +1377,7 @@ private: System::Void button_CMDINFO_Click(System::Object^ sender, System::Event
 	void LoadParamsFromExcelFile(System::String^ filePath);
 	System::Data::DataTable^ BuildPhaseParamsDataTableForExcel();
 	System::Data::DataTable^ BuildGlobalParamsDataTableForExcel();
+	System::Data::DataTable^ BuildEquipmentAlarmDataTableForExcel();
 	/** Заполнить dataGridView1 из payload ответа GET_DEFROST_GROUP(groupId=5). Параметры по фазам (WarmUP, Plateau, Finish). */
 	void FillDataGridView1FromGroup5Payload(const uint8_t* payload, uint8_t payloadLen);
 	/** Заполнить dataGridView2 из payload ответа GET_DEFROST_GROUP(groupId=6). Общие параметры. */

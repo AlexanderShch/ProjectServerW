@@ -474,6 +474,72 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 				}
 				catch (...) {}
 			}
+
+			// Лист «АВАРИЯ»: список аварийных устройств/датчиков на момент завершения цикла.
+			try {
+				if (job->equipmentAlarms != nullptr && job->equipmentAlarms->Rows->Count > 0) {
+					Microsoft::Office::Interop::Excel::Workbook^ wb = safe_cast<Microsoft::Office::Interop::Excel::Workbook^>(ws->Parent);
+					System::Object^ missing = System::Type::Missing;
+
+					Microsoft::Office::Interop::Excel::Worksheet^ alarmSheet = nullptr;
+					try {
+						alarmSheet = safe_cast<Microsoft::Office::Interop::Excel::Worksheet^>(
+							wb->Worksheets->Item["АВАРИЯ"]);
+					}
+					catch (...) {
+						alarmSheet = nullptr;
+					}
+					if (alarmSheet == nullptr) {
+						alarmSheet = safe_cast<Microsoft::Office::Interop::Excel::Worksheet^>(
+							wb->Worksheets->Add(missing, ws, 1, Microsoft::Office::Interop::Excel::XlSheetType::xlWorksheet));
+						alarmSheet->Name = "АВАРИЯ";
+					}
+					else {
+						try {
+							Microsoft::Office::Interop::Excel::Range^ used = alarmSheet->UsedRange;
+							used->Clear();
+							Marshal::ReleaseComObject(used);
+						}
+						catch (...) {}
+					}
+
+					int colCountA = job->equipmentAlarms->Columns->Count;
+					int rowCountA = job->equipmentAlarms->Rows->Count;
+
+					cli::array<System::Object^>^ headerA = gcnew cli::array<System::Object^>(colCountA);
+					for (int c = 0; c < colCountA; c++) {
+						headerA[c] = job->equipmentAlarms->Columns[c]->ColumnName;
+					}
+					Microsoft::Office::Interop::Excel::Range^ headerRangeA =
+						alarmSheet->Range[alarmSheet->Cells[1, 1], alarmSheet->Cells[1, colCountA]];
+					headerRangeA->Value2 = headerA;
+					Marshal::ReleaseComObject(headerRangeA);
+
+					cli::array<System::Object^, 2>^ dataA = gcnew cli::array<System::Object^, 2>(rowCountA, colCountA);
+					for (int r = 0; r < rowCountA; r++) {
+						System::Data::DataRow^ dr = job->equipmentAlarms->Rows[r];
+						for (int c = 0; c < colCountA; c++) {
+							dataA[r, c] = dr[c];
+						}
+					}
+					Microsoft::Office::Interop::Excel::Range^ startA =
+						safe_cast<Microsoft::Office::Interop::Excel::Range^>(alarmSheet->Cells[2, 1]);
+					Microsoft::Office::Interop::Excel::Range^ endA =
+						safe_cast<Microsoft::Office::Interop::Excel::Range^>(alarmSheet->Cells[1 + rowCountA, colCountA]);
+					Microsoft::Office::Interop::Excel::Range^ dataRangeA = alarmSheet->Range[startA, endA];
+					dataRangeA->Value2 = dataA;
+					Marshal::ReleaseComObject(startA);
+					Marshal::ReleaseComObject(endA);
+					Marshal::ReleaseComObject(dataRangeA);
+					Marshal::ReleaseComObject(alarmSheet);
+				}
+			}
+			catch (Exception^ ex) {
+				try {
+					GlobalLogger::LogMessage("Warning: Excel sheet 'АВАРИЯ' failed: " + ex->Message);
+				}
+				catch (...) {}
+			}
 		}
 		finally {
 			try {

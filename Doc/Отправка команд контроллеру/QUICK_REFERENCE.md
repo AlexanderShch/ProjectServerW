@@ -72,7 +72,7 @@ Command cmd = CreateConfigCommandInt(CmdConfig::SET_INTERVAL, 1000);
 ### Команды запроса (REQUEST)
 
 ```cpp
-// GET_VERSION, GET_DATA, GET_CMD_INFO
+// GET_VERSION, GET_DATA, GET_CMD_INFO, GET_ALARM_FLAGS
 Command cmd = CreateRequestCommand(CmdRequest::GET_CMD_INFO);
 ```
 
@@ -123,6 +123,30 @@ if (response.dataLength >= 1) {
     uint8_t mode = response.data[0];
     // 0 = Автоматический, 1 = Ручной
 }
+```
+
+### Запрос аварийных регистров (4 байта)
+
+```cpp
+// Для CmdRequest::GET_ALARM_FLAGS ожидается ровно 4 байта:
+// [0..1] Device_AlarmFlags (uint16, little-endian)
+// [2..3] Sensor_AlarmFlags (uint16, little-endian)
+if (response.dataLength == 4) {
+    uint16_t deviceFlags = 0;
+    uint16_t sensorFlags = 0;
+    memcpy(&deviceFlags, &response.data[0], sizeof(uint16_t));
+    memcpy(&sensorFlags, &response.data[2], sizeof(uint16_t));
+}
+```
+
+### Group 6 (GET_DEFROST_GROUP): новый параметр автостопа
+
+```cpp
+// После fishColdTarget_C в DefrostLogGlobalPayload_t добавлен uint8:
+// debugDisableTargetTStop
+//
+// 0 -> автостоп по fishColdTarget_C включён
+// 1 -> автостоп отключён (debug)
 ```
 
 ---

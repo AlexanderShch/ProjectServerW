@@ -73,8 +73,12 @@ typedef struct {
     uint16_t airOnlyPhasePlateau_s;
     uint16_t maxRuntime_s;
     float fishColdTarget_C;          /* целевая мин. Т рыбы °C; при достижении — автоостанов алгоритма */
+    uint8_t debugDisableTargetTStop; /* 1 = отладка: отключить автостоп по целевой Т, 0 = автостоп включен */
+    uint8_t debugDisableDeviceSwitchCheck; /* 1 = отладка: отключить проверку соответствия входов/выходов, 0 = проверка включена */
     uint8_t sensorUseInDefrost[DEFROST_MAX_SENSOR_COUNT_SERVER];
 } DefrostLogGlobalPayload_t;
+static_assert(sizeof(DefrostLogGlobalPayload_t) + 2 <= (MAX_COMMAND_SIZE - 6),
+    "GET_DEFROST_GROUP(group6): response payload+header exceeds CommandResponse::data capacity");
 #pragma pack(pop)
 
 // Совпадает с форматом пакета в типе MSGQUEUE_OBJ_t на STM32
@@ -177,11 +181,29 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency) {
             snapshot->Rows->RemoveAt(snapshot->Rows->Count - 1);
         }
 
+        // Перед выгрузкой в Excel обновляем аварийные флаги с контроллера (если соединение доступно).
+        // Это гарантирует, что лист «АВАРИЯ» содержит актуальное состояние на момент завершения цикла.
+        try {
+            if (ClientSocket != INVALID_SOCKET) {
+                AlarmFlagsPayload flags{};
+                if (GetAlarmFlags(&flags)) {
+                    PopulateEquipmentAlarmGrid(flags.deviceAlarmFlags, flags.sensorAlarmFlags);
+                }
+                else {
+                    GlobalLogger::LogMessage("Warning: GET_ALARM_FLAGS failed before Excel export, using current alarm grid snapshot");
+                }
+            }
+        }
+        catch (Exception^ ex) {
+            GlobalLogger::LogMessage("Warning: Failed to refresh alarm flags before Excel export: " + ex->Message);
+        }
+
         ProjectServerW::FormExcel::ExcelExportJob^ job = gcnew ProjectServerW::FormExcel::ExcelExportJob();
         job->tableSnapshot = snapshot;
         // Снимок параметров для листа «Параметры»
         job->paramsPhase = BuildPhaseParamsDataTableForExcel();
         job->paramsGlobal = BuildGlobalParamsDataTableForExcel();
+        job->equipmentAlarms = BuildEquipmentAlarmDataTableForExcel();
         job->saveDirectory = excelSavePath;
         job->sessionStart = dataCollectionStartTime;
         job->sessionEnd = dataCollectionEndTime;
@@ -546,6 +568,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     uint16_t bitField;
     // Первая группа (Heat0..Alrm) — входы DI модуля ввода-вывода. В контроллере: Read_Data_2 → T.
     bitField = data.T[SQ - 1];
+    const bool alrmBit = (bitField & (1u << 15)) != 0;
 
     if (reconnectFixationLogPending) {
         reconnectFixationLogPending = false;
@@ -623,6 +646,10 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         bool bitValue = (bitField & (1 << bit)) != 0;
         row[bitNames[0][bit]] = bitValue;
     }
+    if (!lastTelemetryAlrmBit && alrmBit) {
+        RefreshAlarmFlagsFromController();
+    }
+    lastTelemetryAlrmBit = alrmBit;
     // Вторая группа (_V0.._Stp) — выходы DO модуля ввода-вывода. В контроллере: Read_Data_1 → H.
     bitField = data.H[SQ - 1];
     // Записываем биты второй группы (DO), тот же битовый порядок, что в модуле.
@@ -1219,6 +1246,8 @@ void ProjectServerW::DataForm::LoadDataGridView2Defaults() {
     dataGridView2->Rows->Add("airOnlyPhasePlateau_s", "Air-only: Plateau end time from start (s)", "1800");
     dataGridView2->Rows->Add("maxRuntime_s", "Air-only: Max process duration (s)", "7200");
     dataGridView2->Rows->Add("fishColdTarget_C", "Target min fish temp °C (auto-stop when reached)", "6");
+    dataGridView2->Rows->Add("debugDisableTargetTStop", "Debug: disable auto-stop by fishColdTarget_C (0/1)", "0");
+    dataGridView2->Rows->Add("debugDisableDeviceSwitchCheck", "Debug: disable DO->DI switch check (0/1)", "0");
 }
 
 // Имена параметров группы 5 (LOG_PHASE): порядок полей в DefrostLogPhasePayload_t
@@ -1296,7 +1325,9 @@ static const Group6Row kGroup6Rows[] = {
     {"airOnlyPhaseWarmUp_s", "Air-only: WarmUp phase duration (s)"},
     {"airOnlyPhasePlateau_s", "Air-only: Plateau end time from start (s)"},
     {"maxRuntime_s", "Air-only: Max process duration (s)"},
-    {"fishColdTarget_C", "Target min fish temp °C (auto-stop when reached)"}
+    {"fishColdTarget_C", "Target min fish temp °C (auto-stop when reached)"},
+    {"debugDisableTargetTStop", "Debug: disable auto-stop by fishColdTarget_C (0/1)"},
+    {"debugDisableDeviceSwitchCheck", "Debug: disable DO->DI switch check (0/1)"}
 };
 
 /** Заполнить payload группы 6 из dataGridView2 по имени параметра (Parameter2). */
@@ -1327,6 +1358,8 @@ static bool BuildGlobalPayloadFromGrid2(DataGridView^ grid, DefrostLogGlobalPayl
         if (name->Equals("airOnlyPhasePlateau_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->airOnlyPhasePlateau_s = (uint16_t)(u & 0xFFFF); continue; }
         if (name->Equals("maxRuntime_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->maxRuntime_s = (uint16_t)(u & 0xFFFF); continue; }
         if (name->Equals("fishColdTarget_C", StringComparison::OrdinalIgnoreCase)) { float f; if (Single::TryParse(valueStr, System::Globalization::NumberStyles::Float, inv, f)) outPayload->fishColdTarget_C = f; continue; }
+        if (name->Equals("debugDisableTargetTStop", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->debugDisableTargetTStop = (uint8_t)(u & 0xFF); continue; }
+        if (name->Equals("debugDisableDeviceSwitchCheck", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->debugDisableDeviceSwitchCheck = (uint8_t)(u & 0xFF); continue; }
         for (int i = 0; i <= 5; i++) {
             String^ sensorName = System::String::Format("Sensor{0} use in defrost", i);
             if (name->Equals(sensorName, StringComparison::OrdinalIgnoreCase)) {
@@ -1358,6 +1391,8 @@ void ProjectServerW::DataForm::FillDataGridView2FromGroup6Payload(const uint8_t*
     for (int i = 0; i < 8; i++)
         dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[6 + i].name), gcnew System::String(kGroup6Rows[6 + i].desc), System::Convert::ToString((int)(*u16Fields[i])));
     dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[14].name), gcnew System::String(kGroup6Rows[14].desc), s.fishColdTarget_C.ToString(inv));
+    dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[15].name), gcnew System::String(kGroup6Rows[15].desc), System::Convert::ToString((int)s.debugDisableTargetTStop));
+    dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[16].name), gcnew System::String(kGroup6Rows[16].desc), System::Convert::ToString((int)s.debugDisableDeviceSwitchCheck));
     for (int i = 0; i <= 5; i++) {
         dataGridView2->Rows->Add(
             System::String::Format("Sensor{0} use in defrost", i),
@@ -1502,6 +1537,53 @@ System::Data::DataTable^ ProjectServerW::DataForm::BuildGlobalParamsDataTableFor
     return t;
 }
 
+System::Data::DataTable^ ProjectServerW::DataForm::BuildEquipmentAlarmDataTableForExcel() {
+    System::Data::DataTable^ t = gcnew System::Data::DataTable("EquipmentAlarms");
+    t->Columns->Add("Оборудование", System::String::typeid);
+    t->Columns->Add("Описание аварии", System::String::typeid);
+
+    if (dataGridEquipmentAlarm == nullptr || dataGridEquipmentAlarm->IsDisposed) {
+        return t;
+    }
+
+    for (int r = 0; r < dataGridEquipmentAlarm->Rows->Count; r++) {
+        System::Windows::Forms::DataGridViewRow^ row = dataGridEquipmentAlarm->Rows[r];
+        if (row->IsNewRow) continue;
+
+        String^ equipment = (row->Cells->Count > 0 && row->Cells[0]->Value != nullptr)
+            ? System::Convert::ToString(row->Cells[0]->Value)
+            : "";
+        String^ description = (row->Cells->Count > 1 && row->Cells[1]->Value != nullptr)
+            ? System::Convert::ToString(row->Cells[1]->Value)
+            : "";
+
+        if (String::IsNullOrWhiteSpace(equipment)) continue;
+        if (equipment->Equals("Нет активных аварий")) continue;
+
+        System::Data::DataRow^ dr = t->NewRow();
+        dr[0] = equipment;
+        dr[1] = description;
+        t->Rows->Add(dr);
+    }
+
+    return t;
+}
+
+void ProjectServerW::DataForm::RefreshAlarmFlagsFromController() {
+    try {
+        if (ClientSocket == INVALID_SOCKET) {
+            return;
+        }
+        AlarmFlagsPayload flags{};
+        if (GetAlarmFlags(&flags)) {
+            PopulateEquipmentAlarmGrid(flags.deviceAlarmFlags, flags.sensorAlarmFlags);
+        }
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage("Warning: RefreshAlarmFlagsFromController failed: " + ex->Message);
+    }
+}
+
 // При переходе с вкладки с параметрами (tabPage3) спрашиваем про сохранение.
 // Раньше при входе на tabPage3 таблицы перечитывались из файла, из-за чего значения,
 // загруженные с контроллера по кнопке «Чтение параметров», терялись при переключении вкладок.
@@ -1533,6 +1615,9 @@ System::Void ProjectServerW::DataForm::tabControl1_SelectedIndexChanged(System::
         dataGridView1Dirty = false;
         dataGridView2Dirty = false;
     }
+    if (tc->SelectedTab == tabPage4) {
+        RefreshAlarmFlagsFromController();
+    }
     tabControl1PrevTab = tc->SelectedTab;
 }
 
@@ -1552,6 +1637,10 @@ System::Void ProjectServerW::DataForm::dataGridView2_CellValueChanged(System::Ob
 
 System::Void ProjectServerW::DataForm::dataGridView2_RowChanged(System::Object^ sender, System::Windows::Forms::DataGridViewRowEventArgs^ e) {
     dataGridView2Dirty = true;
+}
+
+System::Void ProjectServerW::DataForm::buttonCheckAlarm_Click(System::Object^ sender, System::EventArgs^ e) {
+    RefreshAlarmFlagsFromController();
 }
 
 // Преобразование имени параметра (колонка Parameter2) в идентификаторы: groupId, paramId, тип значения (1=U8, 2=U16, 3=F32).

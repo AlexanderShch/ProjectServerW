@@ -42,6 +42,7 @@ struct CmdRequest {
     static const uint8_t GET_DEFROST_PARAM = 0x06; // Запросить один параметр дефроста (payload: groupId, paramId)
     static const uint8_t GET_DEFROST_GROUP = 0x07;  // Запросить пачку параметров группы (payload: groupId, page)
     static const uint8_t SEND_STATE = 0x08;       // Отправить состояние (телеметрия + при авторежиме лог)
+    static const uint8_t GET_ALARM_FLAGS = 0x09;  // Запросить регистры аварий: устройства и датчики
 };
 
 // Типы значения параметра дефроста (совместимо с DefrostControl.h)
@@ -62,7 +63,14 @@ struct DefrostParamValue {
     DefrostParamValue() : valueType(0) { value.u8 = 0; }
 };
 
-// Максимальный размер кадра команды/ответа (буфер приёма). Ответ GET_DEFROST_GROUP(5) = 81 байт (5+74+2), (6) = 65 байт.
+// Ответ GET_ALARM_FLAGS: два 16-битных регистра аварий.
+struct AlarmFlagsPayload {
+    uint16_t deviceAlarmFlags;
+    uint16_t sensorAlarmFlags;
+    AlarmFlagsPayload() : deviceAlarmFlags(0), sensorAlarmFlags(0) {}
+};
+
+// Максимальный размер кадра команды/ответа (буфер приёма). Ответ GET_DEFROST_GROUP(5) = 81 байт (5+74+2), (6) = 66 байт.
 const size_t MAX_COMMAND_SIZE = 96;
 
 // Структура команды
@@ -181,6 +189,10 @@ inline Command CreateRequestCommandDefrostGetGroup(uint8_t groupId, uint8_t page
     return cmd;
 }
 
+inline Command CreateRequestCommandGetAlarmFlags() {
+    return CreateRequestCommand(CmdRequest::GET_ALARM_FLAGS);
+}
+
 /** Создать команду «Отправить состояние» (телеметрия + при авторежиме лог). */
 inline Command CreateRequestCommandSendState() {
     return CreateRequestCommand(CmdRequest::SEND_STATE);
@@ -221,6 +233,7 @@ struct CommandResponse {
 
 // Разбор ответа GET_DEFROST_PARAM (объявление после определения CommandResponse)
 bool ParseDefrostParamResponse(const CommandResponse& response, uint8_t* outGroupId, uint8_t* outParamId, DefrostParamValue* outValue);
+bool ParseAlarmFlagsResponse(const CommandResponse& response, AlarmFlagsPayload* outFlags);
 
 // Функция для проверки CRC ответа
 bool ValidateResponseCRC(const uint8_t* buffer, size_t length);

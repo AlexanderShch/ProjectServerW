@@ -11,6 +11,7 @@ namespace ProjectServerW {
 			System::Data::DataTable^ tableSnapshot;
 			System::Data::DataTable^ paramsPhase;
 			System::Data::DataTable^ paramsGlobal;
+			System::Data::DataTable^ equipmentAlarms;
 			System::String^ saveDirectory;
 			System::DateTime sessionStart;
 			System::DateTime sessionEnd;
