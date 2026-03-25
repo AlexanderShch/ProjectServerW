@@ -335,7 +335,7 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 			}
 			// Лист «Параметры по фазам»: таблица 1 (dataGridView1).
 			try {
-				if (job->paramsPhase != nullptr && job->paramsPhase->Rows->Count > 0) {
+				if (job->paramsPhase != nullptr) {
 					Microsoft::Office::Interop::Excel::Workbook^ wb = safe_cast<Microsoft::Office::Interop::Excel::Workbook^>(ws->Parent);
 					System::Object^ missing = System::Type::Missing;
 
@@ -374,24 +374,27 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 					headerRange1->Value2 = header1;
 					Marshal::ReleaseComObject(headerRange1);
 
-					cli::array<System::Object^, 2>^ data1 = gcnew cli::array<System::Object^, 2>(rowCount1, colCount1);
-					for (int r = 0; r < rowCount1; r++) {
-						System::Data::DataRow^ dr = job->paramsPhase->Rows[r];
-						for (int c = 0; c < colCount1; c++) {
-							data1[r, c] = dr[c];
+					if (rowCount1 > 0) {
+						cli::array<System::Object^, 2>^ data1 = gcnew cli::array<System::Object^, 2>(rowCount1, colCount1);
+						for (int r = 0; r < rowCount1; r++) {
+							System::Data::DataRow^ dr = job->paramsPhase->Rows[r];
+							for (int c = 0; c < colCount1; c++) {
+								data1[r, c] = dr[c];
+							}
 						}
+						Microsoft::Office::Interop::Excel::Range^ start1 =
+							safe_cast<Microsoft::Office::Interop::Excel::Range^>(sheet1->Cells[2, 1]);
+						Microsoft::Office::Interop::Excel::Range^ end1 =
+							safe_cast<Microsoft::Office::Interop::Excel::Range^>(sheet1->Cells[1 + rowCount1, colCount1]);
+						Microsoft::Office::Interop::Excel::Range^ dataRange1 = sheet1->Range[start1, end1];
+						dataRange1->Value2 = data1;
+						Marshal::ReleaseComObject(start1);
+						Marshal::ReleaseComObject(end1);
+						Marshal::ReleaseComObject(dataRange1);
 					}
-					Microsoft::Office::Interop::Excel::Range^ start1 =
-						safe_cast<Microsoft::Office::Interop::Excel::Range^>(sheet1->Cells[2, 1]);
-					Microsoft::Office::Interop::Excel::Range^ end1 =
-						safe_cast<Microsoft::Office::Interop::Excel::Range^>(sheet1->Cells[1 + rowCount1, colCount1]);
-					Microsoft::Office::Interop::Excel::Range^ dataRange1 = sheet1->Range[start1, end1];
-					dataRange1->Value2 = data1;
-					Marshal::ReleaseComObject(start1);
-					Marshal::ReleaseComObject(end1);
-					Marshal::ReleaseComObject(dataRange1);
 
 					Marshal::ReleaseComObject(sheet1);
+					
 				}
 			}
 			catch (Exception^ ex) {
@@ -403,7 +406,7 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 
 			// Лист «Параметры общие»: таблица 2 (dataGridView2).
 			try {
-				if (job->paramsGlobal != nullptr && job->paramsGlobal->Rows->Count > 0) {
+				if (job->paramsGlobal != nullptr) {
 					Microsoft::Office::Interop::Excel::Workbook^ wb = safe_cast<Microsoft::Office::Interop::Excel::Workbook^>(ws->Parent);
 					System::Object^ missing = System::Type::Missing;
 
@@ -442,24 +445,27 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 					headerRange2->Value2 = header2;
 					Marshal::ReleaseComObject(headerRange2);
 
-					cli::array<System::Object^, 2>^ data2 = gcnew cli::array<System::Object^, 2>(rowCount2, colCount2);
-					for (int r = 0; r < rowCount2; r++) {
-						System::Data::DataRow^ dr = job->paramsGlobal->Rows[r];
-						for (int c = 0; c < colCount2; c++) {
-							data2[r, c] = dr[c];
+					if (rowCount2 > 0) {
+						cli::array<System::Object^, 2>^ data2 = gcnew cli::array<System::Object^, 2>(rowCount2, colCount2);
+						for (int r = 0; r < rowCount2; r++) {
+							System::Data::DataRow^ dr = job->paramsGlobal->Rows[r];
+							for (int c = 0; c < colCount2; c++) {
+								data2[r, c] = dr[c];
+							}
 						}
+						Microsoft::Office::Interop::Excel::Range^ start2 =
+							safe_cast<Microsoft::Office::Interop::Excel::Range^>(sheet2->Cells[2, 1]);
+						Microsoft::Office::Interop::Excel::Range^ end2 =
+							safe_cast<Microsoft::Office::Interop::Excel::Range^>(sheet2->Cells[1 + rowCount2, colCount2]);
+						Microsoft::Office::Interop::Excel::Range^ dataRange2 = sheet2->Range[start2, end2];
+						dataRange2->Value2 = data2;
+						Marshal::ReleaseComObject(start2);
+						Marshal::ReleaseComObject(end2);
+						Marshal::ReleaseComObject(dataRange2);
 					}
-					Microsoft::Office::Interop::Excel::Range^ start2 =
-						safe_cast<Microsoft::Office::Interop::Excel::Range^>(sheet2->Cells[2, 1]);
-					Microsoft::Office::Interop::Excel::Range^ end2 =
-						safe_cast<Microsoft::Office::Interop::Excel::Range^>(sheet2->Cells[1 + rowCount2, colCount2]);
-					Microsoft::Office::Interop::Excel::Range^ dataRange2 = sheet2->Range[start2, end2];
-					dataRange2->Value2 = data2;
-					Marshal::ReleaseComObject(start2);
-					Marshal::ReleaseComObject(end2);
-					Marshal::ReleaseComObject(dataRange2);
 
 					Marshal::ReleaseComObject(sheet2);
+					
 				}
 			}
 			catch (Exception^ ex) {

@@ -567,7 +567,38 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
             intervalSeconds = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
         }
-        SendSetIntervalCommand(intervalSeconds);
+        const bool okInterval = SendSetIntervalCommand(intervalSeconds);
+        // Сразу после установки периода опроса запрашиваем параметры, если таблицы пустые.
+        // Это нужно, чтобы экспорт в Excel уже содержал актуальные параметры и их можно было загрузить обратно из файла.
+        if (okInterval) {
+            bool grid1Empty = true;
+            bool grid2Empty = true;
+            if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
+                for (int r = 0; r < dataGridView1->Rows->Count; r++) {
+                    if (!dataGridView1->Rows[r]->IsNewRow) { grid1Empty = false; break; }
+                }
+            }
+            if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
+                for (int r = 0; r < dataGridView2->Rows->Count; r++) {
+                    if (!dataGridView2->Rows[r]->IsNewRow) { grid2Empty = false; break; }
+                }
+            }
+            if (grid1Empty || grid2Empty) {
+                try {
+                    if (this->InvokeRequired) {
+                        this->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(
+                            this, &DataForm::AutoReadParametersFromController));
+                    }
+                    else {
+                        // Уже в UI-потоке: выполняем синхронно, чтобы загрузка произошла сразу после SET_INTERVAL.
+                        this->AutoReadParametersFromController();
+                    }
+                }
+                catch (Exception^) {
+                    // Игнорируем ошибки авто-запроса параметров, чтобы не мешать основному обмену.
+                }
+            }
+        }
     }
 
     // Таймаут автоперезапуска: если после STOP прошло 20 минут без экспорта — отменяем ожидание.
@@ -604,16 +635,6 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     const uint16_t doBits = data.H[SQ - 1];
     const bool wrkBit = (doBits & (1u << 14)) != 0;
     const bool wasAuto = controllerAutoModeActive;
-    if (!wasAuto && wrkBit) {
-        // Переход в автоматический режим: автоматически запросить параметры дефростации (группы 5 и 6).
-        try {
-            this->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(
-                this, &DataForm::AutoReadParametersFromController));
-        }
-        catch (Exception^) {
-            // Игнорируем ошибки авто-запроса параметров, чтобы не мешать основному обмену.
-        }
-    }
     if (wasAuto && !wrkBit) {
         // Переход в остановку: пишем в лог дату/время остановки и достигнутую мин. Т рыбы.
         DateTime stopTime = now;
@@ -1232,9 +1253,14 @@ static bool BuildPhasePayloadFromGrid1(DataGridView^ grid, DefrostLogPhasePayloa
 
 void ProjectServerW::DataForm::FillDataGridView1FromGroup5Payload(const uint8_t* payload, uint8_t payloadLen) {
     if (dataGridView1 == nullptr || dataGridView1->IsDisposed || payload == nullptr) return;
-    dataGridView1->Rows->Clear();
     const size_t expectedSize = sizeof(DefrostLogPhasePayload_t);
-    if ((size_t)payloadLen < expectedSize) return;
+    if ((size_t)payloadLen < expectedSize) {
+        GlobalLogger::LogMessage(String::Format(
+            "Warning: Group5 payload too short: got {0}, expected {1}. Keep previous table values.",
+            (int)payloadLen, (int)expectedSize));
+        return;
+    }
+    dataGridView1->Rows->Clear();
     DefrostLogPhasePayload_t s;
     memcpy(&s, payload, expectedSize);
     const float* phaseRows[6] = {
@@ -1314,9 +1340,14 @@ static bool BuildGlobalPayloadFromGrid2(DataGridView^ grid, DefrostLogGlobalPayl
 
 void ProjectServerW::DataForm::FillDataGridView2FromGroup6Payload(const uint8_t* payload, uint8_t payloadLen) {
     if (dataGridView2 == nullptr || dataGridView2->IsDisposed || payload == nullptr) return;
-    dataGridView2->Rows->Clear();
     const size_t expectedSize = sizeof(DefrostLogGlobalPayload_t);
-    if ((size_t)payloadLen < expectedSize) return;
+    if ((size_t)payloadLen < expectedSize) {
+        GlobalLogger::LogMessage(String::Format(
+            "Warning: Group6 payload too short: got {0}, expected {1}. Keep previous table values.",
+            (int)payloadLen, (int)expectedSize));
+        return;
+    }
+    dataGridView2->Rows->Clear();
     DefrostLogGlobalPayload_t s;
     memcpy(&s, payload, expectedSize);
     System::Globalization::CultureInfo^ inv = System::Globalization::CultureInfo::InvariantCulture;
@@ -1364,9 +1395,13 @@ void ProjectServerW::DataForm::LoadDataGridView2FromFile() {
                 }
             }
         }
-        if (dataGridView2->Rows->Count == 0) {
-            LoadDataGridView2Defaults();
+        // Важно: DataGridView обычно содержит placeholder "new row",
+        // поэтому Rows->Count может быть > 0, даже если реальных данных нет.
+        bool hasNonNewRows = false;
+        for (int r = 0; r < dataGridView2->Rows->Count; r++) {
+            if (!dataGridView2->Rows[r]->IsNewRow) { hasNonNewRows = true; break; }
         }
+        if (!hasNonNewRows) LoadDataGridView2Defaults();
     }
     catch (Exception^) {
         LoadDataGridView2Defaults();
@@ -1407,9 +1442,13 @@ void ProjectServerW::DataForm::LoadDataGridView1FromFile() {
                 }
             }
         }
-        if (dataGridView1->Rows->Count == 0) {
-            LoadDataGridView1Defaults();
+        // Важно: DataGridView обычно содержит placeholder "new row",
+        // поэтому Rows->Count может быть > 0, даже если реальных данных нет.
+        bool hasNonNewRows = false;
+        for (int r = 0; r < dataGridView1->Rows->Count; r++) {
+            if (!dataGridView1->Rows[r]->IsNewRow) { hasNonNewRows = true; break; }
         }
+        if (!hasNonNewRows) LoadDataGridView1Defaults();
     }
     catch (Exception^) {
         LoadDataGridView1Defaults();
@@ -1470,30 +1509,8 @@ System::Data::DataTable^ ProjectServerW::DataForm::BuildGlobalParamsDataTableFor
 System::Void ProjectServerW::DataForm::tabControl1_SelectedIndexChanged(System::Object^ sender, System::EventArgs^ e) {
     TabControl^ tc = safe_cast<TabControl^>(sender);
 
-    // При первом входе на вкладку «Параметры» (tabPage3), если таблицы пустые и есть соединение с устройством,
-    // автоматически запросить параметры дефростации с контроллера (аналог кнопки «Считать из дефростера»).
-    if (tc->SelectedTab == tabPage3 && tabControl1PrevTab != tabPage3) {
-        bool grid1Empty = true;
-        bool grid2Empty = true;
-        if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
-            for (int r = 0; r < dataGridView1->Rows->Count; r++) {
-                if (!dataGridView1->Rows[r]->IsNewRow) { grid1Empty = false; break; }
-            }
-        }
-        if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
-            for (int r = 0; r < dataGridView2->Rows->Count; r++) {
-                if (!dataGridView2->Rows[r]->IsNewRow) { grid2Empty = false; break; }
-            }
-        }
-        if ((grid1Empty && grid2Empty) && ClientSocket != INVALID_SOCKET) {
-            try {
-                buttonReadParameters_Click(nullptr, nullptr);
-            }
-            catch (Exception^) {
-                // Автоматическое чтение не должно ронять UI; пользователь всегда может нажать кнопку вручную.
-            }
-        }
-    }
+    // Авточтение параметров по вкладке отключено:
+    // чтение выполняется в общем порядке один раз после установки периода опроса при соединении.
 
     if (tabControl1PrevTab == tabPage3 && tc->SelectedTab != tabPage3) {
         if (dataGridView1Dirty || dataGridView2Dirty) {
@@ -1728,30 +1745,55 @@ System::Void ProjectServerW::DataForm::buttonReadParameters_Click(System::Object
         const uint8_t kPayloadCapacity = 255; // максимум для uint8_t, буфер 256 байт
         uint8_t len = 0;
         bool ok1 = false, ok2 = false;
+        bool loaded1 = false, loaded2 = false;
         // Запросить лог по группе 5 (параметры по фазам) и загрузить в dataGridView1
         if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
             ok1 = GetDefrostGroup(5, 0, buffer, kPayloadCapacity, &len);
-            if (ok1 && len > 0) {
+            if (ok1 && len >= (uint8_t)sizeof(DefrostLogPhasePayload_t)) {
                 FillDataGridView1FromGroup5Payload(buffer, len);
+                loaded1 = true;
+            } else if (ok1) {
+                GlobalLogger::LogMessage(String::Format(
+                    "Warning: Group5 read succeeded but payload too short: {0} bytes (expected >= {1})",
+                    (int)len, (int)sizeof(DefrostLogPhasePayload_t)));
             }
         }
         // Запросить лог по группе 6 (общие параметры) и загрузить в dataGridView2
         if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
             ok2 = GetDefrostGroup(6, 0, buffer, kPayloadCapacity, &len);
-            if (ok2 && len > 0) {
+            if (ok2 && len >= (uint8_t)sizeof(DefrostLogGlobalPayload_t)) {
                 FillDataGridView2FromGroup6Payload(buffer, len);
+                loaded2 = true;
+            } else if (ok2) {
+                GlobalLogger::LogMessage(String::Format(
+                    "Warning: Group6 read succeeded but payload too short: {0} bytes (expected >= {1})",
+                    (int)len, (int)sizeof(DefrostLogGlobalPayload_t)));
             }
         }
         if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
-            if (ok1 || ok2) {
+            if (loaded1 && loaded2) {
                 Label_Commands->Text = "Параметры загружены с устройства (группа 5 → таблица 1, группа 6 → таблица 2)";
                 Label_Commands->ForeColor = System::Drawing::Color::DarkGreen;
-            } else {
+            }
+            else if (loaded1 || loaded2) {
+                Label_Commands->Text = "Часть параметров загружена с устройства (группа 5/6). Проверьте обе таблицы.";
+                Label_Commands->ForeColor = System::Drawing::Color::Orange;
+            }
+            else {
                 Label_Commands->Text = "Не удалось получить параметры с устройства";
                 Label_Commands->ForeColor = System::Drawing::Color::Red;
             }
         }
-        GlobalLogger::LogMessage(String::Format("Information: Read params from defroster: group5={0}, group6={1}", ok1 ? "OK" : "fail", ok2 ? "OK" : "fail"));
+        // Mark that we have successfully loaded both tables from controller.
+        // If only one group loaded, keep paramsLoadedFromDevice=false to allow another auto-read
+        // on the next entry to the "Параметры" tab (if the remaining table is still empty).
+        paramsLoadedFromDevice = (loaded1 && loaded2);
+        GlobalLogger::LogMessage(String::Format(
+            "Information: Read params from defroster: group5 transport={0}, group6 transport={1}, group5 loaded={2}, group6 loaded={3}",
+            ok1 ? "OK" : "fail",
+            ok2 ? "OK" : "fail",
+            loaded1 ? "yes" : "no",
+            loaded2 ? "yes" : "no"));
     }
     catch (Exception^ ex) {
         String^ msg = "Ошибка при считывании параметров: " + (ex->Message != nullptr ? ex->Message : "");

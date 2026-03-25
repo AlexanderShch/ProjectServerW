@@ -74,6 +74,8 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::Label^ label4;
 	private: System::Windows::Forms::Label^ label3;
 		   bool dataGridView2Dirty;
+			// True only after both tables (group5->table1 and group6->table2) are loaded from controller.
+			bool paramsLoadedFromDevice;
 		
 		public:
 			property System::String^ FormGuid {
@@ -247,6 +249,7 @@ namespace ProjectServerW {
 				tabControl1PrevTab = nullptr;
 				dataGridView1Dirty = false;
 				dataGridView2Dirty = false;
+				paramsLoadedFromDevice = false;
 				// Критично: recv()-поток не должен упираться в SemaphoreFullException при Release().
 				responseQueue = gcnew System::Collections::Concurrent::ConcurrentQueue<cli::array<System::Byte>^>();
 				responseAvailable = gcnew System::Threading::Semaphore(0, System::Int32::MaxValue);
@@ -308,9 +311,8 @@ namespace ProjectServerW {
 
 			// Загружаем настройки сразу после инициализации компонентов
 			LoadSettings();
-			// dataGridView1: при открытии формы — из файла, если есть; иначе данные по умолчанию
-			LoadDataGridView1FromFile();
-			LoadDataGridView2FromFile();
+			// dataGridView1/2 для параметров алгоритма заполняются только при чтении с контроллера
+			// (кнопка "Считать" — buttonReadParameters). ExcelSettings.txt для этих таблиц не используется.
 
 			// Состояние кнопок START/STOP устанавливается при первом приёме данных
 
@@ -408,6 +410,11 @@ private: System::ComponentModel::IContainer^ components;
 				this->buttonExcel = (gcnew System::Windows::Forms::Button());
 				this->tabControl1 = (gcnew System::Windows::Forms::TabControl());
 				this->tabPage1 = (gcnew System::Windows::Forms::TabPage());
+				this->label7 = (gcnew System::Windows::Forms::Label());
+				this->label6 = (gcnew System::Windows::Forms::Label());
+				this->label5 = (gcnew System::Windows::Forms::Label());
+				this->label4 = (gcnew System::Windows::Forms::Label());
+				this->label3 = (gcnew System::Windows::Forms::Label());
 				this->T_product_right = (gcnew System::Windows::Forms::Label());
 				this->T_product_left = (gcnew System::Windows::Forms::Label());
 				this->LabelProduct = (gcnew System::Windows::Forms::Label());
@@ -457,11 +464,6 @@ private: System::ComponentModel::IContainer^ components;
 				this->Finish = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
 				this->timerAutoStart = (gcnew System::Windows::Forms::Timer(this->components));
 				this->timerAutoRestart = (gcnew System::Windows::Forms::Timer(this->components));
-				this->label3 = (gcnew System::Windows::Forms::Label());
-				this->label4 = (gcnew System::Windows::Forms::Label());
-				this->label5 = (gcnew System::Windows::Forms::Label());
-				this->label6 = (gcnew System::Windows::Forms::Label());
-				this->label7 = (gcnew System::Windows::Forms::Label());
 				this->menuStrip1->SuspendLayout();
 				this->tabControl1->SuspendLayout();
 				this->tabPage1->SuspendLayout();
@@ -539,6 +541,51 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage1->TabIndex = 0;
 				this->tabPage1->Text = L"Данные";
 				this->tabPage1->UseVisualStyleBackColor = true;
+				// 
+				// label7
+				// 
+				this->label7->AutoSize = true;
+				this->label7->Location = System::Drawing::Point(889, 17);
+				this->label7->Name = L"label7";
+				this->label7->Size = System::Drawing::Size(43, 20);
+				this->label7->TabIndex = 18;
+				this->label7->Text = L"Прв:";
+				// 
+				// label6
+				// 
+				this->label6->AutoSize = true;
+				this->label6->Location = System::Drawing::Point(796, 18);
+				this->label6->Name = L"label6";
+				this->label6->Size = System::Drawing::Size(43, 20);
+				this->label6->TabIndex = 17;
+				this->label6->Text = L"Лев:";
+				// 
+				// label5
+				// 
+				this->label5->AutoSize = true;
+				this->label5->Location = System::Drawing::Point(542, 17);
+				this->label5->Name = L"label5";
+				this->label5->Size = System::Drawing::Size(43, 20);
+				this->label5->TabIndex = 16;
+				this->label5->Text = L"Прв:";
+				// 
+				// label4
+				// 
+				this->label4->AutoSize = true;
+				this->label4->Location = System::Drawing::Point(465, 18);
+				this->label4->Name = L"label4";
+				this->label4->Size = System::Drawing::Size(25, 20);
+				this->label4->TabIndex = 15;
+				this->label4->Text = L"Ц:";
+				// 
+				// label3
+				// 
+				this->label3->AutoSize = true;
+				this->label3->Location = System::Drawing::Point(375, 18);
+				this->label3->Name = L"label3";
+				this->label3->Size = System::Drawing::Size(43, 20);
+				this->label3->TabIndex = 14;
+				this->label3->Text = L"Лев:";
 				// 
 				// T_product_right
 				// 
@@ -923,7 +970,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->buttonWriteParameters->Name = L"buttonWriteParameters";
 				this->buttonWriteParameters->Size = System::Drawing::Size(117, 36);
 				this->buttonWriteParameters->TabIndex = 5;
-				this->buttonWriteParameters->Text = L"Записать параметры";
+				this->buttonWriteParameters->Text = L"Записать";
 				this->buttonWriteParameters->UseVisualStyleBackColor = true;
 				this->buttonWriteParameters->Click += gcnew System::EventHandler(this, &DataForm::buttonWriteParameters_Click);
 				// 
@@ -933,7 +980,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->buttonReadParameters->Name = L"buttonReadParameters";
 				this->buttonReadParameters->Size = System::Drawing::Size(117, 36);
 				this->buttonReadParameters->TabIndex = 4;
-				this->buttonReadParameters->Text = L"Считать параметры";
+				this->buttonReadParameters->Text = L"Считать";
 				this->buttonReadParameters->UseVisualStyleBackColor = true;
 				this->buttonReadParameters->Click += gcnew System::EventHandler(this, &DataForm::buttonReadParameters_Click);
 				// 
@@ -1033,51 +1080,6 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				this->timerAutoRestart->Interval = 30000;
 				this->timerAutoRestart->Tick += gcnew System::EventHandler(this, &DataForm::timerAutoRestart_Tick);
-				// 
-				// label3
-				// 
-				this->label3->AutoSize = true;
-				this->label3->Location = System::Drawing::Point(375, 18);
-				this->label3->Name = L"label3";
-				this->label3->Size = System::Drawing::Size(43, 20);
-				this->label3->TabIndex = 14;
-				this->label3->Text = L"Лев:";
-				// 
-				// label4
-				// 
-				this->label4->AutoSize = true;
-				this->label4->Location = System::Drawing::Point(465, 18);
-				this->label4->Name = L"label4";
-				this->label4->Size = System::Drawing::Size(25, 20);
-				this->label4->TabIndex = 15;
-				this->label4->Text = L"Ц:";
-				// 
-				// label5
-				// 
-				this->label5->AutoSize = true;
-				this->label5->Location = System::Drawing::Point(542, 17);
-				this->label5->Name = L"label5";
-				this->label5->Size = System::Drawing::Size(43, 20);
-				this->label5->TabIndex = 16;
-				this->label5->Text = L"Прв:";
-				// 
-				// label6
-				// 
-				this->label6->AutoSize = true;
-				this->label6->Location = System::Drawing::Point(796, 18);
-				this->label6->Name = L"label6";
-				this->label6->Size = System::Drawing::Size(43, 20);
-				this->label6->TabIndex = 17;
-				this->label6->Text = L"Лев:";
-				// 
-				// label7
-				// 
-				this->label7->AutoSize = true;
-				this->label7->Location = System::Drawing::Point(889, 17);
-				this->label7->Name = L"label7";
-				this->label7->Size = System::Drawing::Size(43, 20);
-				this->label7->TabIndex = 18;
-				this->label7->Text = L"Прв:";
 				// 
 				// DataForm
 				// 
