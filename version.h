@@ -1,9 +1,13 @@
 #pragma once
 
 // Строка версии для отображения
-static const wchar_t* const VERSION_STR = L"2.1.0";
+static const wchar_t* const VERSION_STR = L"2.1.1";
 
 /*
+
+Версия 2.1.1
+- Реализована единая очередь отправки и ожидания ответа на команды
+
 Версия 2.1.0
 - Добавлена команда REQ_CMD_GET_ALARM_FLAGS для получения регистров аварий.
 - Добавлен параметр debugDisableTargetTStop для отключения автостопа по целевой температуре.

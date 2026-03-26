@@ -1,0 +1,77 @@
+﻿26.03.26 18:03:57 : ======================================================================
+26.03.26 18:03:57 : Application starting...
+26.03.26 18:03:57 : ======================================================================
+26.03.26 18:03:57 : Start listenin at port 3487
+26.03.26 18:03:58 : 
+26.03.26 18:03:58 : ================================================================================
+26.03.26 18:03:58 : Information: New thread was created, port 8867
+26.03.26 18:03:58 : Information: Получены новые данные
+26.03.26 18:03:58 : Information: The DataForm has been opened successfully!
+26.03.26 18:03:58 : Information: Reconnect: drop old socket 10.25.99.101
+26.03.26 18:03:58 : Information: Deferred startup scheduled for 10.25.99.101
+26.03.26 18:04:00 : Startup: [1/3] GET_VERSION - start
+26.03.26 18:04:00 : Information: Команда GET_VERSION отправлена клиенту
+26.03.26 18:04:00 : Debug: WaitStart cmd Type=0x03, Code=0x02, timeoutMs=100, queueDepth=0
+26.03.26 18:04:00 : Debug: DequeueResponse len=11, head=[03 02 00 05]
+26.03.26 18:04:00 : Debug: WaitCandidate expected Type=0x03,Code=0x02; got Type=0x03,Code=0x02,Status=0x00,Len=5
+26.03.26 18:04:00 : Debug: WaitMatch cmd Type=0x03, Code=0x02, elapsedMs=73.3
+26.03.26 18:04:00 : [OK] Команда Type=0x03 (REQUEST), Code=0x02 (GET_VERSION) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+Версия прошивки: 2.2.1
+26.03.26 18:04:00 : Information: Версия прошивки контроллера: 2.2.1
+26.03.26 18:04:00 : Startup: [1/3] GET_VERSION - ok
+26.03.26 18:04:00 : Startup: [2/3] SET_INTERVAL(1) - start
+26.03.26 18:04:00 : Information: Команда SET_INTERVAL отправлена клиенту
+26.03.26 18:04:00 : Debug: WaitStart cmd Type=0x02, Code=0x02, timeoutMs=100, queueDepth=0
+26.03.26 18:04:00 : Error: No response received from controller
+26.03.26 18:04:00 : Debug: WaitTimeout cmd Type=0x02, Code=0x02, elapsedMs=104.2, queueDepth=0
+26.03.26 18:04:00 : Startup: [2/3] SET_INTERVAL - failed
+26.03.26 18:04:05 : Startup: [1/3] GET_VERSION - start
+26.03.26 18:04:05 : Information: Команда GET_VERSION отправлена клиенту
+26.03.26 18:04:05 : Debug: WaitStart cmd Type=0x03, Code=0x02, timeoutMs=100, queueDepth=1
+26.03.26 18:04:05 : Debug: DequeueResponse len=6, head=[02 02 00 00]
+26.03.26 18:04:05 : Debug: WaitCandidate expected Type=0x03,Code=0x02; got Type=0x02,Code=0x02,Status=0x00,Len=0
+26.03.26 18:04:05 : Information: Интервал измерений принят контроллером (запоздалый ответ)
+26.03.26 18:04:05 : Debug: DequeueResponse len=11, head=[03 02 00 05]
+26.03.26 18:04:05 : Debug: WaitCandidate expected Type=0x03,Code=0x02; got Type=0x03,Code=0x02,Status=0x00,Len=5
+26.03.26 18:04:05 : Debug: WaitMatch cmd Type=0x03, Code=0x02, elapsedMs=67.2
+26.03.26 18:04:05 : [OK] Команда Type=0x03 (REQUEST), Code=0x02 (GET_VERSION) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+Версия прошивки: 2.2.1
+26.03.26 18:04:05 : Information: Версия прошивки контроллера: 2.2.1
+26.03.26 18:04:05 : Startup: [1/3] GET_VERSION - ok
+26.03.26 18:04:05 : Startup: [2/3] SET_INTERVAL(1) - start
+26.03.26 18:04:05 : Information: Команда SET_INTERVAL отправлена клиенту
+26.03.26 18:04:05 : Debug: WaitStart cmd Type=0x02, Code=0x02, timeoutMs=100, queueDepth=0
+26.03.26 18:04:05 : Error: No response received from controller
+26.03.26 18:04:05 : Debug: WaitTimeout cmd Type=0x02, Code=0x02, elapsedMs=100.5, queueDepth=0
+26.03.26 18:04:05 : Startup: [2/3] SET_INTERVAL - failed
+26.03.26 18:04:10 : Startup: [1/3] GET_VERSION - start
+26.03.26 18:04:10 : Information: Команда GET_VERSION отправлена клиенту
+26.03.26 18:04:10 : Debug: WaitStart cmd Type=0x03, Code=0x02, timeoutMs=100, queueDepth=0
+26.03.26 18:04:10 : Debug: DequeueResponse len=11, head=[03 02 00 05]
+26.03.26 18:04:10 : Debug: WaitCandidate expected Type=0x03,Code=0x02; got Type=0x03,Code=0x02,Status=0x00,Len=5
+26.03.26 18:04:10 : Debug: WaitMatch cmd Type=0x03, Code=0x02, elapsedMs=68.2
+26.03.26 18:04:10 : [OK] Команда Type=0x03 (REQUEST), Code=0x02 (GET_VERSION) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+Версия прошивки: 2.2.1
+26.03.26 18:04:10 : Information: Версия прошивки контроллера: 2.2.1
+26.03.26 18:04:10 : Startup: [1/3] GET_VERSION - ok
+26.03.26 18:04:10 : Startup: [2/3] SET_INTERVAL(1) - start
+26.03.26 18:04:10 : Information: Команда SET_INTERVAL отправлена клиенту
+26.03.26 18:04:10 : Debug: WaitStart cmd Type=0x02, Code=0x02, timeoutMs=100, queueDepth=0
+26.03.26 18:04:10 : Error: No response received from controller
+26.03.26 18:04:10 : Debug: WaitTimeout cmd Type=0x02, Code=0x02, elapsedMs=108.3, queueDepth=0
+26.03.26 18:04:10 : Startup: [2/3] SET_INTERVAL - failed
+26.03.26 18:04:15 : Startup: [1/3] GET_VERSION - start
+26.03.26 18:04:15 : Information: Форма удалена из карты в FormClosed
+26.03.26 18:04:15 : Attention: Recv failed: 10053
+26.03.26 18:04:15 : Error: Ошибка отправки команды GET_VERSION: 10093
+26.03.26 18:04:15 : Error: Failed to send command
+26.03.26 18:04:15 : Error: Команда GET_VERSION не выполнена. Статус: 0x00 (OK)
+26.03.26 18:04:15 : Startup: [1/3] GET_VERSION - failed
+26.03.26 18:04:15 : Information: Waiting for Excel export jobs to complete before shutdown...
+26.03.26 18:04:15 : Information: Excel export jobs completed.
+26.03.26 18:04:15 : ======================================================================
+26.03.26 18:04:15 : Application closing normally...
+26.03.26 18:04:15 : ======================================================================
