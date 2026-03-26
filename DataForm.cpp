@@ -2206,6 +2206,9 @@ void ProjectServerW::DataForm::OnSendStateTimerTick(System::Object^ sender, Syst
             return;
         if (!startupSequenceCompleted)
             return;
+        if (!System::Threading::Monitor::TryEnter(commandPipelineGate))
+            return;
+        try {
         Command cmd = CreateRequestCommandSendState();
         uint8_t buffer[MAX_COMMAND_SIZE];
         size_t commandLength = BuildCommandBuffer(cmd, buffer, sizeof(buffer));
@@ -2228,6 +2231,10 @@ void ProjectServerW::DataForm::OnSendStateTimerTick(System::Object^ sender, Syst
         }
         finally {
             System::Threading::Monitor::Exit(recvGate);
+        }
+        }
+        finally {
+            System::Threading::Monitor::Exit(commandPipelineGate);
         }
     }
     catch (Exception^ ex) {

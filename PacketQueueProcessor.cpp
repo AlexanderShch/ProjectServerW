@@ -351,7 +351,6 @@ namespace ProjectServerW {
 				"Warning: Dropping unparseable response frame (len={0}): {1}",
 				responseBuffer->Length,
 				gcnew String(BytesToHex(buffer, responseBuffer->Length).c_str())));
-			ScheduleCommandInfoProbe("dropped unparseable response frame");
 		}
 		return ok;
 	}

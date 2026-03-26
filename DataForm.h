@@ -129,6 +129,8 @@ namespace ProjectServerW {
 			bool pendingRowWrkBit;  // значение _Wrk из телеметрии для этой строки
 			// Critical: explicit lock object for export state.
 			System::Object^ excelExportSync;
+			// Единый gate конвейера команд: в каждый момент времени только одна команда "send+wait".
+			System::Object^ commandPipelineGate;
 			// Critical: prevents starting multiple Excel export threads per form (they would only stack up on the global mutex).
 			int excelExportInProgress;
 			Thread^ excelThread;				 // Объявим объект для работы с Excel в отдельном потоке
@@ -255,6 +257,7 @@ namespace ProjectServerW {
 				pendingRow = nullptr;
 				pendingRowWrkBit = false;
 				excelExportSync = gcnew System::Object();
+				commandPipelineGate = gcnew System::Object();
 				excelExportInProgress = 0;
 				formGuid = nullptr;
 				tabControl1PrevTab = nullptr;

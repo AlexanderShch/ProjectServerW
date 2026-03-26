@@ -811,95 +811,94 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
     const Command& cmd, CommandResponse& response, System::String^ commandName) {
 
     try {
-        // Отправляем команду
-        bool sendResult;
-        if (commandName != nullptr) {
-            sendResult = SendCommand(cmd, commandName);
-        }
-        else {
-            sendResult = SendCommand(cmd);
-        }
+        System::Collections::Generic::List<cli::array<System::Byte>^>^ deferredResponses =
+            gcnew System::Collections::Generic::List<cli::array<System::Byte>^>();
+        System::Threading::Monitor::Enter(commandPipelineGate);
+        try {
+            // Отправляем команду
+            bool sendResult;
+            if (commandName != nullptr) {
+                sendResult = SendCommand(cmd, commandName);
+            }
+            else {
+                sendResult = SendCommand(cmd);
+            }
 
-        if (!sendResult) {
-            GlobalLogger::LogMessage("Error: Failed to send command");
-            return false;
-        }
-
-        // Ждём нужный ответ и допускаем "чужие" ответы в общей очереди.
-        // Почему: recv()-цикл может поставить в очередь ответы от более ранних команд; отказ по первому несовпадению
-        // ломает авто-сценарии и может ошибочно пометить валидную команду как неуспешную.
-        const bool isCmdInfoRequest = (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_CMD_INFO);
-        const bool isGetVersion = (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_VERSION);
-
-        // Таймаут ожидания ответа на команду.
-        // Для GET_DEFROST_GROUP нужен больший таймаут из-за объёма ответа.
-        const int defaultTimeoutMs = 100;
-        const bool isGetDefrostGroup =
-            (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_DEFROST_GROUP);
-        const int totalTimeoutMs = isGetDefrostGroup ? 1000 : defaultTimeoutMs;
-        DateTime deadline = DateTime::Now.AddMilliseconds(totalTimeoutMs);
-        while (true) {
-            TimeSpan remaining = deadline.Subtract(DateTime::Now);
-            if (remaining.TotalMilliseconds <= 0) {
-                response.commandType = cmd.commandType;
-                response.commandCode = cmd.commandCode;
-                response.status = CmdStatus::TIMEOUT;
-                response.dataLength = 0;
-                GlobalLogger::LogMessage("Error: No response received from controller");
-                if (!isCmdInfoRequest) {
-                    const bool isResetCmd = (cmd.commandType == CmdType::PROG_CONTROL && cmd.commandCode == CmdProgControl::RESET);
-                    if (!isResetCmd) {
-                        ScheduleCommandInfoProbe(String::Format(
-                            "timeout waiting response Type=0x{0:X2}, Code=0x{1:X2}",
-                            cmd.commandType, cmd.commandCode));
-                    }
-                }
+            if (!sendResult) {
+                GlobalLogger::LogMessage("Error: Failed to send command");
                 return false;
             }
 
-            CommandResponse candidate{};
-            cli::array<System::Byte>^ rawCandidate = nullptr;
-            if (!ReceiveResponse(candidate, static_cast<int>(remaining.TotalMilliseconds), rawCandidate)) {
-                continue;
-            }
-
-            if (candidate.commandType != cmd.commandType || candidate.commandCode != cmd.commandCode) {
-                if (ApplyLateStartupResponse(candidate)) {
-                    // Запоздалый ответ GET_VERSION или SET_INTERVAL применён, продолжаем ждать нужный ответ
-                }
-                else {
-                    String^ hex = "";
-                    if (rawCandidate != nullptr && rawCandidate->Length > 0) {
-                        System::Text::StringBuilder^ sb = gcnew System::Text::StringBuilder(rawCandidate->Length * 3);
-                        for (int i = 0; i < rawCandidate->Length; i++) {
-                            if (i != 0) sb->Append(" ");
-                            sb->Append(rawCandidate[i].ToString("X2"));
-                        }
-                        hex = sb->ToString();
+            // Ждём нужный ответ и допускаем "чужие" ответы в общей очереди.
+            // Почему: recv()-цикл может поставить в очередь ответы от более ранних команд; отказ по первому несовпадению
+            // ломает авто-сценарии и может ошибочно пометить валидную команду как неуспешную.
+            // Таймаут ожидания ответа на команду.
+            // Для GET_DEFROST_GROUP нужен больший таймаут из-за объёма ответа.
+            const int defaultTimeoutMs = 100;
+            const bool isGetDefrostGroup =
+                (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_DEFROST_GROUP);
+            const bool isProgControl = (cmd.commandType == CmdType::PROG_CONTROL);
+            const int totalTimeoutMs = isGetDefrostGroup ? 1000 : (isProgControl ? 300 : defaultTimeoutMs);
+            DateTime deadline = DateTime::Now.AddMilliseconds(totalTimeoutMs);
+            while (true) {
+                TimeSpan remaining = deadline.Subtract(DateTime::Now);
+                if (remaining.TotalMilliseconds <= 0) {
+                    for each (cli::array<System::Byte>^ deferred in deferredResponses) {
+                        EnqueueResponse(deferred);
                     }
+                    response.commandType = cmd.commandType;
+                    response.commandCode = cmd.commandCode;
+                    response.status = CmdStatus::TIMEOUT;
+                    response.dataLength = 0;
                     GlobalLogger::LogMessage(String::Format(
-                        "Warning: Discarding unrelated response. Expected Type=0x{0:X2}, Code=0x{1:X2}; Got Type=0x{2:X2}, Code=0x{3:X2}; Raw={4}",
-                        cmd.commandType, cmd.commandCode, candidate.commandType, candidate.commandCode, hex));
-                    if (!isCmdInfoRequest) {
-                        const bool isResetCmd = (cmd.commandType == CmdType::PROG_CONTROL && cmd.commandCode == CmdProgControl::RESET);
-                        if (!isResetCmd) {
-                            ScheduleCommandInfoProbe(String::Format(
-                                "discarded unrelated response while waiting Type=0x{0:X2}, Code=0x{1:X2}",
-                                cmd.commandType, cmd.commandCode));
-                        }
-                    }
+                        "Error: No response received from controller (Type=0x{0:X2}, Code=0x{1:X2}, timeoutMs={2})",
+                        cmd.commandType, cmd.commandCode, totalTimeoutMs));
+                    return false;
                 }
-                continue;
+
+                CommandResponse candidate{};
+                cli::array<System::Byte>^ rawCandidate = nullptr;
+                if (!ReceiveResponse(candidate, static_cast<int>(remaining.TotalMilliseconds), rawCandidate)) {
+                    continue;
+                }
+
+                if (candidate.commandType != cmd.commandType || candidate.commandCode != cmd.commandCode) {
+                    if (ApplyLateStartupResponse(candidate)) {
+                        // Запоздалый ответ GET_VERSION или SET_INTERVAL применён, продолжаем ждать нужный ответ
+                    }
+                    else {
+                        String^ hex = "";
+                        if (rawCandidate != nullptr && rawCandidate->Length > 0) {
+                            System::Text::StringBuilder^ sb = gcnew System::Text::StringBuilder(rawCandidate->Length * 3);
+                            for (int i = 0; i < rawCandidate->Length; i++) {
+                                if (i != 0) sb->Append(" ");
+                                sb->Append(rawCandidate[i].ToString("X2"));
+                            }
+                            hex = sb->ToString();
+                            deferredResponses->Add(rawCandidate);
+                        }
+                        GlobalLogger::LogMessage(String::Format(
+                            "Warning: Deferred unrelated response. Expected Type=0x{0:X2}, Code=0x{1:X2}; Got Type=0x{2:X2}, Code=0x{3:X2}; Raw={4}",
+                            cmd.commandType, cmd.commandCode, candidate.commandType, candidate.commandCode, hex));
+                    }
+                    continue;
+                }
+
+                response = candidate;
+                break;
             }
 
-            response = candidate;
-            break;
+            for each (cli::array<System::Byte>^ deferred in deferredResponses) {
+                EnqueueResponse(deferred);
+            }
+
+            // Обрабатываем полученный ответ
+            ProcessResponse(response);
+            return (response.status == CmdStatus::OK);
         }
-
-        // Обрабатываем полученный ответ
-        ProcessResponse(response);
-
-        return (response.status == CmdStatus::OK);
+        finally {
+            System::Threading::Monitor::Exit(commandPipelineGate);
+        }
 
     }
     catch (Exception^ ex) {
@@ -938,58 +937,73 @@ ProjectServerW::DataForm::CommandAckResult ProjectServerW::DataForm::SendControl
 {
     // Почему: сохраняем поведение протокола (ждём ACK и реагируем), но остаёмся устойчивыми при потере ACK.
     // Проверка состояния в fallback-варианте выполняется по телеметрии Work на более высоком уровне логики.
+    System::Collections::Generic::List<cli::array<System::Byte>^>^ deferredResponses =
+        gcnew System::Collections::Generic::List<cli::array<System::Byte>^>();
     lastResponse.commandType = CmdType::PROG_CONTROL;
     lastResponse.commandCode = controlCode;
     lastResponse.status = CmdStatus::TIMEOUT;
     lastResponse.dataLength = 0;
     bool hadTimeout = false;
 
-    for (int attempt = 0; attempt < retries; attempt++) {
-        Command cmd = CreateControlCommand(controlCode);
-        if (!SendCommand(cmd, commandName)) {
-            return CommandAckResult::SendFailed;
-        }
+    System::Threading::Monitor::Enter(commandPipelineGate);
+    try {
+        for (int attempt = 0; attempt < retries; attempt++) {
+            Command cmd = CreateControlCommand(controlCode);
+            if (!SendCommand(cmd, commandName)) {
+                return CommandAckResult::SendFailed;
+            }
 
-        CommandResponse response{};
-        cli::array<System::Byte>^ rawResponse = nullptr;
-        if (!ReceiveResponse(response, timeoutMs, rawResponse)) {
-            hadTimeout = true;
-            lastResponse.status = CmdStatus::TIMEOUT;
-            continue;
-        }
+            CommandResponse response{};
+            cli::array<System::Byte>^ rawResponse = nullptr;
+            if (!ReceiveResponse(response, timeoutMs, rawResponse)) {
+                hadTimeout = true;
+                lastResponse.status = CmdStatus::TIMEOUT;
+                continue;
+            }
 
         // Часть ответов может относиться к другим командам; здесь повторяем поведение сопоставления как в SendCommandAndWaitResponse.
-        if (response.commandType != cmd.commandType || response.commandCode != cmd.commandCode) {
-            String^ hex = "";
-            if (rawResponse != nullptr && rawResponse->Length > 0) {
-                System::Text::StringBuilder^ sb = gcnew System::Text::StringBuilder(rawResponse->Length * 3);
-                for (int i = 0; i < rawResponse->Length; i++) {
-                    if (i != 0) sb->Append(" ");
-                    sb->Append(rawResponse[i].ToString("X2"));
+            if (response.commandType != cmd.commandType || response.commandCode != cmd.commandCode) {
+                String^ hex = "";
+                if (rawResponse != nullptr && rawResponse->Length > 0) {
+                    System::Text::StringBuilder^ sb = gcnew System::Text::StringBuilder(rawResponse->Length * 3);
+                    for (int i = 0; i < rawResponse->Length; i++) {
+                        if (i != 0) sb->Append(" ");
+                        sb->Append(rawResponse[i].ToString("X2"));
+                    }
+                    hex = sb->ToString();
+                    deferredResponses->Add(rawResponse);
                 }
-                hex = sb->ToString();
+                GlobalLogger::LogMessage(String::Format(
+                    "Warning: Deferred unrelated response in SendControlCommandWithAck. Expected Type=0x{0:X2}, Code=0x{1:X2}; Got Type=0x{2:X2}, Code=0x{3:X2}; Raw={4}",
+                    cmd.commandType, cmd.commandCode, response.commandType, response.commandCode, hex));
+                lastResponse = response;
+                continue;
             }
-            GlobalLogger::LogMessage(String::Format(
-                "Warning: Discarding unrelated response in SendControlCommandWithAck. Expected Type=0x{0:X2}, Code=0x{1:X2}; Got Type=0x{2:X2}, Code=0x{3:X2}; Raw={4}",
-                cmd.commandType, cmd.commandCode, response.commandType, response.commandCode, hex));
-            ScheduleCommandInfoProbe(String::Format(
-                "discarded unrelated response while waiting ACK Type=0x{0:X2}, Code=0x{1:X2}",
-                cmd.commandType, cmd.commandCode));
+
+            for each (cli::array<System::Byte>^ deferred in deferredResponses) {
+                EnqueueResponse(deferred);
+            }
+            deferredResponses->Clear();
+
             lastResponse = response;
-            continue;
+            ProcessResponse(response);
+            return (response.status == CmdStatus::OK) ? CommandAckResult::Ok : CommandAckResult::ErrorResponse;
         }
 
-        lastResponse = response;
-        ProcessResponse(response);
-        return (response.status == CmdStatus::OK) ? CommandAckResult::Ok : CommandAckResult::ErrorResponse;
-    }
+        for each (cli::array<System::Byte>^ deferred in deferredResponses) {
+            EnqueueResponse(deferred);
+        }
 
-    if (hadTimeout) {
-        ScheduleCommandInfoProbe(String::Format(
-            "timeout waiting ACK Type=0x{0:X2}, Code=0x{1:X2}",
-            CmdType::PROG_CONTROL, controlCode));
+        if (hadTimeout) {
+            GlobalLogger::LogMessage(String::Format(
+                "Warning: Control command ACK timeout Type=0x{0:X2}, Code=0x{1:X2}, retries={2}, timeoutMs={3}",
+                CmdType::PROG_CONTROL, controlCode, retries, timeoutMs));
+        }
+        return CommandAckResult::NoResponse;
     }
-    return CommandAckResult::NoResponse;
+    finally {
+        System::Threading::Monitor::Exit(commandPipelineGate);
+    }
 }
 
 System::Void ProjectServerW::DataForm::button_CMDINFO_Click(System::Object^ sender, System::EventArgs^ e) {
