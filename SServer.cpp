@@ -277,10 +277,10 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 			df->ClientIP = clientIPAddress;
 			df->ClientSocket = clientSocket;
 
-			if (isReconnect && df->IsHandleCreated) {
-				// На реконнекте запускаем стартовые команды через отложенный механизм после установки нового сокета.
+			if (df->IsHandleCreated) {
+				// На любом подключении запускаем стартовые команды через отложенный механизм после установки сокета.
 				GlobalLogger::LogMessage(String::Format(
-					"Information: Reconnect deferred startup scheduled for {0}",
+					"Information: Deferred startup scheduled for {0}",
 					clientIPAddress));
 				df->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(df, &DataForm::ScheduleDeferredStartupOnReconnect));
 			}

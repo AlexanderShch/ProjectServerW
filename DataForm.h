@@ -81,6 +81,7 @@ namespace ProjectServerW {
 
 		   // True only after both tables (group5->table1 and group6->table2) are loaded from controller.
 			bool paramsLoadedFromDevice;
+			bool startupSequenceCompleted;
 		
 		public:
 			property System::String^ FormGuid {
@@ -91,6 +92,7 @@ namespace ProjectServerW {
 			// Вызывается при переподключении клиента (reuse формы по IP).
 			// Важно: запускать только в UI-потоке формы (через BeginInvoke), т.к. внутри есть UI и синхронное ожидание ответа.
 			void OnReconnectSendStartupCommands();
+			bool ExecuteStartupCommandSequence();
 			// Запуск отложенной инициализации после реконнекта (public wrapper for SServer).
 			void ScheduleDeferredStartupOnReconnect();
 
@@ -101,6 +103,9 @@ namespace ProjectServerW {
 					// Поэтому здесь нельзя трогать UI (Timer/Close/Invoke). Только фиксируем состояние соединения.
 					const SOCKET prev = clientSocket;
 					clientSocket = value;
+					if (value == INVALID_SOCKET || value != prev) {
+						startupSequenceCompleted = false;
+					}
 
 					// Если сокет потерян — запоминаем момент, от которого считаем 30 минут ожидания "своего" клиента.
 					// Если сокет снова валиден — сбрасываем ожидание.
@@ -256,6 +261,7 @@ namespace ProjectServerW {
 				dataGridView1Dirty = false;
 				dataGridView2Dirty = false;
 				paramsLoadedFromDevice = false;
+				startupSequenceCompleted = false;
 				// Критично: recv()-поток не должен упираться в SemaphoreFullException при Release().
 				responseQueue = gcnew System::Collections::Concurrent::ConcurrentQueue<cli::array<System::Byte>^>();
 				responseAvailable = gcnew System::Threading::Semaphore(0, System::Int32::MaxValue);
@@ -295,7 +301,7 @@ namespace ProjectServerW {
 					sendStateTimer->Interval = Math::Max(1000, intervalSec * 1000);
 				}
 				sendStateTimer->Tick += gcnew EventHandler(this, &DataForm::OnSendStateTimerTick);
-				sendStateTimer->Start();
+				sendStateTimer->Stop();
 
 			// Инициализируем путь сохранения из текстового поля
 			excelSavePath = textBoxExcelDirectory->Text;

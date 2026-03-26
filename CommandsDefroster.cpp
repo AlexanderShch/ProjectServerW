@@ -207,6 +207,10 @@ void ProjectServerW::DataForm::SendResetCommand() {
     // Создаем команду RESET
     Command cmd = CreateControlCommand(CmdProgControl::RESET);
     CommandResponse response;
+    startupSequenceCompleted = false;
+    if (sendStateTimer != nullptr) {
+        sendStateTimer->Stop();
+    }
 
     // Отправляем команду и ждем ответ
     if (SendCommandAndWaitResponse(cmd, response)) {
@@ -240,12 +244,11 @@ void ProjectServerW::DataForm::SendResetCommand() {
             break;
 
         case CmdStatus::TIMEOUT:
-            // После RESET контроллер перезагружается и не успевает ответить — ожидаем переподключение и запускаем отложенную инициализацию.
+            // Ждём подтверждение RESET: без ACK повторный стартап не запускаем.
             if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
-                Label_Commands->Text = "[i] Сброс отправлен, ожидание переподключения...";
-                Label_Commands->ForeColor = System::Drawing::Color::Blue;
+                Label_Commands->Text = "[!] RESET не подтверждён контроллером";
+                Label_Commands->ForeColor = System::Drawing::Color::Orange;
             }
-            SchedulePostResetInit();
             break;
 
         default:
@@ -844,12 +847,8 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
                 response.dataLength = 0;
                 GlobalLogger::LogMessage("Error: No response received from controller");
                 if (!isCmdInfoRequest) {
-                    // После RESET контроллер перезагружается и не отвечает; зонд GET_CMD_INFO бесполезен и долго ждёт на мёртвом сокете.
                     const bool isResetCmd = (cmd.commandType == CmdType::PROG_CONTROL && cmd.commandCode == CmdProgControl::RESET);
-                    if (isResetCmd) {
-                        SchedulePostResetInit();
-                    }
-                    else {
+                    if (!isResetCmd) {
                         ScheduleCommandInfoProbe(String::Format(
                             "timeout waiting response Type=0x{0:X2}, Code=0x{1:X2}",
                             cmd.commandType, cmd.commandCode));

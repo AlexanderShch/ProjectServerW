@@ -585,43 +585,6 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         excelFileName = "WorkData_Port" + clientPort.ToString();
         dataExportedToExcel = false;
         buttonSTARTstate_TRUE();
-        SendVersionRequest();
-        int intervalSeconds = 10;
-        if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
-            intervalSeconds = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
-        }
-        const bool okInterval = SendSetIntervalCommand(intervalSeconds);
-        // Сразу после установки периода опроса запрашиваем параметры, если таблицы пустые.
-        // Это нужно, чтобы экспорт в Excel уже содержал актуальные параметры и их можно было загрузить обратно из файла.
-        if (okInterval) {
-            bool grid1Empty = true;
-            bool grid2Empty = true;
-            if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
-                for (int r = 0; r < dataGridView1->Rows->Count; r++) {
-                    if (!dataGridView1->Rows[r]->IsNewRow) { grid1Empty = false; break; }
-                }
-            }
-            if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
-                for (int r = 0; r < dataGridView2->Rows->Count; r++) {
-                    if (!dataGridView2->Rows[r]->IsNewRow) { grid2Empty = false; break; }
-                }
-            }
-            if (grid1Empty || grid2Empty) {
-                try {
-                    if (this->InvokeRequired) {
-                        this->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(
-                            this, &DataForm::AutoReadParametersFromController));
-                    }
-                    else {
-                        // Уже в UI-потоке: выполняем синхронно, чтобы загрузка произошла сразу после SET_INTERVAL.
-                        this->AutoReadParametersFromController();
-                    }
-                }
-                catch (Exception^) {
-                    // Игнорируем ошибки авто-запроса параметров, чтобы не мешать основному обмену.
-                }
-            }
-        }
     }
 
     // Таймаут автоперезапуска: если после STOP прошло 20 минут без экспорта — отменяем ожидание.
@@ -826,16 +789,7 @@ void ProjectServerW::DataForm::OnReconnectSendStartupCommands() {
             return;
         }
 
-        // Отправляем версию и интервал измерения на устройство. Состояние ПУСК/СТОП выставляется по приходу лога параметров.
-        const bool okVersion = SendVersionRequest();
-
-        int intervalSeconds = 10;
-        if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
-            intervalSeconds = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
-        }
-        const bool okInterval = SendSetIntervalCommand(intervalSeconds);
-
-        if (okVersion && okInterval) {
+        if (ExecuteStartupCommandSequence()) {
             lastStartupCommandsSocket = ClientSocket;
             postResetInitPending = false;
         }
@@ -846,6 +800,79 @@ void ProjectServerW::DataForm::OnReconnectSendStartupCommands() {
     catch (...) {
         GlobalLogger::LogMessage("Error: Unknown exception in OnReconnectSendStartupCommands");
     }
+}
+
+bool ProjectServerW::DataForm::ExecuteStartupCommandSequence() {
+    if (ClientSocket == INVALID_SOCKET) {
+        startupSequenceCompleted = false;
+        return false;
+    }
+
+    GlobalLogger::LogMessage("Debug: Startup sequence: step 1/3 GET_VERSION started");
+    const bool okVersion = SendVersionRequest();
+    if (!okVersion) {
+        startupSequenceCompleted = false;
+        if (sendStateTimer != nullptr) sendStateTimer->Stop();
+        GlobalLogger::LogMessage("Warning: Startup sequence failed at GET_VERSION");
+        return false;
+    }
+    GlobalLogger::LogMessage("Debug: Startup sequence: step 1/3 GET_VERSION ok");
+
+    int intervalSeconds = 10;
+    if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
+        intervalSeconds = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
+    }
+    GlobalLogger::LogMessage(String::Format("Debug: Startup sequence: step 2/3 SET_INTERVAL({0}) started", intervalSeconds));
+    const bool okInterval = SendSetIntervalCommand(intervalSeconds);
+    if (!okInterval) {
+        startupSequenceCompleted = false;
+        if (sendStateTimer != nullptr) sendStateTimer->Stop();
+        GlobalLogger::LogMessage("Warning: Startup sequence failed at SET_INTERVAL");
+        return false;
+    }
+    GlobalLogger::LogMessage("Debug: Startup sequence: step 2/3 SET_INTERVAL ok");
+
+    GlobalLogger::LogMessage("Debug: Startup sequence: step 3/3 GET_DEFROST_GROUP(5,6) started");
+    uint8_t buffer[256];
+    const uint8_t kPayloadCapacity = 255;
+    uint8_t len = 0;
+    bool loaded1 = false;
+    bool loaded2 = false;
+
+    if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
+        const bool ok1 = GetDefrostGroup(5, 0, buffer, kPayloadCapacity, &len);
+        if (ok1 && len >= (uint8_t)sizeof(DefrostLogPhasePayload_t)) {
+            FillDataGridView1FromGroup5Payload(buffer, len);
+            loaded1 = true;
+        }
+        else {
+            GlobalLogger::LogMessage(String::Format("Warning: Startup group5 failed (transport={0}, len={1})", ok1 ? "ok" : "fail", (int)len));
+        }
+    }
+    if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
+        const bool ok2 = GetDefrostGroup(6, 0, buffer, kPayloadCapacity, &len);
+        if (ok2 && len >= (uint8_t)sizeof(DefrostLogGlobalPayload_t)) {
+            FillDataGridView2FromGroup6Payload(buffer, len);
+            loaded2 = true;
+        }
+        else {
+            GlobalLogger::LogMessage(String::Format("Warning: Startup group6 failed (transport={0}, len={1})", ok2 ? "ok" : "fail", (int)len));
+        }
+    }
+
+    startupSequenceCompleted = (loaded1 && loaded2);
+    paramsLoadedFromDevice = startupSequenceCompleted;
+    if (!startupSequenceCompleted) {
+        if (sendStateTimer != nullptr) sendStateTimer->Stop();
+        GlobalLogger::LogMessage("Warning: Startup sequence failed at GET_DEFROST_GROUP(5,6)");
+        return false;
+    }
+
+    if (sendStateTimer != nullptr) {
+        sendStateTimer->Start();
+    }
+    GlobalLogger::LogMessage("Information: Startup sequence completed (GET_VERSION -> SET_INTERVAL -> GET_DEFROST_GROUP[5,6])");
+    return true;
 }
 
 void ProjectServerW::DataForm::ScheduleDeferredStartupOnReconnect() {
@@ -907,14 +934,7 @@ void ProjectServerW::DataForm::OnPostResetInitTimerTick(System::Object^ sender, 
 
         postResetInitAttempt++;
 
-        const bool okVersion = SendVersionRequest();
-        int intervalSeconds = 10;
-        if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
-            intervalSeconds = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
-        }
-        const bool okInterval = SendSetIntervalCommand(intervalSeconds);
-
-        if (okVersion && okInterval) {
+        if (ExecuteStartupCommandSequence()) {
             postResetInitPending = false;
             lastStartupCommandsSocket = ClientSocket;
             return;
@@ -2183,6 +2203,8 @@ void ProjectServerW::DataForm::OnSendStateTimerTick(System::Object^ sender, Syst
 {
     try {
         if (ClientSocket == INVALID_SOCKET)
+            return;
+        if (!startupSequenceCompleted)
             return;
         Command cmd = CreateRequestCommandSendState();
         uint8_t buffer[MAX_COMMAND_SIZE];
