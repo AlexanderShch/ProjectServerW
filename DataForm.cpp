@@ -562,6 +562,29 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     temperatures[3] = data.T[3] / 10.0;  // Температура продукта слева (T_product_left)
     temperatures[4] = data.T[4] / 10.0;  // Температура продукта справа (T_product_right)
     UpdateAllTemperatureValues(temperatures);
+    // Мин. Т продукта по активным датчикам из текущей телеметрии (датчики продукта: индексы 3 и 4).
+    bool currentActiveProductTempValid = false;
+    float currentActiveProductMinTemp = 0.0f;
+    if (SQ >= 6) {
+        if (data.Active[3] != 0) {
+            currentActiveProductMinTemp = data.T[3] / 10.0f;
+            currentActiveProductTempValid = true;
+        }
+        if (data.Active[4] != 0) {
+            const float tProdRight = data.T[4] / 10.0f;
+            if (!currentActiveProductTempValid || tProdRight < currentActiveProductMinTemp) {
+                currentActiveProductMinTemp = tProdRight;
+            }
+            currentActiveProductTempValid = true;
+        }
+    }
+    if (currentActiveProductTempValid) {
+        lastActiveProductMinTemp_C = currentActiveProductMinTemp;
+        lastActiveProductMinTemp_Valid = true;
+    }
+    else {
+        lastActiveProductMinTemp_Valid = false;
+    }
 
     cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();
 
@@ -584,7 +607,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         dataCollectionEndTime = DateTime::MinValue;
         excelFileName = "WorkData_Port" + clientPort.ToString();
         dataExportedToExcel = false;
-        buttonSTARTstate_TRUE();
+        SetProgramStateUi(false);
     }
 
     // Таймаут автоперезапуска: если после STOP прошло 20 минут без экспорта — отменяем ожидание.
@@ -628,10 +651,28 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     if (wasAuto && !wrkBit) {
         // Переход в остановку: пишем в лог дату/время остановки и достигнутую мин. Т рыбы.
         DateTime stopTime = now;
-        String^ tempStr = lastFishCold_C_Valid ? String::Format(System::Globalization::CultureInfo::InvariantCulture, "{0:F1}", lastFishCold_C) : "—";
-        GlobalLogger::LogMessage(String::Format(
-            "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}. Достигнутая мин. Т рыбы: {1} °C",
-            stopTime, tempStr));
+        String^ stopMessage = nullptr;
+        const bool useLogTemp = (lastFishCold_C_Valid && lastFishCold_C != 0.0f);
+        if (useLogTemp) {
+            stopMessage = String::Format(
+                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы: {1:F1} °C",
+                stopTime, lastFishCold_C);
+        }
+        else if (currentActiveProductTempValid) {
+            stopMessage = String::Format(
+                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы: {1:F1} °C",
+                stopTime, currentActiveProductMinTemp);
+        }
+        else {
+            stopMessage = String::Format(
+                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}. Остановка по времени процесса без датчиков продукта.",
+                stopTime);
+        }
+        GlobalLogger::LogMessage(stopMessage);
+        if (labelDefrosterState != nullptr && !labelDefrosterState->IsDisposed) {
+            labelDefrosterState->Text = stopMessage->Replace("Information: ", "");
+            labelDefrosterState->ForeColor = System::Drawing::Color::Blue;
+        }
         // По окончании работы алгоритма — автоматически сохраняем таблицу данных в Excel (аварийный режим, без трогания UI-кнопки).
         try {
             StartExcelExportThread(true);
@@ -645,15 +686,15 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         lastControlLogTime = now;
     if (this->InvokeRequired) {
         if (wrkBit)
-            this->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(this, &DataForm::buttonSTOPstate_TRUE));
+            this->BeginInvoke(gcnew System::Action<bool>(this, &DataForm::SetProgramStateUi), true);
         else
-            this->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(this, &DataForm::buttonSTARTstate_TRUE));
+            this->BeginInvoke(gcnew System::Action<bool>(this, &DataForm::SetProgramStateUi), false);
     }
     else {
         if (wrkBit)
-            buttonSTOPstate_TRUE();
+            SetProgramStateUi(true);
         else
-            buttonSTARTstate_TRUE();
+            SetProgramStateUi(false);
     }
 
     // Строка готова с телеметрией; ждём пакет лога (AppendControlLogToDataRow).
@@ -2140,17 +2181,27 @@ System::Void DataForm::DataForm_HandleDestroyed(Object^ sender, EventArgs^ e)
 
 // Отправка команды дефроста на устройство (реализация в CommandsDefroster.cpp)
 
-// Состояние «программа остановлена»: после успешной команды СТОП — лампы и блокировка кнопок
-void ProjectServerW::DataForm::buttonSTARTstate_TRUE()
+// Единый метод установки состояния ПУСК/СТОП (кнопки и лампы).
+void ProjectServerW::DataForm::SetProgramStateUi(bool isRunning)
 {
     if (buttonSTART == nullptr || buttonSTOP == nullptr || labelSTART == nullptr || labelSTOP == nullptr)
         return;
-    buttonSTART->Enabled = true;
-    labelSTART->BackColor = System::Drawing::Color::Red;
-    labelSTART->Text = "0";
-    buttonSTOP->Enabled = false;
-    labelSTOP->BackColor = System::Drawing::Color::Lime;
-    labelSTOP->Text = "1";
+    if (isRunning) {
+        buttonSTART->Enabled = false;
+        labelSTART->BackColor = System::Drawing::Color::Red;
+        labelSTART->Text = "0";
+        buttonSTOP->Enabled = true;
+        labelSTOP->BackColor = System::Drawing::Color::Lime;
+        labelSTOP->Text = "1";
+    }
+    else {
+        buttonSTART->Enabled = true;
+        labelSTART->BackColor = System::Drawing::Color::Lime;
+        labelSTART->Text = "1";
+        buttonSTOP->Enabled = false;
+        labelSTOP->BackColor = System::Drawing::Color::Red;
+        labelSTOP->Text = "0";
+    }
     if (this->IsHandleCreated && !this->IsDisposed)
         this->Refresh();
 }
@@ -2168,7 +2219,7 @@ void ProjectServerW::DataForm::EnsureProgramRunningStateFromLog()
                 return;
         }
     }
-    buttonSTOPstate_TRUE();
+    SetProgramStateUi(true);
 }
 
 void ProjectServerW::DataForm::OnControlLogAbsenceTimerTick(System::Object^ sender, System::EventArgs^ e)
@@ -2185,22 +2236,47 @@ void ProjectServerW::DataForm::OnControlLogAbsenceTimerTick(System::Object^ send
         if (elapsed.TotalSeconds < absenceThresholdSec)
             return;
         DateTime stopTime = DateTime::Now;
-        String^ tempStr = lastFishCold_C_Valid ? String::Format(System::Globalization::CultureInfo::InvariantCulture, "{0:F1}", lastFishCold_C) : "—";
-        GlobalLogger::LogMessage(String::Format(
-            "Information: Останов автоматического алгоритма дефростации (по таймауту отсутствия _Wrk=1). Время: {0:dd.MM.yyyy HH:mm:ss}. Достигнутая мин. Т рыбы: {1} °C",
-            stopTime, tempStr));
+        String^ stopMessage = nullptr;
+        String^ stopMessageDetailed = nullptr;
+        const bool useLogTemp = (lastFishCold_C_Valid && lastFishCold_C != 0.0f);
+        if (useLogTemp) {
+            stopMessageDetailed = String::Format(
+                "Information: Останов автоматического алгоритма дефростации (по таймауту отсутствия _Wrk=1). Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы: {1:F1} °C",
+                stopTime, lastFishCold_C);
+            stopMessage = String::Format(
+                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы: {1:F1} °C",
+                stopTime, lastFishCold_C);
+        }
+        else if (lastActiveProductMinTemp_Valid) {
+            stopMessageDetailed = String::Format(
+                "Information: Останов автоматического алгоритма дефростации (по таймауту отсутствия _Wrk=1). Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы: {1:F1} °C",
+                stopTime, lastActiveProductMinTemp_C);
+            stopMessage = String::Format(
+                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы: {1:F1} °C",
+                stopTime, lastActiveProductMinTemp_C);
+        }
+        else {
+            stopMessageDetailed = String::Format(
+                "Information: Останов автоматического алгоритма дефростации (по таймауту отсутствия _Wrk=1). Время: {0:dd.MM.yyyy HH:mm:ss}. Остановка по времени процесса без датчиков продукта.",
+                stopTime);
+            stopMessage = String::Format(
+                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}. Остановка по времени процесса без датчиков продукта.",
+                stopTime);
+        }
+        GlobalLogger::LogMessage(stopMessageDetailed);
+        GlobalLogger::LogMessage(stopMessage);
         controllerAutoModeActive = false;
         lastControlLogTime = DateTime::MinValue;
         // Приводим UI в состояние "остановлено": кнопка ПУСК активна, СТОП неактивна, лампы соответствуют.
         if (this->InvokeRequired) {
-            this->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(this, &DataForm::buttonSTARTstate_TRUE));
+            this->BeginInvoke(gcnew System::Action<bool>(this, &DataForm::SetProgramStateUi), false);
         }
         else {
-            buttonSTARTstate_TRUE(); // состояние «можно запустить»
+            SetProgramStateUi(false); // состояние «можно запустить»
         }
-        if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
-            Label_Commands->Text = "[i] Автоматический режим остановлен (таймаут отсутствия _Wrk=1)";
-            Label_Commands->ForeColor = System::Drawing::Color::Blue;
+        if (labelDefrosterState != nullptr && !labelDefrosterState->IsDisposed) {
+            labelDefrosterState->Text = stopMessage->Replace("Information: ", "");
+            labelDefrosterState->ForeColor = System::Drawing::Color::Blue;
         }
     }
     catch (Exception^ ex) {
@@ -2249,21 +2325,6 @@ void ProjectServerW::DataForm::OnSendStateTimerTick(System::Object^ sender, Syst
     catch (Exception^ ex) {
         GlobalLogger::LogMessage("Error: Exception in OnSendStateTimerTick: " + ex->ToString());
     }
-}
-
-// Состояние «программа запущена»: после успешной команды ПУСК — лампы и блокировка кнопок
-void ProjectServerW::DataForm::buttonSTOPstate_TRUE()
-{
-    if (buttonSTART == nullptr || buttonSTOP == nullptr || labelSTART == nullptr || labelSTOP == nullptr)
-        return;
-    buttonSTART->Enabled = false;
-    labelSTART->BackColor = System::Drawing::Color::Lime;
-    labelSTART->Text = "1";
-    buttonSTOP->Enabled = true;
-    labelSTOP->BackColor = System::Drawing::Color::Red;
-    labelSTOP->Text = "0";
-    if (this->IsHandleCreated && !this->IsDisposed)
-        this->Refresh();
 }
 
 //  ===========================================================================

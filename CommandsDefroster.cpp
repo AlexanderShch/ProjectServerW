@@ -104,13 +104,23 @@ void ProjectServerW::DataForm::SendStartCommand() {
     if (SendCommandAndWaitResponse(cmd, response)) {
         // Команда успешно выполнена на контроллере; обновление кнопок обязательно в UI-потоке и до выхода
         if (this->InvokeRequired) {
-            this->Invoke(gcnew System::Windows::Forms::MethodInvoker(this, &DataForm::buttonSTOPstate_TRUE));
+            this->Invoke(gcnew System::Action<bool>(this, &DataForm::SetProgramStateUi), true);
         }
         else {
-            buttonSTOPstate_TRUE();
+            SetProgramStateUi(true);
         }
+        // Синхронизируем состояние "авторежим активен" сразу после подтверждения START,
+        // чтобы детект останова по _Wrk/таймауту не зависел только от следующего пакета телеметрии.
+        controllerAutoModeActive = true;
+        lastControlLogTime = DateTime::Now;
         Label_Commands->Text = "[OK] Программа запущена";
         Label_Commands->ForeColor = System::Drawing::Color::Green;
+        if (labelDefrosterState != nullptr && !labelDefrosterState->IsDisposed) {
+            labelDefrosterState->Text = String::Format(
+                "Команда START успешно выполнена контроллером. Время: {0:dd.MM.yyyy HH:mm:ss}",
+                DateTime::Now);
+            labelDefrosterState->ForeColor = System::Drawing::Color::DarkGreen;
+        }
         GlobalLogger::LogMessage("Information: Команда START успешно выполнена контроллером");
 
         // Восстанавливаем цвет через 3 секунды с помощью таймера
@@ -156,14 +166,23 @@ void ProjectServerW::DataForm::SendStopCommand() {
     if (SendCommandAndWaitResponse(cmd, response)) {
         // Команда успешно выполнена на контроллере; обновление кнопок обязательно в UI-потоке и до выхода
         if (this->InvokeRequired) {
-            this->Invoke(gcnew System::Windows::Forms::MethodInvoker(this, &DataForm::buttonSTARTstate_TRUE));
+            this->Invoke(gcnew System::Action<bool>(this, &DataForm::SetProgramStateUi), false);
         }
         else {
-            buttonSTARTstate_TRUE();
+            SetProgramStateUi(false);
         }
+        // После подтверждённого STOP сбрасываем признак активного авторежима.
+        controllerAutoModeActive = false;
+        lastControlLogTime = DateTime::MinValue;
         lastStopSuccessTime = DateTime::Now; // чтобы запоздалый лог не перезаписал кнопки в течение 10 с
         Label_Commands->Text = "[OK] Программа остановлена";
         Label_Commands->ForeColor = System::Drawing::Color::Green;
+        if (labelDefrosterState != nullptr && !labelDefrosterState->IsDisposed) {
+            labelDefrosterState->Text = String::Format(
+                "Команда STOP успешно выполнена контроллером. Время: {0:dd.MM.yyyy HH:mm:ss}",
+                DateTime::Now);
+            labelDefrosterState->ForeColor = System::Drawing::Color::Blue;
+        }
         GlobalLogger::LogMessage("Information: Команда STOP успешно выполнена контроллером");
 
         // По успешному СТОП — записать таблицу данных в Excel

@@ -81,7 +81,10 @@ namespace ProjectServerW {
 
 		   // True only after both tables (group5->table1 and group6->table2) are loaded from controller.
 			bool paramsLoadedFromDevice;
-			bool startupSequenceCompleted;
+	private: System::Windows::Forms::Label^ label_Defroster_Info;
+
+	private: System::Windows::Forms::Label^ labelDefrosterState;
+		   bool startupSequenceCompleted;
 		
 		public:
 			property System::String^ FormGuid {
@@ -182,6 +185,8 @@ namespace ProjectServerW {
 	DateTime lastControlLogTime;     // Время последней телеметрии с _Wrk=1; сброс флага при отсутствии такой телеметрии
 	float lastFishCold_C;            // Последняя мин. Т рыбы из лога параметров (для записи в лог при остановке алгоритма)
 	bool lastFishCold_C_Valid;       // true: lastFishCold_C получен из лога
+	float lastActiveProductMinTemp_C; // Мин. Т продукта по активным датчикам из последней телеметрии
+	bool lastActiveProductMinTemp_Valid; // true: в последней телеметрии был хотя бы один активный датчик продукта
 	bool lastTelemetryAlrmBit;       // Предыдущее значение бита Alrm из телеметрии (для детекта перехода 0->1)
 	System::Windows::Forms::Timer^ controlLogAbsenceTimer; // Таймер: при отсутствии телеметрии с _Wrk=1 сбрасывает controllerAutoModeActive
 	System::Windows::Forms::Timer^ sendStateTimer;        // Таймер команды «Отправить состояние» по интервалу измерений
@@ -317,6 +322,7 @@ namespace ProjectServerW {
 		controllerAutoModeActive = false;
 		lastControlLogTime = DateTime::MinValue;
 		lastFishCold_C_Valid = false;
+		lastActiveProductMinTemp_Valid = false;
 	lastTelemetryAlrmBit = false;
 		controlLogAbsenceTimer = nullptr;
 		autoRestartInternalUncheck = false;
@@ -483,6 +489,8 @@ private: System::ComponentModel::IContainer^ components;
 				this->dataGridEquipmentAlarm = (gcnew System::Windows::Forms::DataGridView());
 				this->timerAutoStart = (gcnew System::Windows::Forms::Timer(this->components));
 				this->timerAutoRestart = (gcnew System::Windows::Forms::Timer(this->components));
+				this->label_Defroster_Info = (gcnew System::Windows::Forms::Label());
+				this->labelDefrosterState = (gcnew System::Windows::Forms::Label());
 				this->menuStrip1->SuspendLayout();
 				this->tabControl1->SuspendLayout();
 				this->tabPage1->SuspendLayout();
@@ -707,6 +715,8 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// tabPage2
 				// 
+				this->tabPage2->Controls->Add(this->label_Defroster_Info);
+				this->tabPage2->Controls->Add(this->labelDefrosterState);
 				this->tabPage2->Controls->Add(this->label_Version);
 				this->tabPage2->Controls->Add(this->labelVersion);
 				this->tabPage2->Controls->Add(this->button_RESET);
@@ -1138,6 +1148,24 @@ private: System::ComponentModel::IContainer^ components;
 				this->timerAutoRestart->Interval = 30000;
 				this->timerAutoRestart->Tick += gcnew System::EventHandler(this, &DataForm::timerAutoRestart_Tick);
 				// 
+				// label_Defroster_Info
+				// 
+				this->label_Defroster_Info->AutoSize = true;
+				this->label_Defroster_Info->Location = System::Drawing::Point(339, 122);
+				this->label_Defroster_Info->Name = L"label_Defroster_Info";
+				this->label_Defroster_Info->Size = System::Drawing::Size(196, 20);
+				this->label_Defroster_Info->TabIndex = 18;
+				this->label_Defroster_Info->Text = L"Состояние дефростера:";
+				// 
+				// labelDefrosterState
+				// 
+				this->labelDefrosterState->AutoSize = true;
+				this->labelDefrosterState->Location = System::Drawing::Point(541, 122);
+				this->labelDefrosterState->Name = L"labelDefrosterState";
+				this->labelDefrosterState->Size = System::Drawing::Size(212, 20);
+				this->labelDefrosterState->TabIndex = 17;
+				this->labelDefrosterState->Text = L"Команда не отправлялась";
+				// 
 				// DataForm
 				// 
 				this->AutoScaleDimensions = System::Drawing::SizeF(9, 20);
@@ -1280,8 +1308,7 @@ private: System::ComponentModel::IContainer^ components;
 			bool SendCommandAndWaitResponse(const ::Command& cmd, ::CommandResponse& response, System::String^ commandName); // Отправка команды и ожидание ответа с именем
 			bool SendCommandAndWaitResponse(const ::Command& cmd, ::CommandResponse& response); // Отправка команды и ожидание ответа (имя автоматически)
 			
-			void buttonSTARTstate_TRUE();	// Метод для изменения статуса кнопок Старт и Стоп
-			void buttonSTOPstate_TRUE();	// Метод для изменения статуса кнопок Старт и Стоп
+			void SetProgramStateUi(bool isRunning);	// Единый метод установки состояния кнопок/ламп ПУСК/СТОП
 			/** Вызвать из обработчика лога: переключить в «программа запущена», только если ещё не в состоянии «остановлена» (чтобы запоздалый лог после СТОП не затирал кнопки). */
 			void EnsureProgramRunningStateFromLog();
 			void OnControlLogAbsenceTimerTick(System::Object^ sender, System::EventArgs^ e);
