@@ -2191,8 +2191,17 @@ void ProjectServerW::DataForm::OnControlLogAbsenceTimerTick(System::Object^ send
             stopTime, tempStr));
         controllerAutoModeActive = false;
         lastControlLogTime = DateTime::MinValue;
-        if (buttonSTART != nullptr && !buttonSTART->IsDisposed && buttonSTOP != nullptr && !buttonSTOP->IsDisposed)
+        // Приводим UI в состояние "остановлено": кнопка ПУСК активна, СТОП неактивна, лампы соответствуют.
+        if (this->InvokeRequired) {
+            this->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(this, &DataForm::buttonSTARTstate_TRUE));
+        }
+        else {
             buttonSTARTstate_TRUE(); // состояние «можно запустить»
+        }
+        if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+            Label_Commands->Text = "[i] Автоматический режим остановлен (таймаут отсутствия _Wrk=1)";
+            Label_Commands->ForeColor = System::Drawing::Color::Blue;
+        }
     }
     catch (Exception^ ex) {
         GlobalLogger::LogMessage("Error: Exception in OnControlLogAbsenceTimerTick: " + ex->ToString());
