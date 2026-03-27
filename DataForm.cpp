@@ -2260,6 +2260,9 @@ void ProjectServerW::DataForm::EnsureProgramRunningStateFromLog()
 void ProjectServerW::DataForm::OnControlLogAbsenceTimerTick(System::Object^ sender, System::EventArgs^ e)
 {
     try {
+        // Авто-останов по таймауту отключён.
+        // Единый критерий останова алгоритма: только подтверждённый _Wrk == 0
+        // не менее 5 отсчётов подряд (см. AddDataToTable / stopConfirmedByWrk).
         if (!controllerAutoModeActive || lastControlLogTime == DateTime::MinValue) {
             controlLogAbsenceStrikeCount = 0;
             return;
@@ -2274,56 +2277,9 @@ void ProjectServerW::DataForm::OnControlLogAbsenceTimerTick(System::Object^ send
             controlLogAbsenceStrikeCount = 0;
             return;
         }
-        // Защита от ложного "Останов": подтверждаем таймаут двумя подряд тиками таймера.
+        // Оставляем только диагностический счётчик пропусков _Wrk=1.
         controlLogAbsenceStrikeCount++;
-        if (controlLogAbsenceStrikeCount < 2)
-            return;
-        DateTime stopTime = DateTime::Now;
-        String^ stopMessage = nullptr;
-        String^ stopMessageDetailed = nullptr;
-        const bool useLogTemp = (lastFishCold_C_Valid && lastFishCold_C != 0.0f);
-        if (useLogTemp) {
-            stopMessageDetailed = String::Format(
-                "Information: Останов автоматического алгоритма дефростации (по таймауту отсутствия _Wrk=1). Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы: {1:F1} °C",
-                stopTime, lastFishCold_C);
-            stopMessage = String::Format(
-                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы: {1:F1} °C",
-                stopTime, lastFishCold_C);
-        }
-        else if (lastActiveProductMinTemp_Valid) {
-            stopMessageDetailed = String::Format(
-                "Information: Останов автоматического алгоритма дефростации (по таймауту отсутствия _Wrk=1). Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы: {1:F1} °C",
-                stopTime, lastActiveProductMinTemp_C);
-            stopMessage = String::Format(
-                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы: {1:F1} °C",
-                stopTime, lastActiveProductMinTemp_C);
-        }
-        else {
-            stopMessageDetailed = String::Format(
-                "Information: Останов автоматического алгоритма дефростации (по таймауту отсутствия _Wrk=1). Время: {0:dd.MM.yyyy HH:mm:ss}. Остановка по времени процесса без датчиков продукта.",
-                stopTime);
-            stopMessage = String::Format(
-                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}. Остановка по времени процесса без датчиков продукта.",
-                stopTime);
-        }
-        GlobalLogger::LogMessage(stopMessageDetailed);
-        GlobalLogger::LogMessage(stopMessage);
-        controllerAutoModeActive = false;
-        wrkZeroConsecutiveCounts = 0;
-        wrkLastSampleValid = false;
-        lastControlLogTime = DateTime::MinValue;
-        controlLogAbsenceStrikeCount = 0;
-        // Приводим UI в состояние "остановлено": кнопка ПУСК активна, СТОП неактивна, лампы соответствуют.
-        if (this->InvokeRequired) {
-            this->BeginInvoke(gcnew System::Action<bool>(this, &DataForm::SetProgramStateUi), false);
-        }
-        else {
-            SetProgramStateUi(false); // состояние «можно запустить»
-        }
-        if (labelDefrosterState != nullptr && !labelDefrosterState->IsDisposed) {
-            labelDefrosterState->Text = stopMessage->Replace("Information: ", "");
-            labelDefrosterState->ForeColor = System::Drawing::Color::Blue;
-        }
+        return;
     }
     catch (Exception^ ex) {
         GlobalLogger::LogMessage("Error: Exception in OnControlLogAbsenceTimerTick: " + ex->ToString());
