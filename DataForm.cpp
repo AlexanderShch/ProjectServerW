@@ -648,7 +648,12 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     const uint16_t doBits = data.H[SQ - 1];
     const bool wrkBit = (doBits & (1u << 14)) != 0;
     const bool wasAuto = controllerAutoModeActive;
-    if (wasAuto && !wrkBit) {
+    bool suppressStopAfterRecentStart = false;
+    if (lastStartSuccessTime != DateTime::MinValue) {
+        TimeSpan sinceStart = now.Subtract(lastStartSuccessTime);
+        suppressStopAfterRecentStart = (sinceStart.TotalSeconds >= 0.0 && sinceStart.TotalSeconds < 5.0);
+    }
+    if (wasAuto && !wrkBit && !suppressStopAfterRecentStart) {
         // Переход в остановку: пишем в лог дату/время остановки и достигнутую мин. Т рыбы.
         DateTime stopTime = now;
         String^ stopMessage = nullptr;
@@ -682,8 +687,10 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         }
     }
     controllerAutoModeActive = wrkBit;
-    if (wrkBit)
+    if (wrkBit) {
         lastControlLogTime = now;
+        controlLogAbsenceStrikeCount = 0;
+    }
     if (this->InvokeRequired) {
         if (wrkBit)
             this->BeginInvoke(gcnew System::Action<bool>(this, &DataForm::SetProgramStateUi), true);
@@ -2225,15 +2232,23 @@ void ProjectServerW::DataForm::EnsureProgramRunningStateFromLog()
 void ProjectServerW::DataForm::OnControlLogAbsenceTimerTick(System::Object^ sender, System::EventArgs^ e)
 {
     try {
-        if (!controllerAutoModeActive || lastControlLogTime == DateTime::MinValue)
+        if (!controllerAutoModeActive || lastControlLogTime == DateTime::MinValue) {
+            controlLogAbsenceStrikeCount = 0;
             return;
+        }
         TimeSpan elapsed = DateTime::Now.Subtract(lastControlLogTime);
         // Таймаут отсутствия телеметрии с _Wrk=1 = интервал измерений (с вкладки «Настройки») + 1 с
         int intervalSec = 10;
         if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed)
             intervalSec = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
         double absenceThresholdSec = (double)intervalSec + 1.0;
-        if (elapsed.TotalSeconds < absenceThresholdSec)
+        if (elapsed.TotalSeconds < absenceThresholdSec) {
+            controlLogAbsenceStrikeCount = 0;
+            return;
+        }
+        // Защита от ложного "Останов": подтверждаем таймаут двумя подряд тиками таймера.
+        controlLogAbsenceStrikeCount++;
+        if (controlLogAbsenceStrikeCount < 2)
             return;
         DateTime stopTime = DateTime::Now;
         String^ stopMessage = nullptr;
@@ -2267,6 +2282,7 @@ void ProjectServerW::DataForm::OnControlLogAbsenceTimerTick(System::Object^ send
         GlobalLogger::LogMessage(stopMessage);
         controllerAutoModeActive = false;
         lastControlLogTime = DateTime::MinValue;
+        controlLogAbsenceStrikeCount = 0;
         // Приводим UI в состояние "остановлено": кнопка ПУСК активна, СТОП неактивна, лампы соответствуют.
         if (this->InvokeRequired) {
             this->BeginInvoke(gcnew System::Action<bool>(this, &DataForm::SetProgramStateUi), false);

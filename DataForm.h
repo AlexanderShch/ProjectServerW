@@ -181,8 +181,10 @@ namespace ProjectServerW {
 	bool autoRestartPending;         // true: отправлен STOP по автоперезапуску, ждём экспорт и затем START
 		DateTime autoRestartStopIssuedTime; // Время отправки STOP для таймаута автоперезапуска
 	DateTime lastStopSuccessTime; // Время последнего успешного ответа на СТОП; лог не перезаписывает кнопки в течение 10 с
+	DateTime lastStartSuccessTime; // Время последнего успешного START; защита от ложного "останов" сразу после запуска
 	bool controllerAutoModeActive;   // true: в телеметрии бит _Wrk (DO) == 1 — контроллер в автоматическом режиме
 	DateTime lastControlLogTime;     // Время последней телеметрии с _Wrk=1; сброс флага при отсутствии такой телеметрии
+	int controlLogAbsenceStrikeCount; // Счётчик подряд идущих "пропусков" _Wrk=1 для защиты от ложных срабатываний
 	float lastFishCold_C;            // Последняя мин. Т рыбы из лога параметров (для записи в лог при остановке алгоритма)
 	bool lastFishCold_C_Valid;       // true: lastFishCold_C получен из лога
 	float lastActiveProductMinTemp_C; // Мин. Т продукта по активным датчикам из последней телеметрии
@@ -319,8 +321,10 @@ namespace ProjectServerW {
 	autoRestartPending = false;
 	autoRestartStopIssuedTime = DateTime::MinValue;
 		lastStopSuccessTime = DateTime::MinValue;
+		lastStartSuccessTime = DateTime::MinValue;
 		controllerAutoModeActive = false;
 		lastControlLogTime = DateTime::MinValue;
+		controlLogAbsenceStrikeCount = 0;
 		lastFishCold_C_Valid = false;
 		lastActiveProductMinTemp_Valid = false;
 	lastTelemetryAlrmBit = false;

@@ -112,6 +112,7 @@ void ProjectServerW::DataForm::SendStartCommand() {
         // Синхронизируем состояние "авторежим активен" сразу после подтверждения START,
         // чтобы детект останова по _Wrk/таймауту не зависел только от следующего пакета телеметрии.
         controllerAutoModeActive = true;
+        lastStartSuccessTime = DateTime::Now;
         lastControlLogTime = DateTime::Now;
         Label_Commands->Text = "[OK] Программа запущена";
         Label_Commands->ForeColor = System::Drawing::Color::Green;
