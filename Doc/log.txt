@@ -1,77 +1,221 @@
-﻿26.03.26 18:03:57 : ======================================================================
-26.03.26 18:03:57 : Application starting...
-26.03.26 18:03:57 : ======================================================================
-26.03.26 18:03:57 : Start listenin at port 3487
-26.03.26 18:03:58 : 
-26.03.26 18:03:58 : ================================================================================
-26.03.26 18:03:58 : Information: New thread was created, port 8867
-26.03.26 18:03:58 : Information: Получены новые данные
-26.03.26 18:03:58 : Information: The DataForm has been opened successfully!
-26.03.26 18:03:58 : Information: Reconnect: drop old socket 10.25.99.101
-26.03.26 18:03:58 : Information: Deferred startup scheduled for 10.25.99.101
-26.03.26 18:04:00 : Startup: [1/3] GET_VERSION - start
-26.03.26 18:04:00 : Information: Команда GET_VERSION отправлена клиенту
-26.03.26 18:04:00 : Debug: WaitStart cmd Type=0x03, Code=0x02, timeoutMs=100, queueDepth=0
-26.03.26 18:04:00 : Debug: DequeueResponse len=11, head=[03 02 00 05]
-26.03.26 18:04:00 : Debug: WaitCandidate expected Type=0x03,Code=0x02; got Type=0x03,Code=0x02,Status=0x00,Len=5
-26.03.26 18:04:00 : Debug: WaitMatch cmd Type=0x03, Code=0x02, elapsedMs=73.3
-26.03.26 18:04:00 : [OK] Команда Type=0x03 (REQUEST), Code=0x02 (GET_VERSION) успешно выполнена
+﻿27.03.26 13:25:02 : ======================================================================
+27.03.26 13:25:02 : Application starting...
+27.03.26 13:25:02 : ======================================================================
+27.03.26 13:25:02 : Start listenin at port 3487
+27.03.26 13:25:03 : 
+27.03.26 13:25:03 : ================================================================================
+27.03.26 13:25:03 : Information: New thread was created, port 8867
+27.03.26 13:25:03 : Information: Получены новые данные
+27.03.26 13:25:03 : Information: The DataForm has been opened successfully!
+27.03.26 13:25:03 : Information: Reconnect: drop old socket 10.25.99.101
+27.03.26 13:25:03 : Information: Deferred startup scheduled for 10.25.99.101
+27.03.26 13:25:04 : Debug: Startup sequence: step 1/3 GET_VERSION started
+27.03.26 13:25:04 : Information: Команда GET_VERSION отправлена клиенту
+27.03.26 13:25:04 : [OK] Команда Type=0x03 (REQUEST), Code=0x02 (GET_VERSION) успешно выполнена
 Статус: 0x00 (OK) - Команда успешно выполнена
-Версия прошивки: 2.2.1
-26.03.26 18:04:00 : Information: Версия прошивки контроллера: 2.2.1
-26.03.26 18:04:00 : Startup: [1/3] GET_VERSION - ok
-26.03.26 18:04:00 : Startup: [2/3] SET_INTERVAL(1) - start
-26.03.26 18:04:00 : Information: Команда SET_INTERVAL отправлена клиенту
-26.03.26 18:04:00 : Debug: WaitStart cmd Type=0x02, Code=0x02, timeoutMs=100, queueDepth=0
-26.03.26 18:04:00 : Error: No response received from controller
-26.03.26 18:04:00 : Debug: WaitTimeout cmd Type=0x02, Code=0x02, elapsedMs=104.2, queueDepth=0
-26.03.26 18:04:00 : Startup: [2/3] SET_INTERVAL - failed
-26.03.26 18:04:05 : Startup: [1/3] GET_VERSION - start
-26.03.26 18:04:05 : Information: Команда GET_VERSION отправлена клиенту
-26.03.26 18:04:05 : Debug: WaitStart cmd Type=0x03, Code=0x02, timeoutMs=100, queueDepth=1
-26.03.26 18:04:05 : Debug: DequeueResponse len=6, head=[02 02 00 00]
-26.03.26 18:04:05 : Debug: WaitCandidate expected Type=0x03,Code=0x02; got Type=0x02,Code=0x02,Status=0x00,Len=0
-26.03.26 18:04:05 : Information: Интервал измерений принят контроллером (запоздалый ответ)
-26.03.26 18:04:05 : Debug: DequeueResponse len=11, head=[03 02 00 05]
-26.03.26 18:04:05 : Debug: WaitCandidate expected Type=0x03,Code=0x02; got Type=0x03,Code=0x02,Status=0x00,Len=5
-26.03.26 18:04:05 : Debug: WaitMatch cmd Type=0x03, Code=0x02, elapsedMs=67.2
-26.03.26 18:04:05 : [OK] Команда Type=0x03 (REQUEST), Code=0x02 (GET_VERSION) успешно выполнена
+Версия прошивки: 2.2.2
+27.03.26 13:25:04 : Information: Версия прошивки контроллера: 2.2.2
+27.03.26 13:25:04 : Debug: Startup sequence: step 1/3 GET_VERSION ok
+27.03.26 13:25:04 : Debug: Startup sequence: step 2/3 SET_INTERVAL(1) started
+27.03.26 13:25:04 : Information: Команда SET_INTERVAL отправлена клиенту
+27.03.26 13:25:04 : [OK] Команда Type=0x02 (CONFIGURATION), Code=0x02 (SET_INTERVAL) успешно выполнена
 Статус: 0x00 (OK) - Команда успешно выполнена
-Версия прошивки: 2.2.1
-26.03.26 18:04:05 : Information: Версия прошивки контроллера: 2.2.1
-26.03.26 18:04:05 : Startup: [1/3] GET_VERSION - ok
-26.03.26 18:04:05 : Startup: [2/3] SET_INTERVAL(1) - start
-26.03.26 18:04:05 : Information: Команда SET_INTERVAL отправлена клиенту
-26.03.26 18:04:05 : Debug: WaitStart cmd Type=0x02, Code=0x02, timeoutMs=100, queueDepth=0
-26.03.26 18:04:05 : Error: No response received from controller
-26.03.26 18:04:05 : Debug: WaitTimeout cmd Type=0x02, Code=0x02, elapsedMs=100.5, queueDepth=0
-26.03.26 18:04:05 : Startup: [2/3] SET_INTERVAL - failed
-26.03.26 18:04:10 : Startup: [1/3] GET_VERSION - start
-26.03.26 18:04:10 : Information: Команда GET_VERSION отправлена клиенту
-26.03.26 18:04:10 : Debug: WaitStart cmd Type=0x03, Code=0x02, timeoutMs=100, queueDepth=0
-26.03.26 18:04:10 : Debug: DequeueResponse len=11, head=[03 02 00 05]
-26.03.26 18:04:10 : Debug: WaitCandidate expected Type=0x03,Code=0x02; got Type=0x03,Code=0x02,Status=0x00,Len=5
-26.03.26 18:04:10 : Debug: WaitMatch cmd Type=0x03, Code=0x02, elapsedMs=68.2
-26.03.26 18:04:10 : [OK] Команда Type=0x03 (REQUEST), Code=0x02 (GET_VERSION) успешно выполнена
+27.03.26 13:25:04 : [OK] Интервал измерений: 1 с
+27.03.26 13:25:04 : Debug: Startup sequence: step 2/3 SET_INTERVAL ok
+27.03.26 13:25:04 : Debug: Startup sequence: step 3/3 GET_DEFROST_GROUP(5,6) started
+27.03.26 13:25:04 : Information: Команда GET_DEFROST_GROUP отправлена клиенту
+27.03.26 13:25:04 : [OK] Команда Type=0x03 (REQUEST), Code=0x07 (GET_DEFROST_GROUP) успешно выполнена
 Статус: 0x00 (OK) - Команда успешно выполнена
-Версия прошивки: 2.2.1
-26.03.26 18:04:10 : Information: Версия прошивки контроллера: 2.2.1
-26.03.26 18:04:10 : Startup: [1/3] GET_VERSION - ok
-26.03.26 18:04:10 : Startup: [2/3] SET_INTERVAL(1) - start
-26.03.26 18:04:10 : Information: Команда SET_INTERVAL отправлена клиенту
-26.03.26 18:04:10 : Debug: WaitStart cmd Type=0x02, Code=0x02, timeoutMs=100, queueDepth=0
-26.03.26 18:04:10 : Error: No response received from controller
-26.03.26 18:04:10 : Debug: WaitTimeout cmd Type=0x02, Code=0x02, elapsedMs=108.3, queueDepth=0
-26.03.26 18:04:10 : Startup: [2/3] SET_INTERVAL - failed
-26.03.26 18:04:15 : Startup: [1/3] GET_VERSION - start
-26.03.26 18:04:15 : Information: Форма удалена из карты в FormClosed
-26.03.26 18:04:15 : Attention: Recv failed: 10053
-26.03.26 18:04:15 : Error: Ошибка отправки команды GET_VERSION: 10093
-26.03.26 18:04:15 : Error: Failed to send command
-26.03.26 18:04:15 : Error: Команда GET_VERSION не выполнена. Статус: 0x00 (OK)
-26.03.26 18:04:15 : Startup: [1/3] GET_VERSION - failed
-26.03.26 18:04:15 : Information: Waiting for Excel export jobs to complete before shutdown...
-26.03.26 18:04:15 : Information: Excel export jobs completed.
-26.03.26 18:04:15 : ======================================================================
-26.03.26 18:04:15 : Application closing normally...
-26.03.26 18:04:15 : ======================================================================
+27.03.26 13:25:04 : Information: Команда GET_DEFROST_GROUP отправлена клиенту
+27.03.26 13:25:05 : [OK] Команда Type=0x03 (REQUEST), Code=0x07 (GET_DEFROST_GROUP) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+27.03.26 13:25:05 : Information: Startup sequence completed (GET_VERSION -> SET_INTERVAL -> GET_DEFROST_GROUP[5,6])
+27.03.26 13:25:08 : Information: Команда RESET отправлена клиенту
+27.03.26 13:25:08 : [OK] Команда Type=0x01 (PROG_CONTROL), Code=0x05 (RESET) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+27.03.26 13:25:08 : Information: Команда RESET успешно выполнена контроллером
+27.03.26 13:25:09 : Debug: Startup sequence: step 1/3 GET_VERSION started
+27.03.26 13:25:09 : Information: Команда GET_VERSION отправлена клиенту
+27.03.26 13:25:09 : [OK] Команда Type=0x03 (REQUEST), Code=0x02 (GET_VERSION) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+Версия прошивки: 2.2.2
+27.03.26 13:25:09 : Information: Версия прошивки контроллера: 2.2.2
+27.03.26 13:25:09 : Debug: Startup sequence: step 1/3 GET_VERSION ok
+27.03.26 13:25:09 : Debug: Startup sequence: step 2/3 SET_INTERVAL(1) started
+27.03.26 13:25:09 : Information: Команда SET_INTERVAL отправлена клиенту
+27.03.26 13:25:09 : [OK] Команда Type=0x02 (CONFIGURATION), Code=0x02 (SET_INTERVAL) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+27.03.26 13:25:09 : [OK] Интервал измерений: 1 с
+27.03.26 13:25:09 : Debug: Startup sequence: step 2/3 SET_INTERVAL ok
+27.03.26 13:25:09 : Debug: Startup sequence: step 3/3 GET_DEFROST_GROUP(5,6) started
+27.03.26 13:25:09 : Information: Команда GET_DEFROST_GROUP отправлена клиенту
+27.03.26 13:25:10 : [OK] Команда Type=0x03 (REQUEST), Code=0x07 (GET_DEFROST_GROUP) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+27.03.26 13:25:10 : Information: Команда GET_DEFROST_GROUP отправлена клиенту
+27.03.26 13:25:10 : [OK] Команда Type=0x03 (REQUEST), Code=0x07 (GET_DEFROST_GROUP) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+27.03.26 13:25:10 : Information: Startup sequence completed (GET_VERSION -> SET_INTERVAL -> GET_DEFROST_GROUP[5,6])
+27.03.26 13:25:11 : Information: Останов автоматического алгоритма дефростации. Время: 27.03.2026 13:25:11.
+Достигнутая мин. Т рыбы: 0.4 °C
+27.03.26 13:25:11 : Information: Команда GET_ALARM_FLAGS отправлена клиенту
+27.03.26 13:25:11 : [OK] Команда Type=0x03 (REQUEST), Code=0x09 (GET_ALARM_FLAGS) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+Аварийные регистры:
+  Устройства: 0x0000
+  Датчики: 0x0000
+27.03.26 13:25:11 : Information: Excel export queued (emergency background)
+27.03.26 13:25:12 : Information: Файл Excel успешно сохранен: WorkData_Start_2026-03-27_13-25-06_End_2026-03-27_13-25-12_Port8867.xlsx
+Время записи: 1.30 секунд (2 строк)
+27.03.26 13:25:12 : Information: delayed garbage collection started
+27.03.26 13:25:15 : Information: Команда START отправлена клиенту
+27.03.26 13:25:15 : [OK] Команда Type=0x01 (PROG_CONTROL), Code=0x01 (START) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+27.03.26 13:25:15 : Information: Команда START успешно выполнена контроллером
+27.03.26 13:25:26 : Information: Команда RESET отправлена клиенту
+27.03.26 13:25:26 : [OK] Команда Type=0x01 (PROG_CONTROL), Code=0x05 (RESET) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+27.03.26 13:25:26 : Information: Команда RESET успешно выполнена контроллером
+27.03.26 13:25:27 : Debug: Startup sequence: step 1/3 GET_VERSION started
+27.03.26 13:25:27 : Information: Команда GET_VERSION отправлена клиенту
+27.03.26 13:25:27 : [OK] Команда Type=0x03 (REQUEST), Code=0x02 (GET_VERSION) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+Версия прошивки: 2.2.2
+27.03.26 13:25:27 : Information: Версия прошивки контроллера: 2.2.2
+27.03.26 13:25:27 : Debug: Startup sequence: step 1/3 GET_VERSION ok
+27.03.26 13:25:27 : Debug: Startup sequence: step 2/3 SET_INTERVAL(1) started
+27.03.26 13:25:27 : Information: Команда SET_INTERVAL отправлена клиенту
+27.03.26 13:25:27 : [OK] Команда Type=0x02 (CONFIGURATION), Code=0x02 (SET_INTERVAL) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+27.03.26 13:25:27 : [OK] Интервал измерений: 1 с
+27.03.26 13:25:27 : Debug: Startup sequence: step 2/3 SET_INTERVAL ok
+27.03.26 13:25:27 : Debug: Startup sequence: step 3/3 GET_DEFROST_GROUP(5,6) started
+27.03.26 13:25:27 : Information: Команда GET_DEFROST_GROUP отправлена клиенту
+27.03.26 13:25:27 : [OK] Команда Type=0x03 (REQUEST), Code=0x07 (GET_DEFROST_GROUP) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+27.03.26 13:25:27 : Information: Команда GET_DEFROST_GROUP отправлена клиенту
+27.03.26 13:25:28 : [OK] Команда Type=0x03 (REQUEST), Code=0x07 (GET_DEFROST_GROUP) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+27.03.26 13:25:28 : Information: Startup sequence completed (GET_VERSION -> SET_INTERVAL -> GET_DEFROST_GROUP[5,6])
+27.03.26 13:25:29 : Information: Останов автоматического алгоритма дефростации. Время: 27.03.2026 13:25:29.
+Достигнутая мин. Т рыбы: 0.4 °C
+27.03.26 13:25:29 : Information: Команда GET_ALARM_FLAGS отправлена клиенту
+27.03.26 13:25:29 : Error: No response received from controller (Type=0x03, Code=0x09, timeoutMs=100)
+27.03.26 13:25:29 : Warning: GET_ALARM_FLAGS failed before Excel export, using current alarm grid snapshot
+27.03.26 13:25:29 : Information: Excel export queued (emergency background)
+27.03.26 13:25:30 : Information: Файл Excel успешно сохранен: WorkData_Start_2026-03-27_13-25-06_End_2026-03-27_13-25-30_Port8867.xlsx
+Время записи: 1.28 секунд (12 строк)
+27.03.26 13:25:30 : Information: delayed garbage collection started
+27.03.26 13:25:38 : Information: Команда SET_DEFROST_GROUP отправлена клиенту
+27.03.26 13:25:38 : Warning: Deferred unrelated response. Expected Type=0x02, Code=0x05; Got Type=0x03, Code=0x09; Raw=03 09 00 04 00 00 00 00 68 DE
+27.03.26 13:25:38 : [OK] Команда Type=0x02 (CONFIGURATION), Code=0x05 (SET_DEFROST_GROUP) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+27.03.26 13:25:38 : Information: Команда SET_DEFROST_GROUP отправлена клиенту
+27.03.26 13:25:38 : Warning: Deferred unrelated response. Expected Type=0x02, Code=0x05; Got Type=0x03, Code=0x09; Raw=03 09 00 04 00 00 00 00 68 DE
+27.03.26 13:25:38 : [OK] Команда Type=0x02 (CONFIGURATION), Code=0x05 (SET_DEFROST_GROUP) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+27.03.26 13:25:38 : Information: Wrote defrost params by group: group5=OK, group6=OK
+27.03.26 13:25:46 : Information: Команда START отправлена клиенту
+27.03.26 13:25:46 : Warning: Deferred unrelated response. Expected Type=0x01, Code=0x01; Got Type=0x03, Code=0x09; Raw=03 09 00 04 00 00 00 00 68 DE
+27.03.26 13:25:46 : [OK] Команда Type=0x01 (PROG_CONTROL), Code=0x01 (START) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+27.03.26 13:25:46 : Information: Команда START успешно выполнена контроллером
+27.03.26 13:48:40 : Information: Команда GET_ALARM_FLAGS отправлена клиенту
+27.03.26 13:48:40 : [OK] Команда Type=0x03 (REQUEST), Code=0x09 (GET_ALARM_FLAGS) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+Аварийные регистры:
+  Устройства: 0x0000
+  Датчики: 0x0000
+27.03.26 13:48:40 : Information: Excel export queued
+27.03.26 13:48:42 : Information: Файл Excel успешно сохранен: WorkData_Start_2026-03-27_13-25-06_End_2026-03-27_13-48-41_Port8867.xlsx
+Время записи: 2.17 секунд (1382 строк)
+27.03.26 13:48:42 : Information: delayed garbage collection started
+27.03.26 14:37:58 : Information: Останов автоматического алгоритма дефростации. Время: 27.03.2026 14:37:58.
+Достигнутая мин. Т рыбы: 2.0 °C
+27.03.26 14:37:58 : Information: Команда GET_ALARM_FLAGS отправлена клиенту
+27.03.26 14:37:58 : [OK] Команда Type=0x03 (REQUEST), Code=0x09 (GET_ALARM_FLAGS) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+Аварийные регистры:
+  Устройства: 0x0000
+  Датчики: 0x0000
+27.03.26 14:37:58 : Information: Excel export queued (emergency background)
+27.03.26 14:38:00 : Information: Файл Excel успешно сохранен: WorkData_Start_2026-03-27_13-25-06_End_2026-03-27_14-38-00_Port8867.xlsx
+Время записи: 2.27 секунд (4337 строк)
+27.03.26 14:38:00 : Information: delayed garbage collection started
+27.03.26 14:41:18 : Information: Останов автоматического алгоритма дефростации. Время: 27.03.2026 14:41:18.
+Достигнутая мин. Т рыбы: 2.1 °C
+27.03.26 14:41:18 : Information: Команда GET_ALARM_FLAGS отправлена клиенту
+27.03.26 14:41:18 : [OK] Команда Type=0x03 (REQUEST), Code=0x09 (GET_ALARM_FLAGS) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+Аварийные регистры:
+  Устройства: 0x0000
+  Датчики: 0x0000
+27.03.26 14:41:18 : Information: Excel export queued (emergency background)
+27.03.26 14:41:19 : Warning: Dropping framed packet due CRC mismatch. Type=0x00, Cmd=0x01, DataLen=89
+27.03.26 14:41:20 : Information: Файл Excel успешно сохранен: WorkData_Start_2026-03-27_13-25-06_End_2026-03-27_14-41-20_Port8867.xlsx
+Время записи: 2.40 секунд (4535 строк)
+27.03.26 14:41:20 : Information: delayed garbage collection started
+27.03.26 14:53:33 : Information: Останов автоматического алгоритма дефростации. Время: 27.03.2026 14:53:33.
+Достигнутая мин. Т рыбы: 2.2 °C
+27.03.26 14:53:33 : Information: Команда GET_ALARM_FLAGS отправлена клиенту
+27.03.26 14:53:33 : Error: No response received from controller (Type=0x03, Code=0x09, timeoutMs=100)
+27.03.26 14:53:33 : Warning: GET_ALARM_FLAGS failed before Excel export, using current alarm grid snapshot
+27.03.26 14:53:33 : Information: Excel export queued (emergency background)
+27.03.26 14:53:35 : Information: Файл Excel успешно сохранен: WorkData_Start_2026-03-27_13-25-06_End_2026-03-27_14-53-35_Port8867.xlsx
+Время записи: 2.17 секунд (5266 строк)
+27.03.26 14:53:35 : Information: delayed garbage collection started
+27.03.26 14:57:27 : Information: Останов автоматического алгоритма дефростации. Время: 27.03.2026 14:57:27.
+Достигнутая мин. Т рыбы: 2.4 °C
+27.03.26 14:57:27 : Information: Команда GET_ALARM_FLAGS отправлена клиенту
+27.03.26 14:57:27 : [OK] Команда Type=0x03 (REQUEST), Code=0x09 (GET_ALARM_FLAGS) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+Аварийные регистры:
+  Устройства: 0x0000
+  Датчики: 0x0000
+27.03.26 14:57:27 : Information: Excel export queued (emergency background)
+27.03.26 14:57:29 : Information: Файл Excel успешно сохранен: WorkData_Start_2026-03-27_13-25-06_End_2026-03-27_14-57-29_Port8867.xlsx
+Время записи: 2.34 секунд (5498 строк)
+27.03.26 14:57:29 : Information: delayed garbage collection started
+27.03.26 14:57:30 : Information: Останов автоматического алгоритма дефростации. Время: 27.03.2026 14:57:30.
+Достигнутая мин. Т рыбы: 2.3 °C
+27.03.26 14:57:30 : Information: Команда GET_ALARM_FLAGS отправлена клиенту
+27.03.26 14:57:30 : [OK] Команда Type=0x03 (REQUEST), Code=0x09 (GET_ALARM_FLAGS) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+Аварийные регистры:
+  Устройства: 0x0000
+  Датчики: 0x0000
+27.03.26 14:57:30 : Information: Excel export queued (emergency background)
+27.03.26 14:57:32 : Information: Файл Excel успешно сохранен: WorkData_Start_2026-03-27_13-25-06_End_2026-03-27_14-57-32_Port8867.xlsx
+Время записи: 2.20 секунд (5499 строк)
+27.03.26 14:57:32 : Information: delayed garbage collection started
+27.03.26 14:58:21 : Information: Останов автоматического алгоритма дефростации. Время: 27.03.2026 14:58:21.
+Достигнутая мин. Т рыбы: 2.4 °C
+27.03.26 14:58:21 : Information: Команда GET_ALARM_FLAGS отправлена клиенту
+27.03.26 14:58:21 : [OK] Команда Type=0x03 (REQUEST), Code=0x09 (GET_ALARM_FLAGS) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+Аварийные регистры:
+  Устройства: 0x0000
+  Датчики: 0x0000
+27.03.26 14:58:21 : Information: Excel export queued (emergency background)
+27.03.26 14:58:23 : Information: Останов автоматического алгоритма дефростации. Время: 27.03.2026 14:58:23.
+Достигнутая мин. Т рыбы: 2.4 °C
+27.03.26 14:58:23 : Information: Excel export already pending/in progress (per-form guard)
+27.03.26 14:58:23 : Information: Файл Excel успешно сохранен: WorkData_Start_2026-03-27_13-25-06_End_2026-03-27_14-58-23_Port8867.xlsx
+Время записи: 2.33 секунд (5535 строк)
+27.03.26 14:58:23 : Information: delayed garbage collection started
+27.03.26 15:01:00 : Information: Команда START отправлена клиенту
+27.03.26 15:01:00 : Warning: Deferred unrelated response. Expected Type=0x01, Code=0x01; Got Type=0x03, Code=0x09; Raw=03 09 00 04 00 00 00 00 68 DE
+27.03.26 15:01:01 : [OK] Команда Type=0x01 (PROG_CONTROL), Code=0x01 (START) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+27.03.26 15:01:01 : Information: Команда START успешно выполнена контроллером
+27.03.26 15:02:37 : Information: Останов автоматического алгоритма дефростации. Время: 27.03.2026 15:02:37.
+Достигнутая мин. Т рыбы: 2.3 °C
+27.03.26 15:02:37 : Information: Команда GET_ALARM_FLAGS отправлена клиенту
+27.03.26 15:02:37 : [OK] Команда Type=0x03 (REQUEST), Code=0x09 (GET_ALARM_FLAGS) успешно выполнена
+Статус: 0x00 (OK) - Команда успешно выполнена
+Аварийные регистры:
+  Устройства: 0x0000
+  Датчики: 0x0000
+27.03.26 15:02:37 : Information: Excel export queued (emergency background)
+27.03.26 15:02:39 : Information: Файл Excel успешно сохранен: WorkData_Start_2026-03-27_13-25-06_End_2026-03-27_15-02-39_Port8867.xlsx
+Время записи: 2.33 секунд (5630 строк)
+27.03.26 15:02:39 : Information: delayed garbage collection started

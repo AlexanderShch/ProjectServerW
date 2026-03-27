@@ -129,7 +129,7 @@ namespace ProjectServerW {
 			System::Object^ dataTableSync;
 			// Строка, накопленная телеметрией; после прихода лога дополняется параметрами и при _Wrk=1 добавляется в таблицу.
 			System::Data::DataRow^ pendingRow;
-			bool pendingRowWrkBit;  // значение _Wrk из телеметрии для этой строки
+			bool pendingRowWrkBit;  // подтверждённое состояние авторежима для этой строки
 			// Critical: explicit lock object for export state.
 			System::Object^ excelExportSync;
 			// Единый gate конвейера команд: в каждый момент времени только одна команда "send+wait".
@@ -183,6 +183,9 @@ namespace ProjectServerW {
 	DateTime lastStopSuccessTime; // Время последнего успешного ответа на СТОП; лог не перезаписывает кнопки в течение 10 с
 	DateTime lastStartSuccessTime; // Время последнего успешного START; защита от ложного "останов" сразу после запуска
 	bool controllerAutoModeActive;   // true: в телеметрии бит _Wrk (DO) == 1 — контроллер в автоматическом режиме
+	int wrkZeroConsecutiveCounts;    // Подряд идущие "нулевые" отсчёты _Wrk (по Time устройства)
+	bool wrkLastSampleValid;         // true: есть предыдущий отсчёт Time для расчёта дельты
+	uint16_t wrkLastSampleTime;      // Предыдущий Time устройства для расчёта дельты отсчётов
 	DateTime lastControlLogTime;     // Время последней телеметрии с _Wrk=1; сброс флага при отсутствии такой телеметрии
 	int controlLogAbsenceStrikeCount; // Счётчик подряд идущих "пропусков" _Wrk=1 для защиты от ложных срабатываний
 	float lastFishCold_C;            // Последняя мин. Т рыбы из лога параметров (для записи в лог при остановке алгоритма)
@@ -323,6 +326,9 @@ namespace ProjectServerW {
 		lastStopSuccessTime = DateTime::MinValue;
 		lastStartSuccessTime = DateTime::MinValue;
 		controllerAutoModeActive = false;
+		wrkZeroConsecutiveCounts = 0;
+		wrkLastSampleValid = false;
+		wrkLastSampleTime = 0;
 		lastControlLogTime = DateTime::MinValue;
 		controlLogAbsenceStrikeCount = 0;
 		lastFishCold_C_Valid = false;

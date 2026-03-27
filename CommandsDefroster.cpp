@@ -114,6 +114,8 @@ void ProjectServerW::DataForm::SendStartCommand() {
         controllerAutoModeActive = true;
         lastStartSuccessTime = DateTime::Now;
         lastControlLogTime = DateTime::Now;
+        wrkZeroConsecutiveCounts = 0;
+        wrkLastSampleValid = false;
         Label_Commands->Text = "[OK] Программа запущена";
         Label_Commands->ForeColor = System::Drawing::Color::Green;
         if (labelDefrosterState != nullptr && !labelDefrosterState->IsDisposed) {
@@ -175,6 +177,8 @@ void ProjectServerW::DataForm::SendStopCommand() {
         // После подтверждённого STOP сбрасываем признак активного авторежима.
         controllerAutoModeActive = false;
         lastControlLogTime = DateTime::MinValue;
+        wrkZeroConsecutiveCounts = 0;
+        wrkLastSampleValid = false;
         lastStopSuccessTime = DateTime::Now; // чтобы запоздалый лог не перезаписал кнопки в течение 10 с
         Label_Commands->Text = "[OK] Программа остановлена";
         Label_Commands->ForeColor = System::Drawing::Color::Green;

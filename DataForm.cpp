@@ -645,6 +645,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     }
 
     // Определение автоматического режима по биту _Wrk (бит 14 DO): _Wrk == 1 — контроллер в автоматическом режиме.
+    // Критерий "останова" подтверждаем по времени устройства: _Wrk == 0 не менее 5 отсчётов подряд.
     const uint16_t doBits = data.H[SQ - 1];
     const bool wrkBit = (doBits & (1u << 14)) != 0;
     const bool wasAuto = controllerAutoModeActive;
@@ -653,7 +654,33 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         TimeSpan sinceStart = now.Subtract(lastStartSuccessTime);
         suppressStopAfterRecentStart = (sinceStart.TotalSeconds >= 0.0 && sinceStart.TotalSeconds < 5.0);
     }
-    if (wasAuto && !wrkBit && !suppressStopAfterRecentStart) {
+
+    int deltaCounts = 1;
+    if (wrkLastSampleValid) {
+        const uint16_t prev = wrkLastSampleTime;
+        const uint16_t curr = data.Time;
+        const uint16_t rawDelta = (uint16_t)(curr - prev); // корректно при переполнении uint16
+        if (rawDelta > 0) {
+            deltaCounts = (int)rawDelta;
+        }
+    }
+    wrkLastSampleTime = data.Time;
+    wrkLastSampleValid = true;
+
+    if (wrkBit) {
+        wrkZeroConsecutiveCounts = 0;
+        controllerAutoModeActive = true;
+    }
+    else if (wasAuto) {
+        wrkZeroConsecutiveCounts += deltaCounts;
+    }
+    else {
+        wrkZeroConsecutiveCounts = 0;
+    }
+
+    const bool stopConfirmedByWrk =
+        (wasAuto && !wrkBit && !suppressStopAfterRecentStart && wrkZeroConsecutiveCounts >= 5);
+    if (stopConfirmedByWrk) {
         // Переход в остановку: пишем в лог дату/время остановки и достигнутую мин. Т рыбы.
         DateTime stopTime = now;
         String^ stopMessage = nullptr;
@@ -685,29 +712,30 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         catch (Exception^ ex) {
             GlobalLogger::LogMessage("Error: Auto Excel export on defrost stop failed: " + ex->ToString());
         }
+        controllerAutoModeActive = false;
+        wrkZeroConsecutiveCounts = 0;
     }
-    controllerAutoModeActive = wrkBit;
-    if (wrkBit) {
+    if (controllerAutoModeActive) {
         lastControlLogTime = now;
         controlLogAbsenceStrikeCount = 0;
     }
     if (this->InvokeRequired) {
-        if (wrkBit)
+        if (controllerAutoModeActive)
             this->BeginInvoke(gcnew System::Action<bool>(this, &DataForm::SetProgramStateUi), true);
         else
             this->BeginInvoke(gcnew System::Action<bool>(this, &DataForm::SetProgramStateUi), false);
     }
     else {
-        if (wrkBit)
+        if (controllerAutoModeActive)
             SetProgramStateUi(true);
         else
             SetProgramStateUi(false);
     }
 
     // Строка готова с телеметрией; ждём пакет лога (AppendControlLogToDataRow).
-    // Добавление в таблицу выполняется после прихода лога и только при _Wrk == 1 (см. AppendControlLogToDataRow).
+    // Добавление в таблицу выполняется по подтверждённому состоянию авторежима (а не по единичному значению _Wrk).
     pendingRow = row;
-    pendingRowWrkBit = wrkBit;
+    pendingRowWrkBit = controllerAutoModeActive;
 }
 
 
@@ -2195,19 +2223,19 @@ void ProjectServerW::DataForm::SetProgramStateUi(bool isRunning)
         return;
     if (isRunning) {
         buttonSTART->Enabled = false;
-        labelSTART->BackColor = System::Drawing::Color::Red;
-        labelSTART->Text = "0";
+        labelSTART->BackColor = System::Drawing::Color::Lime;
+        labelSTART->Text = "1";
         buttonSTOP->Enabled = true;
-        labelSTOP->BackColor = System::Drawing::Color::Lime;
-        labelSTOP->Text = "1";
+        labelSTOP->BackColor = System::Drawing::Color::Red;
+        labelSTOP->Text = "0";
     }
     else {
         buttonSTART->Enabled = true;
-        labelSTART->BackColor = System::Drawing::Color::Lime;
-        labelSTART->Text = "1";
+        labelSTART->BackColor = System::Drawing::Color::Red;
+        labelSTART->Text = "0";
         buttonSTOP->Enabled = false;
-        labelSTOP->BackColor = System::Drawing::Color::Red;
-        labelSTOP->Text = "0";
+        labelSTOP->BackColor = System::Drawing::Color::Lime;
+        labelSTOP->Text = "1";
     }
     if (this->IsHandleCreated && !this->IsDisposed)
         this->Refresh();
@@ -2281,6 +2309,8 @@ void ProjectServerW::DataForm::OnControlLogAbsenceTimerTick(System::Object^ send
         GlobalLogger::LogMessage(stopMessageDetailed);
         GlobalLogger::LogMessage(stopMessage);
         controllerAutoModeActive = false;
+        wrkZeroConsecutiveCounts = 0;
+        wrkLastSampleValid = false;
         lastControlLogTime = DateTime::MinValue;
         controlLogAbsenceStrikeCount = 0;
         // Приводим UI в состояние "остановлено": кнопка ПУСК активна, СТОП неактивна, лампы соответствуют.
