@@ -589,7 +589,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();
 
     uint16_t bitField;
-    // Первая группа (Heat0..Alrm) — входы DI модуля ввода-вывода. В контроллере: Read_Data_2 → T.
+    // Первая группа (Vent1_Left..But_Stop) — входы DI модуля ввода-вывода. В контроллере: Read_Data_2 → T.
     bitField = data.T[SQ - 1];
     const bool alrmBit = (bitField & (1u << 15)) != 0;
 
@@ -627,7 +627,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         }
     }
 
-    // Записываем биты первой группы (Heat0..Alrm) — DI, тот же битовый порядок, что в модуле.
+    // Записываем биты первой группы (Vent1_Left..But_Stop) — DI, тот же битовый порядок, что в модуле.
     for (int bit = 0; bit < 16; bit++) {
         bool bitValue = (bitField & (1 << bit)) != 0;
         row[bitNames[0][bit]] = bitValue;
@@ -636,7 +636,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         RefreshAlarmFlagsFromController();
     }
     lastTelemetryAlrmBit = alrmBit;
-    // Вторая группа (_V0.._Stp) — выходы DO модуля ввода-вывода. В контроллере: Read_Data_1 → H.
+    // Вторая группа (_V0.._Alr) — выходы DO модуля ввода-вывода. В контроллере: Read_Data_1 → H.
     bitField = data.H[SQ - 1];
     // Записываем биты второй группы (DO), тот же битовый порядок, что в модуле.
     for (int bit = 0; bit < 16; bit++) {
@@ -2052,18 +2052,18 @@ System::Void ProjectServerW::DataForm::buttonWriteParameters_Click(System::Objec
 void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::array<String^>^>^>& namesRef) {
     namesRef = gcnew cli::array<cli::array<String^>^>(10);
 
-    // Первая группа битов (управление/статус)
+    // Первая группа битов (входы DI, порядок как в DI_DFR_REGISTERS_t контроллера)
     namesRef[0] = gcnew cli::array<String^>(16) {
-        "Heat0", "Heat1", "Heat2", "Heat3", // Тэны испарителя  (нагрев) 1..4
-        "Vent0", "Vent1", "Vent2", "Vent3", // Вентиляторы испарителя 1..4
-        "InjW",     // Инжектор воды увлажнения
-        "UP",       // Клапан подъёма шторки вверх
-        "DOWN",     // Клапан опускания шторки вниз
-        "DBlk",     // Блокировка двери
-        "Clse",     // Клапан закрытия заслонки
-        "Open",     // Клапан открытия заслонки
-        "Work",     // Режим работы 
-        "Alrm",     // Режим аварии 
+        "Vent1_Left", "Vent2_Left", "Vent1_Right", "Vent2_Right", // IN0..IN3
+        "Ten1_Left", "Ten2_Left", "Ten1_Right", "Ten2_Right",     // IN4..IN7
+        "Vent_Out",  // IN8: вытяжной вентилятор
+        "Air_Open",  // IN9: заслонка открыта
+        "Air_Close", // IN10: заслонка закрыта
+        "Gate_Alarm",// IN11: авария ворот
+        "Gate_Close",// IN12: ворота закрыты (концевик)
+        "Gate_Open", // IN13: ворота открыты (концевик)
+        "But_Start", // IN14: кнопка ПУСК
+        "But_Stop",  // IN15: кнопка СТОП
         
     };
 
@@ -2074,11 +2074,11 @@ void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::ar
         "_Out",     // Заслонка открыта отклик
         "_Inj",     // Инжектор включён отклик
         "_Flp",     // Инжектор флоп открыт для увлажнения 
-        "_Opn",     // Открытие шторки
-        "_Dbl",     // Дверь заблокирована
-        "_Cls",     // Шторка закрыта
-        "_Wrk",     // Устройство в режиме работы цикла (зелёная лампа ПУСК)
-        "_Stp"      // DO15: красная лампа СТОП (1 при остановке программы авторежима)
+        "_Opn",     // Подъём ворот
+        "_Dbl",     // Разблокировать ручное управление воротами
+        "_Cls",     // Опускание ворот
+        "_Wrk",     // Устройство в режиме работы автоматического цикла (зелёная лампа ПУСК)
+        "_Alr"      // Красная лампа АВАРИЯ
     };
 
     // Остальные группы при необходимости расширяются
