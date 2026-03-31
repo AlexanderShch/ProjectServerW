@@ -184,7 +184,7 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency) {
         // Перед выгрузкой в Excel обновляем аварийные флаги с контроллера (если соединение доступно).
         // Это гарантирует, что лист «АВАРИЯ» содержит актуальное состояние на момент завершения цикла.
         try {
-            if (ClientSocket != INVALID_SOCKET) {
+            if (!isFormClosingNow && ClientSocket != INVALID_SOCKET) {
                 AlarmFlagsPayload flags{};
                 if (GetAlarmFlags(&flags)) {
                     PopulateEquipmentAlarmGrid(flags.deviceAlarmFlags, flags.sensorAlarmFlags);
@@ -648,6 +648,11 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     // Критерий "останова" подтверждаем по времени устройства: _Wrk == 0 не менее 5 отсчётов подряд.
     const uint16_t doBits = data.H[SQ - 1];
     const bool wrkBit = (doBits & (1u << 14)) != 0;
+    const bool outBit = (doBits & (1u << 8)) != 0;   // _Out
+    const bool flpBit = (doBits & (1u << 10)) != 0;  // _Flp (Water_Flap)
+    const bool opnBit = (doBits & (1u << 11)) != 0;  // _Opn (команда подъёма ворот)
+    const uint16_t diBits = data.T[SQ - 1];
+    const bool gateOpenBit = (diBits & (1u << 13)) != 0; // Gate_Open (концевик ворот "вверху")
     const bool wasAuto = controllerAutoModeActive;
     bool suppressStopAfterRecentStart = false;
     if (lastStartSuccessTime != DateTime::MinValue) {
@@ -715,6 +720,37 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         controllerAutoModeActive = false;
         wrkZeroConsecutiveCounts = 0;
     }
+
+    // После останова продолжаем запись:
+    // 1) пока идёт продувка (_Flp/_Out),
+    // 2) пока выполняется подъём ворот (_Opn),
+    // 3) ещё 10 секунд после фиксации верхнего концевика Gate_Open.
+    if (controllerAutoModeActive) {
+        postStopCaptureActive = false;
+        postStopGateOpenSeen = false;
+        postStopCaptureGraceUntil = DateTime::MinValue;
+    }
+    else {
+        const bool activeTailBits = outBit || flpBit || opnBit;
+        if (activeTailBits) {
+            postStopCaptureActive = true;
+        }
+        if (postStopCaptureActive) {
+            if (gateOpenBit) {
+                postStopGateOpenSeen = true;
+                postStopCaptureGraceUntil = now.AddSeconds(10.0);
+            }
+            const bool graceActive =
+                postStopGateOpenSeen &&
+                postStopCaptureGraceUntil != DateTime::MinValue &&
+                now.CompareTo(postStopCaptureGraceUntil) <= 0;
+            if (!(activeTailBits || graceActive)) {
+                postStopCaptureActive = false;
+                postStopGateOpenSeen = false;
+                postStopCaptureGraceUntil = DateTime::MinValue;
+            }
+        }
+    }
     if (controllerAutoModeActive) {
         lastControlLogTime = now;
         controlLogAbsenceStrikeCount = 0;
@@ -732,10 +768,39 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
             SetProgramStateUi(false);
     }
 
-    // Строка готова с телеметрией; ждём пакет лога (AppendControlLogToDataRow).
-    // Добавление в таблицу выполняется по подтверждённому состоянию авторежима (а не по единичному значению _Wrk).
-    pendingRow = row;
-    pendingRowWrkBit = controllerAutoModeActive;
+    // Запись строки:
+    // - при авторежиме ждём пакет лога (дополним pendingRow в AppendControlLogToDataRow),
+    // - в послеостановочном хвосте пишем телеметрию сразу, даже при _Wrk=0.
+    if (controllerAutoModeActive) {
+        pendingRow = row;
+        pendingRowWrkBit = true;
+    }
+    else if (postStopCaptureActive) {
+        System::Threading::Monitor::Enter(dataTableSync);
+        try {
+            if (dataGridView != nullptr && !dataGridView->IsDisposed) {
+                dataGridView->SuspendLayout();
+            }
+            try {
+                dataTable->Rows->Add(row);
+                dataExportedToExcel = false;
+            }
+            finally {
+                if (dataGridView != nullptr && !dataGridView->IsDisposed) {
+                    dataGridView->ResumeLayout(false);
+                }
+            }
+        }
+        finally {
+            System::Threading::Monitor::Exit(dataTableSync);
+        }
+        pendingRow = nullptr;
+        pendingRowWrkBit = false;
+    }
+    else {
+        pendingRow = row;
+        pendingRowWrkBit = false;
+    }
 }
 
 
@@ -2056,7 +2121,7 @@ void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::ar
     namesRef[0] = gcnew cli::array<String^>(16) {
         "Vent1_Left", "Vent2_Left", "Vent1_Right", "Vent2_Right", // IN0..IN3
         "Ten1_Left", "Ten2_Left", "Ten1_Right", "Ten2_Right",     // IN4..IN7
-        "Vent_Out",  // IN8: вытяжной вентилятор
+        "Vent_Out",  // IN8: вытяжной вентилятор работает
         "Air_Open",  // IN9: заслонка открыта
         "Air_Close", // IN10: заслонка закрыта
         "Gate_Alarm",// IN11: авария ворот
@@ -2067,13 +2132,13 @@ void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::ar
         
     };
 
-    // Вторая группа битов (статусы/отклики)
+    // Вторая группа битов (управление устройствами)
     namesRef[1] = gcnew cli::array<String^>(16) {
-        "_V0", "_V1", "_V2", "_V3", // Вентиляторы статус 1..4 отклик
-        "_H0", "_H1", "_H2", "_H3", // Тэны (нагрев) 1..4 отклик
-        "_Out",     // Заслонка открыта отклик
-        "_Inj",     // Инжектор включён отклик
-        "_Flp",     // Инжектор флоп открыт для увлажнения 
+        "_V0", "_V1", "_V2", "_V3", // Вентиляторы статус 1..4 включить
+        "_H0", "_H1", "_H2", "_H3", // Тэны (нагрев) 1..4 включить
+        "_Out",     // Вентилятор вытяжки включить
+        "_Inj",     // Инжектор включить
+        "_Flp",     // Заслонку открыть 
         "_Opn",     // Подъём ворот
         "_Dbl",     // Разблокировать ручное управление воротами
         "_Cls",     // Опускание ворот
@@ -2087,6 +2152,7 @@ void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::ar
 ////******************** Обработка закрытия формы ***************************************
 System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ sender, System::Windows::Forms::FormClosingEventArgs^ e) {
     try {
+        isFormClosingNow = true;
         // Проверяем, есть ли данные в таблице и не были ли они уже экспортированы
         if (dataTable != nullptr && dataTable->Rows->Count > 0) {
             

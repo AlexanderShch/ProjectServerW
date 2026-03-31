@@ -23,9 +23,13 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd) {
 // Универсальный метод для отправки команды клиенту с явным именем
 bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandName) {
     try {
+        const bool suppressUiErrors =
+            isFormClosingNow || this->Disposing || this->IsDisposed;
         // Проверяем, что сокет клиента валиден
         if (clientSocket == INVALID_SOCKET) {
-            MessageBox::Show("Нет активного соединения с клиентом!");
+            if (!suppressUiErrors) {
+                MessageBox::Show("Нет активного соединения с клиентом!");
+            }
             GlobalLogger::LogMessage("Error: Не могу отправить команду " + commandName +
                 ", нет активного соединения с клиентом!");
             return false;
@@ -37,7 +41,9 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
 
         if (commandLength == 0) {
             String^ errorMsg = "Ошибка формирования команды " + commandName;
-            MessageBox::Show(errorMsg);
+            if (!suppressUiErrors) {
+                MessageBox::Show(errorMsg);
+            }
             GlobalLogger::LogMessage("Error: " + errorMsg);
             return false;
         }
@@ -66,7 +72,9 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
         if (bytesSent == SOCKET_ERROR) {
             int error = WSAGetLastError();
             String^ errorMsg = "Ошибка отправки команды " + commandName + ": " + error.ToString();
-            MessageBox::Show(errorMsg);
+            if (!suppressUiErrors) {
+                MessageBox::Show(errorMsg);
+            }
             GlobalLogger::LogMessage("Error: " + errorMsg);
             return false;
         }
@@ -80,7 +88,9 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
             // Отправлено меньше байт, чем ожидалось
             String^ errorMsg = "Отправлено только " + bytesSent.ToString() + " из " +
                 commandLength.ToString() + " байт для команды " + commandName;
-            MessageBox::Show(errorMsg);
+            if (!suppressUiErrors) {
+                MessageBox::Show(errorMsg);
+            }
             GlobalLogger::LogMessage("Error: Частичная отправка команды " +
                 commandName + ": " + errorMsg);
             return false;
@@ -88,7 +98,9 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
     }
     catch (Exception^ ex) {
         String^ errorMsg = "Исключение при отправке команды " + commandName + ": " + ex->Message;
-        MessageBox::Show(errorMsg);
+        if (!(isFormClosingNow || this->Disposing || this->IsDisposed)) {
+            MessageBox::Show(errorMsg);
+        }
         GlobalLogger::LogMessage("Error: " + errorMsg);
         return false;
     }
@@ -468,6 +480,25 @@ void ProjectServerW::DataForm::PopulateEquipmentAlarmGrid(uint16_t deviceFlags, 
                 deviceNames[bit],
                 "Нет подтверждения включения (рассогласование выход/вход).");
         }
+    }
+
+    // Специальные биты аварии ворот в Device_AlarmFlags.
+    // bit9  - программная авария ворот (нет сигнала концевика в течение 10 секунд движения),
+    // bit10 - аппаратная авария ворот (активен вход Gate_Alarm модуля IO).
+    if ((deviceFlags & (1u << 9)) != 0) {
+        dataGridEquipmentAlarm->Rows->Add(
+            "Ворота",
+            "Программная авария: нет сигнала концевика за 10 секунд движения.");
+    }
+    if ((deviceFlags & (1u << 10)) != 0) {
+        dataGridEquipmentAlarm->Rows->Add(
+            "Ворота",
+            "Аппаратная авария: активен вход Gate_Alarm модуля ввода-вывода.");
+    }
+    if ((deviceFlags & (1u << 11)) != 0) {
+        dataGridEquipmentAlarm->Rows->Add(
+            "Заслонка вытяжки",
+            "Нет подтверждения конечного положения Air_Open/Air_Close за 180 секунд.");
     }
 
     // Биты 0..6: аварии температурных каналов и IO-модуля в Sensor_AlarmFlags.

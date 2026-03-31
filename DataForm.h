@@ -186,6 +186,9 @@ namespace ProjectServerW {
 	int wrkZeroConsecutiveCounts;    // Подряд идущие "нулевые" отсчёты _Wrk (по Time устройства)
 	bool wrkLastSampleValid;         // true: есть предыдущий отсчёт Time для расчёта дельты
 	uint16_t wrkLastSampleTime;      // Предыдущий Time устройства для расчёта дельты отсчётов
+	bool postStopCaptureActive;      // true: продолжаем запись после STOP (вентиляция/подъём ворот/хвост 10 с)
+	bool postStopGateOpenSeen;       // true: в after-stop режиме зафиксирован верхний концевик ворот
+	DateTime postStopCaptureGraceUntil; // до какого времени писать после Gate_Open (+10 с)
 	DateTime lastControlLogTime;     // Время последней телеметрии с _Wrk=1; сброс флага при отсутствии такой телеметрии
 	int controlLogAbsenceStrikeCount; // Счётчик подряд идущих "пропусков" _Wrk=1 для защиты от ложных срабатываний
 	float lastFishCold_C;            // Последняя мин. Т рыбы из лога параметров (для записи в лог при остановке алгоритма)
@@ -197,6 +200,7 @@ namespace ProjectServerW {
 	System::Windows::Forms::Timer^ sendStateTimer;        // Таймер команды «Отправить состояние» по интервалу измерений
 	bool autoRestartInternalUncheck; // Why: one-shot UX unchecks the box; we must not cancel the pending START.
 	bool settingsLoading;            // Why: avoid side-effects (timers/log/save) while applying persisted settings.
+	bool isFormClosingNow;           // true: форма закрывается, сетевые MessageBox нужно подавлять.
 	System::String^ pendingVersion;  // временное хранение версии для обновления UI из другого потока
 	private: System::Windows::Forms::Label^ Label_Data;
 		private: System::Windows::Forms::Label^ LabelDefroster;
@@ -329,6 +333,9 @@ namespace ProjectServerW {
 		wrkZeroConsecutiveCounts = 0;
 		wrkLastSampleValid = false;
 		wrkLastSampleTime = 0;
+		postStopCaptureActive = false;
+		postStopGateOpenSeen = false;
+		postStopCaptureGraceUntil = DateTime::MinValue;
 		lastControlLogTime = DateTime::MinValue;
 		controlLogAbsenceStrikeCount = 0;
 		lastFishCold_C_Valid = false;
@@ -337,6 +344,7 @@ namespace ProjectServerW {
 		controlLogAbsenceTimer = nullptr;
 		autoRestartInternalUncheck = false;
 	settingsLoading = false;
+	isFormClosingNow = false;
 	pendingVersion = nullptr;       // Временная версия для обновления UI
 	// Инициализация порта клиента
 	clientPort = 0;
