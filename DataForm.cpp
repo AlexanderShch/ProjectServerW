@@ -648,11 +648,8 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     // Критерий "останова" подтверждаем по времени устройства: _Wrk == 0 не менее 5 отсчётов подряд.
     const uint16_t doBits = data.H[SQ - 1];
     const bool wrkBit = (doBits & (1u << 14)) != 0;
-    const bool outBit = (doBits & (1u << 8)) != 0;   // _Out
     const bool flpBit = (doBits & (1u << 10)) != 0;  // _Flp (Water_Flap)
     const bool opnBit = (doBits & (1u << 11)) != 0;  // _Opn (команда подъёма ворот)
-    const uint16_t diBits = data.T[SQ - 1];
-    const bool gateOpenBit = (diBits & (1u << 13)) != 0; // Gate_Open (концевик ворот "вверху")
     const bool wasAuto = controllerAutoModeActive;
     bool suppressStopAfterRecentStart = false;
     if (lastStartSuccessTime != DateTime::MinValue) {
@@ -722,26 +719,23 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     }
 
     // После останова продолжаем запись:
-    // 1) пока идёт продувка (_Flp/_Out),
-    // 2) пока выполняется подъём ворот (_Opn),
-    // 3) ещё 10 секунд после фиксации верхнего концевика Gate_Open.
+    // 1) пока идёт продувка (_Flp=1),
+    // 2) пока выполняется подъём ворот (_Opn=1, включая импульсный режим),
+    // 3) ещё 10 секунд после последней активности _Flp/_Opn.
+    // Почему: _Out может быть принудительно 0 при аварии/отладке, а Gate_Open может не сработать при аварии ворот.
     if (controllerAutoModeActive) {
         postStopCaptureActive = false;
         postStopGateOpenSeen = false;
         postStopCaptureGraceUntil = DateTime::MinValue;
     }
     else {
-        const bool activeTailBits = outBit || flpBit || opnBit;
+        const bool activeTailBits = flpBit || opnBit;
         if (activeTailBits) {
             postStopCaptureActive = true;
+            postStopCaptureGraceUntil = now.AddSeconds(10.0);
         }
         if (postStopCaptureActive) {
-            if (gateOpenBit) {
-                postStopGateOpenSeen = true;
-                postStopCaptureGraceUntil = now.AddSeconds(10.0);
-            }
             const bool graceActive =
-                postStopGateOpenSeen &&
                 postStopCaptureGraceUntil != DateTime::MinValue &&
                 now.CompareTo(postStopCaptureGraceUntil) <= 0;
             if (!(activeTailBits || graceActive)) {
