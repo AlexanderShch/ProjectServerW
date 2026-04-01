@@ -302,7 +302,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	// Контроллер передаёт на линию фреймы с маркером начала кадра:
 	//   [AA 55][Type][Cmd][Status][DataLen][Data...][CRC16]
 	// CRC16 считается по блоку: [Type][Cmd][Status][DataLen][Data...].
-	const int TELEMETRY_DATA_LEN = 45;
+	const int TELEMETRY_DATA_LEN = 46;
 	const int CONTROL_LOG_DATA_LEN = 89; // sizeof(ControlLogPayload_t) for T_filt_C[0..5]
 	// Максимальный размер блока после AA55: 4 + DataLen + 2.
 	const int MAX_FRAMED_PAYLOAD_LEN = 128;

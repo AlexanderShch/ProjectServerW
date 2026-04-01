@@ -202,8 +202,8 @@ void ProjectServerW::DataForm::SendStopCommand() {
         }
         GlobalLogger::LogMessage("Information: Команда STOP успешно выполнена контроллером");
 
-        // По успешному СТОП — записать таблицу данных в Excel
-        StartExcelExportThread(false);
+        // Excel после СТОП не запускаем: экспорт выполняется по окончании фиксации сессии на телеметрии
+        // (условие 10× _Wrk=0 и _Shd=0 в AddDataToTable), либо вручную кнопкой / при закрытии формы.
 
         // Восстанавливаем цвет через 3 секунды с помощью таймера
         System::Windows::Forms::Timer^ colorTimer = gcnew System::Windows::Forms::Timer();

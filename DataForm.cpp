@@ -26,6 +26,7 @@ typedef struct   // Формат пакета (как на STM32)
     uint8_t Active[SQ];			// маска активных
     short T[SQ];				// температура 1 группы (испаритель)
     short H[SQ];				// влажность 2 группы (относительная)
+    uint8_t ShutdownActive;     // Флаг post-shutdown из алгоритма дефроста (0/1)
 } MSGQUEUE_OBJ_t;
 #pragma pack(pop)
 
@@ -465,12 +466,12 @@ void ProjectServerW::DataForm::InitializeDataTable() {
     cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();
     if (bitNames[0] != nullptr) {
         // Добавляем в таблицу колонки битовых полей первой группы
-        for (uint8_t i = 0; i < 16; i++)
+        for (int i = 0; i < bitNames[0]->Length; i++)
         {
             dataTable->Columns->Add(bitNames[0][i], uint8_t::typeid);
         }
         // Добавляем в таблицу колонки битовых полей второй группы
-        for (uint8_t i = 0; i < 16; i++)
+        for (int i = 0; i < bitNames[1]->Length; i++)
         {
             dataTable->Columns->Add(bitNames[1][i], uint8_t::typeid);
         }
@@ -638,11 +639,14 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     lastTelemetryAlrmBit = alrmBit;
     // Вторая группа (_V0.._Alr) — выходы DO модуля ввода-вывода. В контроллере: Read_Data_1 → H.
     bitField = data.H[SQ - 1];
-    // Записываем биты второй группы (DO), тот же битовый порядок, что в модуле.
-    for (int bit = 0; bit < 16; bit++) {
+    // Записываем биты второй группы (DO) + дополнительный флаг post-shutdown.
+    // Порядок полей в таблице: _V0.._Cls, _Wrk, _Shd, _Alr.
+    for (int bit = 0; bit <= 14; bit++) {
         bool bitValue = (bitField & (1 << bit)) != 0;
         row[bitNames[1][bit]] = bitValue;
     }
+    row[bitNames[1][15]] = (data.ShutdownActive != 0) ? 1 : 0;    // _Shd
+    row[bitNames[1][16]] = (bitField & (1 << 15)) != 0;            // _Alr
 
     // Определение автоматического режима по биту _Wrk (бит 14 DO): _Wrk == 1 — контроллер в автоматическом режиме.
     // Критерий "останова" подтверждаем по времени устройства: _Wrk == 0 не менее 5 отсчётов подряд.
@@ -2127,7 +2131,7 @@ void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::ar
     };
 
     // Вторая группа битов (управление устройствами)
-    namesRef[1] = gcnew cli::array<String^>(16) {
+    namesRef[1] = gcnew cli::array<String^>(17) {
         "_V0", "_V1", "_V2", "_V3", // Вентиляторы статус 1..4 включить
         "_H0", "_H1", "_H2", "_H3", // Тэны (нагрев) 1..4 включить
         "_Out",     // Вентилятор вытяжки включить
@@ -2137,6 +2141,7 @@ void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::ar
         "_Dbl",     // Разблокировать ручное управление воротами
         "_Cls",     // Опускание ворот
         "_Wrk",     // Устройство в режиме работы автоматического цикла (зелёная лампа ПУСК)
+        "_Shd",     // Процесс post-shutdown (завершение после STOP)
         "_Alr"      // Красная лампа АВАРИЯ
     };
 
