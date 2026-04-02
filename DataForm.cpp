@@ -654,6 +654,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     const bool wrkBit = (doBits & (1u << 14)) != 0;
     const bool flpBit = (doBits & (1u << 10)) != 0;  // _Flp (Water_Flap)
     const bool opnBit = (doBits & (1u << 11)) != 0;  // _Opn (команда подъёма ворот)
+    const bool shdBit = (data.ShutdownActive != 0);
     const bool wasAuto = controllerAutoModeActive;
     bool suppressStopAfterRecentStart = false;
     if (lastStartSuccessTime != DateTime::MinValue) {
@@ -711,42 +712,24 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
             labelDefrosterState->Text = stopMessage->Replace("Information: ", "");
             labelDefrosterState->ForeColor = System::Drawing::Color::Blue;
         }
-        // По окончании работы алгоритма — автоматически сохраняем таблицу данных в Excel (аварийный режим, без трогания UI-кнопки).
-        try {
-            StartExcelExportThread(true);
-        }
-        catch (Exception^ ex) {
-            GlobalLogger::LogMessage("Error: Auto Excel export on defrost stop failed: " + ex->ToString());
-        }
+        // Экспорт запускаем только после завершения post-shutdown и 10 стабильных отсчётов _Shd=0 && _Wrk=0.
+        stopExportPending = true;
+        shdWrkZeroStableCounts = 0;
         controllerAutoModeActive = false;
         wrkZeroConsecutiveCounts = 0;
     }
 
-    // После останова продолжаем запись:
-    // 1) пока идёт продувка (_Flp=1),
-    // 2) пока выполняется подъём ворот (_Opn=1, включая импульсный режим),
-    // 3) ещё 10 секунд после последней активности _Flp/_Opn.
-    // Почему: _Out может быть принудительно 0 при аварии/отладке, а Gate_Open может не сработать при аварии ворот.
+    // После останова продолжаем запись только пока активен post-shutdown (_Shd=1).
     if (controllerAutoModeActive) {
         postStopCaptureActive = false;
         postStopGateOpenSeen = false;
         postStopCaptureGraceUntil = DateTime::MinValue;
     }
     else {
-        const bool activeTailBits = flpBit || opnBit;
-        if (activeTailBits) {
-            postStopCaptureActive = true;
-            postStopCaptureGraceUntil = now.AddSeconds(10.0);
-        }
-        if (postStopCaptureActive) {
-            const bool graceActive =
-                postStopCaptureGraceUntil != DateTime::MinValue &&
-                now.CompareTo(postStopCaptureGraceUntil) <= 0;
-            if (!(activeTailBits || graceActive)) {
-                postStopCaptureActive = false;
-                postStopGateOpenSeen = false;
-                postStopCaptureGraceUntil = DateTime::MinValue;
-            }
+        postStopCaptureActive = shdBit;
+        if (!postStopCaptureActive) {
+            postStopGateOpenSeen = false;
+            postStopCaptureGraceUntil = DateTime::MinValue;
         }
     }
     if (controllerAutoModeActive) {
@@ -798,6 +781,33 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     else {
         pendingRow = row;
         pendingRowWrkBit = false;
+    }
+
+    if (controllerAutoModeActive) {
+        stopExportPending = false;
+        shdWrkZeroStableCounts = 0;
+    }
+    else if (stopExportPending) {
+        if (!postStopCaptureActive && !wrkBit && !shdBit) {
+            shdWrkZeroStableCounts += deltaCounts;
+        }
+        else {
+            shdWrkZeroStableCounts = 0;
+        }
+
+        if (shdWrkZeroStableCounts >= 10) {
+            if (dataCollectionEndTime == DateTime::MinValue) {
+                dataCollectionEndTime = now;
+            }
+            try {
+                StartExcelExportThread(true);
+                stopExportPending = false;
+                shdWrkZeroStableCounts = 0;
+            }
+            catch (Exception^ ex) {
+                GlobalLogger::LogMessage("Error: Auto Excel export after shutdown completion failed: " + ex->ToString());
+            }
+        }
     }
 }
 

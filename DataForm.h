@@ -189,6 +189,8 @@ namespace ProjectServerW {
 	bool postStopCaptureActive;      // true: продолжаем запись после STOP (вентиляция/подъём ворот/хвост 10 с)
 	bool postStopGateOpenSeen;       // true: в after-stop режиме зафиксирован верхний концевик ворот
 	DateTime postStopCaptureGraceUntil; // до какого времени писать после Gate_Open (+10 с)
+	bool stopExportPending;          // true: STOP подтверждён по _Wrk, ждём окончания _Shd/хвоста перед экспортом
+	int shdWrkZeroStableCounts;      // стабильные отсчёты времени устройства с _Shd=0 и _Wrk=0 перед автоэкспортом
 	DateTime lastControlLogTime;     // Время последней телеметрии с _Wrk=1; сброс флага при отсутствии такой телеметрии
 	int controlLogAbsenceStrikeCount; // Счётчик подряд идущих "пропусков" _Wrk=1 для защиты от ложных срабатываний
 	float lastFishCold_C;            // Последняя мин. Т рыбы из лога параметров (для записи в лог при остановке алгоритма)
@@ -336,6 +338,8 @@ namespace ProjectServerW {
 		postStopCaptureActive = false;
 		postStopGateOpenSeen = false;
 		postStopCaptureGraceUntil = DateTime::MinValue;
+		stopExportPending = false;
+		shdWrkZeroStableCounts = 0;
 		lastControlLogTime = DateTime::MinValue;
 		controlLogAbsenceStrikeCount = 0;
 		lastFishCold_C_Valid = false;
