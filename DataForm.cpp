@@ -749,6 +749,45 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
             SetProgramStateUi(false);
     }
 
+    // Если строка предыдущей секунды ждала control-log, но пришла уже новая телеметрия (другое Time),
+    // фиксируем старую строку как есть, чтобы не терять телеметрию на переходах _Wrk/_Shd.
+    System::Threading::Monitor::Enter(dataTableSync);
+    try {
+        if (pendingRow != nullptr) {
+            bool shouldFlushPending = true;
+            try {
+                Object^ prevTimeObj = pendingRow["Time"];
+                if (prevTimeObj != nullptr && prevTimeObj != System::DBNull::Value) {
+                    const uint16_t prevTime = Convert::ToUInt16(prevTimeObj);
+                    shouldFlushPending = (prevTime != data.Time);
+                }
+            }
+            catch (...) {
+                shouldFlushPending = true;
+            }
+
+            if (shouldFlushPending) {
+                if (dataGridView != nullptr && !dataGridView->IsDisposed) {
+                    dataGridView->SuspendLayout();
+                }
+                try {
+                    dataTable->Rows->Add(pendingRow);
+                    dataExportedToExcel = false;
+                }
+                finally {
+                    if (dataGridView != nullptr && !dataGridView->IsDisposed) {
+                        dataGridView->ResumeLayout(false);
+                    }
+                }
+                pendingRow = nullptr;
+                pendingRowWrkBit = false;
+            }
+        }
+    }
+    finally {
+        System::Threading::Monitor::Exit(dataTableSync);
+    }
+
     // Запись строки:
     // - при активном _Wrk ждём пакет лога (дополним pendingRow в AppendControlLogToDataRow),
     // - при окне подтверждения STOP (_Wrk=0, но controllerAutoModeActive ещё true) пишем телеметрию сразу,
