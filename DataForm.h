@@ -11,6 +11,20 @@
 // Количество датчиков: TH дефростера (0-2) + датчики продукта (3, 4) + T корпуса (5) + MB_IO (6)
 constexpr uint8_t SQ = 7;
 
+// Пакет телеметрии по контракту с контроллером (как на STM32; на Win — #pragma pack(1))
+#pragma pack(push, 1)
+typedef struct
+{
+	uint16_t Time;
+	uint8_t SensorQuantity;
+	uint8_t SensorType[SQ];
+	uint8_t Active[SQ];
+	short T[SQ];
+	short H[SQ];
+	uint8_t ShutdownActive;
+} MSGQUEUE_OBJ_t;
+#pragma pack(pop)
+
 namespace ProjectServerW {
 
 	using namespace System;
@@ -1347,6 +1361,28 @@ private: System::ComponentModel::IContainer^ components;
 			void SaveSettings();
 			void LoadSettings();
 			void UpdateDirectoryTextBox(String^ path);
+			void UpdateModeFlagsFromTelemetry(
+				System::DateTime now,
+				uint16_t deviceTime,
+				bool wrkBit,
+				bool shdBit,
+				bool currentActiveProductTempValid,
+				float currentActiveProductMinTemp,
+				int& outDeltaCounts);
+			void ResolveModesAndFlushPendingRow(
+				System::DateTime now,
+				const MSGQUEUE_OBJ_t& data,
+				bool currentActiveProductTempValid,
+				float currentActiveProductMinTemp,
+				bool& outWrkBit,
+				bool& outShdBit,
+				int& outDeltaCounts);
+			void HandleConnectionSetupOnTelemetry(System::DateTime now);
+			void UpdateShutdownExportFlags(
+				System::DateTime now,
+				bool wrkBit,
+				bool shdBit,
+				int deltaCounts);
 			// Обработчик события закрытия формы
 			System::Void DataForm_FormClosing(System::Object^ sender, System::Windows::Forms::FormClosingEventArgs^ e);
 			

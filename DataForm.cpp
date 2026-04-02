@@ -15,21 +15,6 @@ using namespace Microsoft::Office::Interop::Excel;
 
 std::map<std::wstring, gcroot<DataForm^>> formData_Map; // глобальная карта окон formData_Map
 
-// Структура пакета по контракту (совпадает с контроллером)
-// На сервере использовать __attribute__((packed)), на Win — #pragma pack(1)
-#pragma pack(push, 1)
-typedef struct   // Формат пакета (как на STM32)
-{
-    uint16_t Time;				// время в секундах с включения
-    uint8_t SensorQuantity;		// количество датчиков
-    uint8_t SensorType[SQ];		// тип датчика
-    uint8_t Active[SQ];			// маска активных
-    short T[SQ];				// температура 1 группы (испаритель)
-    short H[SQ];				// влажность 2 группы (относительная)
-    uint8_t ShutdownActive;     // Флаг post-shutdown из алгоритма дефроста (0/1)
-} MSGQUEUE_OBJ_t;
-#pragma pack(pop)
-
 // Пакет лога алгоритма (Type 0x01): сначала отфильтрованные температуры 6 датчиков 0..5 (°C),
 // затем текущая фаза + группа 3 — переменные алгоритма (совпадает с ControlLogPayload_t на контроллере).
 #pragma pack(push, 1)
@@ -94,23 +79,270 @@ void ProjectServerW::DataForm::ParseBuffer(const char* buffer, size_t size) {
     memcpy(&data, buffer + 4, sizeof(data));
 }
 
+static void ExtractActiveProductMinTemp(
+    const MSGQUEUE_OBJ_t& data,
+    bool& currentActiveProductTempValid,
+    float& currentActiveProductMinTemp)
+{
+    // Мин. Т продукта по активным датчикам из текущей телеметрии (датчики продукта: индексы 3 и 4).
+    currentActiveProductTempValid = false;
+    currentActiveProductMinTemp = 0.0f;
+    if (SQ >= 6) {
+        if (data.Active[3] != 0) {
+            currentActiveProductMinTemp = data.T[3] / 10.0f;
+            currentActiveProductTempValid = true;
+        }
+        if (data.Active[4] != 0) {
+            const float tProdRight = data.T[4] / 10.0f;
+            if (!currentActiveProductTempValid || tProdRight < currentActiveProductMinTemp) {
+                currentActiveProductMinTemp = tProdRight;
+            }
+            currentActiveProductTempValid = true;
+        }
+    }
+}
+
+// Обновление внутренних флагов автомата по текущей телеметрии. 
+void ProjectServerW::DataForm::UpdateModeFlagsFromTelemetry(
+    DateTime now,                       // Текущее время
+    uint16_t deviceTime,                // Время из структуры пакета
+    bool wrkBit,                        // Флаг _Wrk
+    bool shdBit,                        // Флаг _Shd
+    bool currentActiveProductTempValid, // Флаг валидности мин. Т продукта
+    float currentActiveProductMinTemp,  // Мин. Т продукта
+    int& outDeltaCounts)                // Дельта времени
+{
+    const bool wasAuto = controllerAutoModeActive;   // Флаг автомата
+    bool suppressStopAfterRecentStart = false;      // Флаг отключения останова после недавнего запуска (5 секунд)
+
+    // Проверяем, есть ли время последнего успешного запуска
+    if (lastStartSuccessTime != DateTime::MinValue) {   // Если время последнего успешного запуска не равно минимальному значению
+        TimeSpan sinceStart = now.Subtract(lastStartSuccessTime);   // Вычисляем время с момента последнего успешного запуска
+        suppressStopAfterRecentStart = (sinceStart.TotalSeconds >= 0.0 && sinceStart.TotalSeconds < 5.0);   // Устанавливаем флаг suppressStopAfterRecentStart
+    }
+
+    // Если флаг _Wrk установлен, сбрасываем счётчик нулевых последовательных отсчётов
+    // И устанавливаем флаг автомата
+    if (wrkBit) {
+        wrkZeroConsecutiveCounts = 0;
+        controllerAutoModeActive = true;   // Устанавливаем флаг автомата
+    }
+    // Если флаг _Wrk не установлен, но автомат был активен, увеличиваем счётчик нулевых последовательных отсчётов
+    else if (wasAuto) {
+        wrkZeroConsecutiveCounts += outDeltaCounts;
+    }
+    else {
+        wrkZeroConsecutiveCounts = 0;
+    }
+
+    // Проверяем, нужно ли остановить автомат
+    const bool stopConfirmedByWrk =
+        (wasAuto && !wrkBit && shdBit && !suppressStopAfterRecentStart && wrkZeroConsecutiveCounts >= 5);
+        // был в автомате, 
+        // но в автомате сейчас не работает, 
+        // И находится в режиме post-shutdown, 
+        // И нет отключения останова после недавнего запуска, 
+        // И счётчик нулевых _Wrk последовательных отсчётов >= 5
+        // Тогда нужно остановить автомат
+    
+    // Если нужно остановить автомат, т.е. сработало условие остановки, выводим сообщение в лог и готовимфлаги
+    if (stopConfirmedByWrk) {   
+        // Переход в остановку: пишем в лог дату/время остановки и достигнутую мин. Т рыбы.
+        DateTime stopTime = now;   // Время остановки
+
+        String^ stopMessage = nullptr;   // Сообщение остановки
+        const bool useLogTemp = (lastFishCold_C_Valid && lastFishCold_C != 0.0f);   // Используем мин. Т рыбы если она есть
+        if (useLogTemp) {
+            stopMessage = String::Format(
+                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы: {1:F1} °C",
+                stopTime, lastFishCold_C);
+        }
+        else if (currentActiveProductTempValid) {
+            stopMessage = String::Format(
+                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы: {1:F1} °C",
+                stopTime, currentActiveProductMinTemp);
+        }
+        else {
+            stopMessage = String::Format(
+                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}. Остановка по времени процесса без датчиков продукта.",
+                stopTime);
+        }
+
+        // Выводим сообщение в лог
+        GlobalLogger::LogMessage(stopMessage);
+        if (labelDefrosterState != nullptr && !labelDefrosterState->IsDisposed) {   // Выводим сообщение в окне состояния дефростера
+            labelDefrosterState->Text = stopMessage->Replace("Information: ", "");
+            labelDefrosterState->ForeColor = System::Drawing::Color::Blue;
+        }
+        
+        // Экспорт в EXCEL запустим только после завершения post-shutdown И 10 стабильных отсчётов _Shd=0 && _Wrk=0.
+        stopExportPending = true;   // Устанавливаем флаг экспорта данных в Excel
+        shdWrkZeroStableCounts = 0;   // Сбрасываем счётчик стабильных отсчётов _Shd=0 && _Wrk=0
+        controllerAutoModeActive = false;   // Сбрасываем флаг автомата
+        wrkZeroConsecutiveCounts = 0;   // Сбрасываем счётчик нулевых последовательных отсчётов _Wrk
+    }
+
+    // Условие останова автомата не выполнено, продолжаем запись в таблицу данных, пока активен post-shutdown (_Shd=1).
+    if (controllerAutoModeActive) {   // Если автомат активен
+        postStopCaptureActive = false;   // Сбрасываем флаг активного post-shutdown
+        postStopGateOpenSeen = false;   // Сбрасываем флаг открытия ворот
+        postStopCaptureGraceUntil = DateTime::MinValue;   // Сбрасываем время grace-периода
+    }
+    else {                              // Если автомат не активен
+        postStopCaptureActive = shdBit;   // Копируем флаг _Shd в флаг активного post-shutdown
+        if (!postStopCaptureActive) {   // Если post-shutdown ещё не активен
+            postStopGateOpenSeen = false;   // Сбрасываем флаг открытия ворот
+            postStopCaptureGraceUntil = DateTime::MinValue;   // Сбрасываем время grace-периода
+        }
+    }
+
+    // Обновляем UI программы
+    if (this->InvokeRequired) {   // Если вызов требуется в другом потоке
+        // Вызываем метод SetProgramStateUi в другом потоке
+        this->BeginInvoke(gcnew System::Action<bool>(this, &DataForm::SetProgramStateUi), controllerAutoModeActive);    
+    }
+    else {   // Если вызов не требуется в другом потоке
+        // Вызываем метод SetProgramStateUi в текущем потоке
+        SetProgramStateUi(controllerAutoModeActive);
+    }
+}
+
+// Обработка установки соединения при получении телеметрии (например, при подключении устройства).
+void ProjectServerW::DataForm::HandleConnectionSetupOnTelemetry(DateTime now)   // Текущее время
+{
+    if (reconnectFixationLogPending) {   // Если есть запрос на запись в лог при подключении устройства
+        reconnectFixationLogPending = false;   // Сбрасываем флаг запроса на запись в лог при подключении устройства
+        GlobalLogger::LogMessage(String::Format(
+            "Information: Устройство подключено к порту (Port {1}), GUID: {0}",
+            (this->ClientIP != nullptr ? this->ClientIP : ""),
+            clientPort));
+    }
+
+    if (!firstDataReceived) {   // Если первые данные ещё не получены
+        firstDataReceived = true;   // Устанавливаем флаг первых данных получены
+        dataCollectionStartTime = now;   // Устанавливаем время начала сбора данных
+        dataCollectionEndTime = DateTime::MinValue;   // Сбрасываем время окончания сбора данных
+        excelFileName = "WorkData_Port" + clientPort.ToString();   // Устанавливаем имя файла Excel
+        dataExportedToExcel = false;   // Сбрасываем флаг экспорта данных в Excel
+        SetProgramStateUi(false);   // Устанавливаем UI программы в режим неавтоматического алгоритма
+    }
+
+    // Таймаут автоперезапуска: если после STOP прошло 20 минут без экспорта — отменяем ожидание.
+    if (autoRestartPending && autoRestartStopIssuedTime != DateTime::MinValue) {
+        // Если после STOP прошло 20 минут без экспорта — отменяем ожидание.
+        TimeSpan waited = now.Subtract(autoRestartStopIssuedTime);   // Вычисляем время ожидания
+        const double safetyTimeoutMinutes = 20;   // Таймаут ожидания в минутах
+        if (waited.TotalMinutes >= safetyTimeoutMinutes) {   // Если время ожидания >= таймаута
+            autoRestartPending = false;   // Сбрасываем флаг автоперезапуска
+            autoRestartStopIssuedTime = DateTime::MinValue;   // Сбрасываем время выдачи STOP
+        }
+    }
+    // Если автоперезапуск не запущен, или время ожидания < таймаута, продолжаем ожидание.
+}
+
+// Определение режимов по _Wrk/_Shd и установка внутренних флагов автомата.
+void ProjectServerW::DataForm::ResolveModesAndFlushPendingRow(
+    DateTime now,
+    const MSGQUEUE_OBJ_t& data,             // Структура пакета по контракту (совпадает с контроллером) из ParseBuffer
+    bool currentActiveProductTempValid,     // Флаг валидности мин. Т продукта
+    float currentActiveProductMinTemp,      // Мин. Т продукта
+    bool& outWrkBit,                        // Флаг _Wrk
+    bool& outShdBit,                        // Флаг _Shd
+    int& outDeltaCounts)                    // Дельта времени из UpdateModeFlagsFromTelemetry
+{
+    // Определение режимов по _Wrk/_Shd и установка внутренних флагов автомата.
+    const uint16_t doBits = data.H[SQ - 1];   // Получаем флаги _Wrk/_Shd из структуры пакета
+    outWrkBit = (doBits & (1u << 14)) != 0;   // Флаг _Wrk
+    outShdBit = (data.ShutdownActive != 0);   // Флаг _Shd
+    outDeltaCounts = 1;   // Дельта времени
+    // Обновляем внутренние флаги автомата
+    UpdateModeFlagsFromTelemetry(   
+        now,                         // Текущее время
+        data.Time,                   // Время из структуры пакета
+        outWrkBit,                   // Флаг _Wrk
+        outShdBit,                   // Флаг _Shd
+        currentActiveProductTempValid, // Флаг валидности мин. Т продукта
+        currentActiveProductMinTemp,  // Мин. Т продукта
+        outDeltaCounts);              // Дельта времени
+
+    // Если строка предыдущей секунды ждала control-log, но пришла уже новая телеметрия (другое Time),
+    // фиксируем старую строку как есть, чтобы не терять телеметрию на переходах _Wrk/_Shd.
+    System::Threading::Monitor::Enter(dataTableSync);
+    try {
+        if (pendingRow != nullptr) {
+            bool shouldFlushPending = true;
+            try {
+                Object^ prevTimeObj = pendingRow["Time"];
+                if (prevTimeObj != nullptr && prevTimeObj != System::DBNull::Value) {
+                    const uint16_t prevTime = Convert::ToUInt16(prevTimeObj);
+                    shouldFlushPending = (prevTime != data.Time);
+                }
+            }
+            catch (...) {
+                shouldFlushPending = true;
+            }
+
+            if (shouldFlushPending) {
+                if (dataGridView != nullptr && !dataGridView->IsDisposed) {
+                    dataGridView->SuspendLayout();
+                }
+                try {
+                    dataTable->Rows->Add(pendingRow);
+                    dataExportedToExcel = false;
+                }
+                finally {
+                    if (dataGridView != nullptr && !dataGridView->IsDisposed) {
+                        dataGridView->ResumeLayout(false);
+                    }
+                }
+                pendingRow = nullptr;
+                pendingRowWrkBit = false;
+            }
+        }
+    }
+    finally {
+        System::Threading::Monitor::Exit(dataTableSync);
+    }
+}
+
+// Обновление флагов экспорта данных в EXCEL при завершении post-shutdown.
+void ProjectServerW::DataForm::UpdateShutdownExportFlags(
+    DateTime now,   // Текущее время
+    bool wrkBit,   // Флаг _Wrk
+    bool shdBit,   // Флаг _Shd
+    int deltaCounts)   // Дельта времени
+{
+    // Если автомат активен, сбрасываем флаг экспорта данных в Excel и счётчик стабильных отсчётов _Shd=0 && _Wrk=0
+    if (controllerAutoModeActive) {   // Если автомат активен
+        stopExportPending = false;   // Сбрасываем флаг экспорта данных в Excel
+        shdWrkZeroStableCounts = 0;   // Сбрасываем счётчик стабильных отсчётов _Shd=0 && _Wrk=0
+    }
+    else if (stopExportPending) {   // Если флаг экспорта данных в Excel установлен
+        if (!postStopCaptureActive && !wrkBit && !shdBit) {   // Если post-shutdown не активен, _Wrk=0 и _Shd=0
+            shdWrkZeroStableCounts += deltaCounts;   // Увеличиваем счётчик стабильных отсчётов _Shd=0 && _Wrk=0
+        }
+        else {   // Если post-shutdown активен, _Wrk=1 или _Shd=1
+            shdWrkZeroStableCounts = 0;   // Сбрасываем счётчик стабильных отсчётов _Shd=0 && _Wrk=0
+        }
+
+        // Если счётчик стабильных отсчётов _Shd=0 && _Wrk=0 >= 10, запускаем экспорт данных в Excel
+        if (shdWrkZeroStableCounts >= 10) {
+            if (dataCollectionEndTime == DateTime::MinValue) {   // Если время окончания сбора данных не установлено
+                dataCollectionEndTime = now;   // Устанавливаем время окончания сбора данных
+            }
+            StartExcelExportThread(true);   // Запускаем экспорт данных в Excel
+            stopExportPending = false;   // Сбрасываем флаг экспорта данных в Excel
+            shdWrkZeroStableCounts = 0;   // Сбрасываем счётчик стабильных отсчётов _Shd=0 && _Wrk=0
+        }
+    }
+}
+
+// Обработка выхода из программы.
 System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e)
 {
     // Ищем GUID текущей формы в formData_Map
     std::wstring currentFormGuid;
-    bool formFound = false;
-
-    for (auto it = formData_Map.begin(); it != formData_Map.end(); ++it) {
-        // Получаем указатель формы из gcroot
-        ProjectServerW::DataForm^ formPtr = it->second;
-
-        // Проверяем, это наша форма
-        if (formPtr == this) {
-            currentFormGuid = it->first;
-            formFound = true;
-            break;
-        }
-    }
+    bool formFound = false;   // Флаг найденной формы
 
     try {
         if (formFound) {
@@ -134,17 +366,19 @@ System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System:
 	return System::Void();
 }
 
+// Обработка нажатия кнопки EXCEL.
 System::Void ProjectServerW::DataForm::buttonEXCEL_Click(System::Object^ sender, System::EventArgs^ e)
 {
     try {
-        StartExcelExportThread(false);
+        StartExcelExportThread(false);   // Запускаем экспорт данных в Excel
     }
     catch (Exception^ ex) {
         GlobalLogger::LogMessage("Error: Exception in buttonEXCEL_Click: " + ex->ToString());
     }
 }
 
-bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency) {
+// Запуск потока экспорта данных в EXCEL.
+bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency) {   // Флаг аварийного экспорта
     try {
         // Замечание: блок не по потоку — захват монитора в контексте этого потока (UI поток захватывает монитор по кнопке).
         System::Threading::Monitor::Enter(excelExportSync);
@@ -191,16 +425,18 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency) {
                     PopulateEquipmentAlarmGrid(flags.deviceAlarmFlags, flags.sensorAlarmFlags);
                 }
                 else {
-                    GlobalLogger::LogMessage("Warning: GET_ALARM_FLAGS failed before Excel export, using current alarm grid snapshot");
+                    GlobalLogger::LogMessage("Предупреждение: GET_ALARM_FLAGS перед экспортом в Excel не выполнен, используется текущий снимок таблицы аварий");
                 }
             }
         }
         catch (Exception^ ex) {
-            GlobalLogger::LogMessage("Warning: Failed to refresh alarm flags before Excel export: " + ex->Message);
+            GlobalLogger::LogMessage("Предупреждение: не удалось обновить флаги аварий перед экспортом в Excel: " + ex->Message);
         }
 
+        // Создаём задачу экспорта данных в EXCEL
         ProjectServerW::FormExcel::ExcelExportJob^ job = gcnew ProjectServerW::FormExcel::ExcelExportJob();
         job->tableSnapshot = snapshot;
+
         // Снимок параметров для листа «Параметры»
         job->paramsPhase = BuildPhaseParamsDataTableForExcel();
         job->paramsGlobal = BuildGlobalParamsDataTableForExcel();
@@ -214,54 +450,47 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency) {
         job->formRef = gcnew System::WeakReference(this);
         job->enableButtonOnComplete = !isEmergency;
 
+        // Помещаем задачу в очередь экспорта данных в EXCEL
         ProjectServerW::FormExcel::EnqueueExport(job);
 
+        // Выводим сообщение в лог
         if (isEmergency) {
-            GlobalLogger::LogMessage("Information: Excel export queued (emergency background)");
+            GlobalLogger::LogMessage("Информация: экспорт данных в Excel поставлен в очередь (аварийное фоновое задание)");
         }
         else {
-            GlobalLogger::LogMessage("Information: Excel export queued");
+            GlobalLogger::LogMessage("Информация: экспорт данных в Excel поставлен в очередь");
         }
 
+        // Возвращаем true, если экспорт данных в Excel поставлен в очередь
         return true;
     }
+    // Если произошла ошибка, сбрасываем флаг экспорта данных в Excel и возвращаем false
     catch (Exception^ ex) {
-        System::Threading::Monitor::Enter(excelExportSync);
-        try {
-            excelExportInProgress = 0;
-        }
-        finally {
-            System::Threading::Monitor::Exit(excelExportSync);
-        }
-        GlobalLogger::LogMessage("Error: Failed to start Excel export thread: " + ex->ToString());
+        GlobalLogger::LogMessage("Ошибка: не удалось запустить поток экспорта данных в Excel: " + ex->ToString());
         return false;
     }
 }
 
+// Обработка завершения экспорта данных в EXCEL.
 void ProjectServerW::DataForm::OnExcelExportCompleted(bool enableButtonOnComplete) {
-    try {
-        if (this == nullptr || this->IsDisposed || this->Disposing) {
-            return;
-        }
+    if (this == nullptr || this->IsDisposed || this->Disposing) {
+        return;
+    }
 
-        System::Threading::Monitor::Enter(excelExportSync);
+    if (enableButtonOnComplete) {
         try {
-            excelExportInProgress = 0;
+            this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::EnableButton));
         }
-        finally {
-            System::Threading::Monitor::Exit(excelExportSync);
+        catch (Exception^ ex) {
+            GlobalLogger::LogMessage("Ошибка: не удалось включить кнопку экспорта данных в Excel: " + ex->ToString());
         }
-
-        if (enableButtonOnComplete) {
-            try {
-                this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::EnableButton));
-                    }
-                    catch (...) {}
-            }
+        catch (...) {
+            GlobalLogger::LogMessage("Ошибка: не удалось включить кнопку экспорта данных в Excel (неизвестное исключение)");
         }
-        catch (...) {}
+    }
 }
 
+// Обработка нажатия кнопки Browse.
 System::Void ProjectServerW::DataForm::buttonBrowse_Click(System::Object^ sender, System::EventArgs^ e)
 {
     // Выбор папки для сохранения файлов
@@ -289,6 +518,7 @@ System::Void ProjectServerW::DataForm::buttonBrowse_Click(System::Object^ sender
     }
 }
        
+// Создание и отображение формы в потоке.
 void ProjectServerW::DataForm::CreateAndShowDataFormInThread(std::queue<std::wstring>& messageQueue,
                                                              std::mutex& mtx, 
                                                              std::condition_variable& cv) {
@@ -513,7 +743,7 @@ void ProjectServerW::DataForm::InitializeDataTable() {
         dataGridView->DataSource = nullptr;
     }
     dataGridView->DataSource = dataTable;
-    GlobalLogger::LogMessage(gcnew String(L"Information: \u041F\u043E\u043B\u0443\u0447\u0435\u043D\u044B \u043D\u043E\u0432\u044B\u0435 \u0434\u0430\u043D\u043D\u044B\u0435"));
+    GlobalLogger::LogMessage("Information: DataGridView привязан к DataTable");
 }
 
 // 2. Добавление строки
@@ -535,18 +765,23 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         // DataLen должен совпадать с размером MSGQUEUE_OBJ_t на сервере.
         return;
     }
-    memcpy(&data, raw + 4, sizeof(data));
 
-    data_String = bufferToHex(buffer, size);
+    // Всё хорошо, данные в буфере корректны, копируем данные из буфера в структуру data
+    memcpy(&data, raw + 4, sizeof(data));
+    data_String = bufferToHex(buffer, size);   // Преобразуем буфер в строку в hex формате
     // Выводим содержимое пакета data_String в поле Label_Data
     DataForm::SetData_TextValue("Текущие данные: " + data_String);
 
     // Новая строка таблицы
     DataRow^ row = table->NewRow();
+    
+    // ВРЕМЯ -------------------------------------------------------------
     row["RealTime"] = now.ToString("HH:mm:ss");
     row["Time"] = data.Time;
     // Замечание: время, когда пришла телеметрия с устройства — в секундах с включения устройства.
     lastTelemetryDeviceSeconds = data.Time;
+    
+    // ТЕМПЕРАТУРЫ
     row["SQ"] = data.SensorQuantity;
     for (uint8_t i = 0; i < (SQ - 1); i++)
     {
@@ -562,83 +797,41 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     temperatures[2] = data.T[2] / 10.0;  // Температура испарителя по центру (T_def_center)
     temperatures[3] = data.T[3] / 10.0;  // Температура продукта слева (T_product_left)
     temperatures[4] = data.T[4] / 10.0;  // Температура продукта справа (T_product_right)
-    UpdateAllTemperatureValues(temperatures);
-    // Мин. Т продукта по активным датчикам из текущей телеметрии (датчики продукта: индексы 3 и 4).
-    bool currentActiveProductTempValid = false;
-    float currentActiveProductMinTemp = 0.0f;
-    if (SQ >= 6) {
-        if (data.Active[3] != 0) {
-            currentActiveProductMinTemp = data.T[3] / 10.0f;
-            currentActiveProductTempValid = true;
-        }
-        if (data.Active[4] != 0) {
-            const float tProdRight = data.T[4] / 10.0f;
-            if (!currentActiveProductTempValid || tProdRight < currentActiveProductMinTemp) {
-                currentActiveProductMinTemp = tProdRight;
-            }
-            currentActiveProductTempValid = true;
-        }
-    }
+    UpdateAllTemperatureValues(temperatures);   // Обновляем температуры в окне
+
+    // Вычисляем минимальную температуру продукта
+    bool currentActiveProductTempValid = false;   // Флаг наличия температуры продукта
+    float currentActiveProductMinTemp = 0.0f;   // Минимальная температура продукта
+    ExtractActiveProductMinTemp(data, currentActiveProductTempValid, currentActiveProductMinTemp);   // Извлекаем минимальную температуру продукта
     if (currentActiveProductTempValid) {
-        lastActiveProductMinTemp_C = currentActiveProductMinTemp;
-        lastActiveProductMinTemp_Valid = true;
+        lastActiveProductMinTemp_C = currentActiveProductMinTemp;   // Сохраняем минимальную температуру продукта
+        lastActiveProductMinTemp_Valid = true;   // Флаг наличия минимальной температуры продукта
     }
     else {
-        lastActiveProductMinTemp_Valid = false;
+        lastActiveProductMinTemp_Valid = false;   // Флаг отсутствия минимальной температуры продукта
     }
 
-    cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();
-
+    // БИТОВЫЕ ПОЛЯ -------------------------------------------------------------
+    cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();   // Получаем имена битовых полей из контроллера
     uint16_t bitField;
+    
     // Первая группа (Vent1_Left..But_Stop) — входы DI модуля ввода-вывода. В контроллере: Read_Data_2 → T.
-    bitField = data.T[SQ - 1];
-    const bool alrmBit = (bitField & (1u << 15)) != 0;
-
-    if (reconnectFixationLogPending) {
-        reconnectFixationLogPending = false;
-        GlobalLogger::LogMessage(String::Format(
-            "Information: Устройство подключено к порту (Port {1}), GUID: {0}",
-            (this->ClientIP != nullptr ? this->ClientIP : ""),
-            clientPort));
-    }
-
-    if (!firstDataReceived) {
-        firstDataReceived = true;
-        dataCollectionStartTime = now;
-        dataCollectionEndTime = DateTime::MinValue;
-        excelFileName = "WorkData_Port" + clientPort.ToString();
-        dataExportedToExcel = false;
-        SetProgramStateUi(false);
-    }
-
-    // Таймаут автоперезапуска: если после STOP прошло 20 минут без экспорта — отменяем ожидание.
-    if (autoRestartPending && autoRestartStopIssuedTime != DateTime::MinValue) {
-        TimeSpan waited = now.Subtract(autoRestartStopIssuedTime);
-        const double safetyTimeoutMinutes = 20;
-        if (waited.TotalMinutes >= safetyTimeoutMinutes) {
-            autoRestartPending = false;
-            autoRestartStopIssuedTime = DateTime::MinValue;
-            GlobalLogger::LogMessage(String::Format(
-                "Warning: Автоперезапуск отменён: таймаут {0} мин после STOP", safetyTimeoutMinutes));
-            if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
-                Label_Commands->Text = "[!] \u041D\u0435\u043E\u0436\u0438\u0434\u0430\u043D\u043D\u043E\u0435 \u0441\u043E\u0441\u0442\u043E\u044F\u043D\u0438\u0435: \u043F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u0435 \u0443\u0441\u0442\u0440\u043E\u0439\u0441\u0442\u0432\u0430";
-                Label_Commands->ForeColor = System::Drawing::Color::Orange;
-                GlobalLogger::LogMessage(Label_Commands->Text);
-            }
-        }
-    }
-
+    bitField = data.T[SQ - 1];                           // Получаем биты первой группы (Vent1_Left..But_Stop)
+    const bool alrmBit = (bitField & (1u << 15)) != 0;   // Флаг аварии
     // Записываем биты первой группы (Vent1_Left..But_Stop) — DI, тот же битовый порядок, что в модуле.
     for (int bit = 0; bit < 16; bit++) {
-        bool bitValue = (bitField & (1 << bit)) != 0;
+        bool bitValue = (bitField & (1 << bit)) != 0;   // Получаем значение бита
         row[bitNames[0][bit]] = bitValue;
     }
+
+    // Если флаг аварии изменился, обновляем флаги аварий
     if (!lastTelemetryAlrmBit && alrmBit) {
-        RefreshAlarmFlagsFromController();
+        RefreshAlarmFlagsFromController();   // Обновляем флаги аварий из контроллера
     }
-    lastTelemetryAlrmBit = alrmBit;
+    lastTelemetryAlrmBit = alrmBit;   // Сохраняем флаг аварии
+    
     // Вторая группа (_V0.._Alr) — выходы DO модуля ввода-вывода. В контроллере: Read_Data_1 → H.
-    bitField = data.H[SQ - 1];
+    bitField = data.H[SQ - 1];                           // Получаем биты второй группы (_V0.._Alr)
     // Записываем биты второй группы (DO) + дополнительный флаг post-shutdown.
     // Порядок полей в таблице: _V0.._Cls, _Wrk, _Shd, _Alr.
     for (int bit = 0; bit <= 14; bit++) {
@@ -647,156 +840,26 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     }
     row[bitNames[1][15]] = (data.ShutdownActive != 0) ? 1 : 0;    // _Shd
     row[bitNames[1][16]] = (bitField & (1 << 15)) != 0;            // _Alr
+    //--------------------------------------------------------------------
 
-    // Определение автоматического режима по биту _Wrk (бит 14 DO): _Wrk == 1 — контроллер в автоматическом режиме.
-    // Критерий "останова" подтверждаем по времени устройства: _Wrk == 0 не менее 5 отсчётов подряд.
-    const uint16_t doBits = data.H[SQ - 1];
-    const bool wrkBit = (doBits & (1u << 14)) != 0;
-    const bool flpBit = (doBits & (1u << 10)) != 0;  // _Flp (Water_Flap)
-    const bool opnBit = (doBits & (1u << 11)) != 0;  // _Opn (команда подъёма ворот)
-    const bool shdBit = (data.ShutdownActive != 0);
-    const bool wasAuto = controllerAutoModeActive;
-    bool suppressStopAfterRecentStart = false;
-    if (lastStartSuccessTime != DateTime::MinValue) {
-        TimeSpan sinceStart = now.Subtract(lastStartSuccessTime);
-        suppressStopAfterRecentStart = (sinceStart.TotalSeconds >= 0.0 && sinceStart.TotalSeconds < 5.0);
-    }
+    // Определяем режимы работы и флаги
+    bool wrkBit = false;   // Флаг режима работы
+    bool shdBit = false;   // Флаг режима shutdown
+    int deltaCounts = 1;   // Количество отсчётов
+    ResolveModesAndFlushPendingRow(now, data, currentActiveProductTempValid, currentActiveProductMinTemp, wrkBit, shdBit, deltaCounts);   // Определяем режимы работы и флаги
 
-    int deltaCounts = 1;
-    if (wrkLastSampleValid) {
-        const uint16_t prev = wrkLastSampleTime;
-        const uint16_t curr = data.Time;
-        const uint16_t rawDelta = (uint16_t)(curr - prev); // корректно при переполнении uint16
-        if (rawDelta > 0) {
-            deltaCounts = (int)rawDelta;
-        }
-    }
-    wrkLastSampleTime = data.Time;
-    wrkLastSampleValid = true;
-
-    if (wrkBit) {
-        wrkZeroConsecutiveCounts = 0;
-        controllerAutoModeActive = true;
-    }
-    else if (wasAuto) {
-        wrkZeroConsecutiveCounts += deltaCounts;
-    }
-    else {
-        wrkZeroConsecutiveCounts = 0;
-    }
-
-    const bool stopConfirmedByWrk =
-        (wasAuto && !wrkBit && !suppressStopAfterRecentStart && wrkZeroConsecutiveCounts >= 5);
-    if (stopConfirmedByWrk) {
-        // Переход в остановку: пишем в лог дату/время остановки и достигнутую мин. Т рыбы.
-        DateTime stopTime = now;
-        String^ stopMessage = nullptr;
-        const bool useLogTemp = (lastFishCold_C_Valid && lastFishCold_C != 0.0f);
-        if (useLogTemp) {
-            stopMessage = String::Format(
-                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы: {1:F1} °C",
-                stopTime, lastFishCold_C);
-        }
-        else if (currentActiveProductTempValid) {
-            stopMessage = String::Format(
-                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы: {1:F1} °C",
-                stopTime, currentActiveProductMinTemp);
-        }
-        else {
-            stopMessage = String::Format(
-                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}. Остановка по времени процесса без датчиков продукта.",
-                stopTime);
-        }
-        GlobalLogger::LogMessage(stopMessage);
-        if (labelDefrosterState != nullptr && !labelDefrosterState->IsDisposed) {
-            labelDefrosterState->Text = stopMessage->Replace("Information: ", "");
-            labelDefrosterState->ForeColor = System::Drawing::Color::Blue;
-        }
-        // Экспорт запускаем только после завершения post-shutdown и 10 стабильных отсчётов _Shd=0 && _Wrk=0.
-        stopExportPending = true;
-        shdWrkZeroStableCounts = 0;
-        controllerAutoModeActive = false;
-        wrkZeroConsecutiveCounts = 0;
-    }
-
-    // После останова продолжаем запись только пока активен post-shutdown (_Shd=1).
-    if (controllerAutoModeActive) {
-        postStopCaptureActive = false;
-        postStopGateOpenSeen = false;
-        postStopCaptureGraceUntil = DateTime::MinValue;
-    }
-    else {
-        postStopCaptureActive = shdBit;
-        if (!postStopCaptureActive) {
-            postStopGateOpenSeen = false;
-            postStopCaptureGraceUntil = DateTime::MinValue;
-        }
-    }
-    if (controllerAutoModeActive) {
-        lastControlLogTime = now;
-        controlLogAbsenceStrikeCount = 0;
-    }
-    if (this->InvokeRequired) {
-        if (controllerAutoModeActive)
-            this->BeginInvoke(gcnew System::Action<bool>(this, &DataForm::SetProgramStateUi), true);
-        else
-            this->BeginInvoke(gcnew System::Action<bool>(this, &DataForm::SetProgramStateUi), false);
-    }
-    else {
-        if (controllerAutoModeActive)
-            SetProgramStateUi(true);
-        else
-            SetProgramStateUi(false);
-    }
-
-    // Если строка предыдущей секунды ждала control-log, но пришла уже новая телеметрия (другое Time),
-    // фиксируем старую строку как есть, чтобы не терять телеметрию на переходах _Wrk/_Shd.
-    System::Threading::Monitor::Enter(dataTableSync);
-    try {
-        if (pendingRow != nullptr) {
-            bool shouldFlushPending = true;
-            try {
-                Object^ prevTimeObj = pendingRow["Time"];
-                if (prevTimeObj != nullptr && prevTimeObj != System::DBNull::Value) {
-                    const uint16_t prevTime = Convert::ToUInt16(prevTimeObj);
-                    shouldFlushPending = (prevTime != data.Time);
-                }
-            }
-            catch (...) {
-                shouldFlushPending = true;
-            }
-
-            if (shouldFlushPending) {
-                if (dataGridView != nullptr && !dataGridView->IsDisposed) {
-                    dataGridView->SuspendLayout();
-                }
-                try {
-                    dataTable->Rows->Add(pendingRow);
-                    dataExportedToExcel = false;
-                }
-                finally {
-                    if (dataGridView != nullptr && !dataGridView->IsDisposed) {
-                        dataGridView->ResumeLayout(false);
-                    }
-                }
-                pendingRow = nullptr;
-                pendingRowWrkBit = false;
-            }
-        }
-    }
-    finally {
-        System::Threading::Monitor::Exit(dataTableSync);
-    }
-
-    // Запись строки:
+    // ЗАПИСЬ СТРОКИ -------------------------------------------------------------
     // - при активном _Wrk ждём пакет лога (дополним pendingRow в AppendControlLogToDataRow),
-    // - при окне подтверждения STOP (_Wrk=0, но controllerAutoModeActive ещё true) пишем телеметрию сразу,
-    // - в послеостановочном хвосте (_Shd=1) также пишем телеметрию сразу.
+    // - в окне подтверждения STOP (_Wrk=0, но controllerAutoModeActive ещё true) пишем телеметрию сразу,
+    // - в послеостановочном хвосте (_Shd=1) пишем телеметрию сразу,
+    // - после _Shd=0 пишем ещё 10 стабильных отсчётов (_Wrk=0 && _Shd=0) до автосохранения.
     if (controllerAutoModeActive && wrkBit) {
         pendingRow = row;
         pendingRowWrkBit = true;
     }
-    else if ((controllerAutoModeActive && !wrkBit) || postStopCaptureActive) {
+    else if ((controllerAutoModeActive && !wrkBit) ||
+             postStopCaptureActive ||
+             (stopExportPending && !wrkBit && !shdBit)) {
         System::Threading::Monitor::Enter(dataTableSync);
         try {
             if (dataGridView != nullptr && !dataGridView->IsDisposed) {
@@ -820,36 +883,16 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         pendingRowWrkBit = false;
     }
     else {
-        pendingRow = row;
+        // До первого запуска алгоритма (и вне post-shutdown) новые строки в таблицу не пишем.
+        // Также не оставляем "висящую" pendingRow, чтобы не было отложенной записи на следующем тике.
+        pendingRow = nullptr;
         pendingRowWrkBit = false;
     }
+    //--------------------------------------------------------------------
 
-    if (controllerAutoModeActive) {
-        stopExportPending = false;
-        shdWrkZeroStableCounts = 0;
-    }
-    else if (stopExportPending) {
-        if (!postStopCaptureActive && !wrkBit && !shdBit) {
-            shdWrkZeroStableCounts += deltaCounts;
-        }
-        else {
-            shdWrkZeroStableCounts = 0;
-        }
-
-        if (shdWrkZeroStableCounts >= 10) {
-            if (dataCollectionEndTime == DateTime::MinValue) {
-                dataCollectionEndTime = now;
-            }
-            try {
-                StartExcelExportThread(true);
-                stopExportPending = false;
-                shdWrkZeroStableCounts = 0;
-            }
-            catch (Exception^ ex) {
-                GlobalLogger::LogMessage("Error: Auto Excel export after shutdown completion failed: " + ex->ToString());
-            }
-        }
-    }
+    // ОБНОВЛЕНИЕ ФЛАГОВ ЭКСПОРТА ПОСЛЕОСТАНОВОЧНОГО ХВОСТА -------------------------------------------------------------
+    UpdateShutdownExportFlags(now, wrkBit, shdBit, deltaCounts);   
+    //--------------------------------------------------------------------
 }
 
 
@@ -881,14 +924,14 @@ void DataForm::EnableButton()
     catch (...) {}
 }
 
-
+// Обработка таймера простоя формы DataForm без связи с устройством
 void ProjectServerW::DataForm::OnInactivityTimerTick(Object^ sender, EventArgs^ e) {
     try {
-        if (inactivityCloseRequested) {
+        if (inactivityCloseRequested) {   // Если запрошено закрытие формы
             return;
         }
 
-        DateTime now = DateTime::Now;
+        DateTime now = DateTime::Now;   // Текущее время
 
         // 1) Нет связи с устройством "текущего" окна (по IP) уже 30 минут.
         // Условие: если нет связи более 30 минут с момента отключения по этому IP и адресу порта,
@@ -962,13 +1005,14 @@ void ProjectServerW::DataForm::OnInactivityTimerTick(Object^ sender, EventArgs^ 
     }
 }
 
+// Обработка переподключения устройства
 void ProjectServerW::DataForm::OnReconnectSendStartupCommands() {
     try {
-        if (this == nullptr || this->IsDisposed || this->Disposing || !this->IsHandleCreated) {
+        if (this == nullptr || this->IsDisposed || this->Disposing || !this->IsHandleCreated) {   // Если форма уничтожена или уничтожается или не создана
             return;
         }
 
-        if (ClientSocket == INVALID_SOCKET) {
+        if (ClientSocket == INVALID_SOCKET) {   // Если сокет невалидный
             return;
         }
 
@@ -992,127 +1036,141 @@ void ProjectServerW::DataForm::OnReconnectSendStartupCommands() {
     }
 }
 
+// Выполнение последовательности команд запуска устройства
 bool ProjectServerW::DataForm::ExecuteStartupCommandSequence() {
-    if (ClientSocket == INVALID_SOCKET) {
+    if (ClientSocket == INVALID_SOCKET) {   // Если сокет невалидный, то последовательность команд запуска не выполняется
         startupSequenceCompleted = false;
         return false;
     }
 
-    GlobalLogger::LogMessage("Debug: Startup sequence: step 1/3 GET_VERSION started");
+    // ПОЛУЧЕНИЕ ВЕРСИИ УСТРОЙСТВА -------------------------------------------------------------
+    GlobalLogger::LogMessage("Отладка: Последовательность запуска: шаг 1/3 GET_VERSION начат");
     const bool okVersion = SendVersionRequest();
     if (!okVersion) {
         startupSequenceCompleted = false;
         if (sendStateTimer != nullptr) sendStateTimer->Stop();
-        GlobalLogger::LogMessage("Warning: Startup sequence failed at GET_VERSION");
+        GlobalLogger::LogMessage("Предупреждение: Последовательность запуска прервана на шаге GET_VERSION");
         return false;
     }
-    GlobalLogger::LogMessage("Debug: Startup sequence: step 1/3 GET_VERSION ok");
+    GlobalLogger::LogMessage("Отладка: Последовательность запуска: шаг 1/3 GET_VERSION выполнен");
 
+    // УСТАНОВКА ИНТЕРВАЛА ИЗМЕРЕНИЙ -------------------------------------------------------------
     int intervalSeconds = 10;
     if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
         intervalSeconds = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
     }
-    GlobalLogger::LogMessage(String::Format("Debug: Startup sequence: step 2/3 SET_INTERVAL({0}) started", intervalSeconds));
+    GlobalLogger::LogMessage(String::Format("Отладка: Последовательность запуска: шаг 2/3 SET_INTERVAL({0}) начат", intervalSeconds));
     const bool okInterval = SendSetIntervalCommand(intervalSeconds);
     if (!okInterval) {
         startupSequenceCompleted = false;
         if (sendStateTimer != nullptr) sendStateTimer->Stop();
-        GlobalLogger::LogMessage("Warning: Startup sequence failed at SET_INTERVAL");
+        GlobalLogger::LogMessage("Предупреждение: Последовательность запуска прервана на шаге SET_INTERVAL");
         return false;
     }
-    GlobalLogger::LogMessage("Debug: Startup sequence: step 2/3 SET_INTERVAL ok");
+    GlobalLogger::LogMessage("Отладка: Последовательность запуска: шаг 2/3 SET_INTERVAL выполнен");
 
-    GlobalLogger::LogMessage("Debug: Startup sequence: step 3/3 GET_DEFROST_GROUP(5,6) started");
-    uint8_t buffer[256];
-    const uint8_t kPayloadCapacity = 255;
-    uint8_t len = 0;
-    bool loaded1 = false;
-    bool loaded2 = false;
+    // ПОЛУЧЕНИЕ ГРУППЫ ПАРАМЕТРОВ 5 И 6 -------------------------------------------------------------
+    GlobalLogger::LogMessage("Отладка: Последовательность запуска: шаг 3/3 GET_DEFROST_GROUP(5,6) начат");
+    uint8_t buffer[256];   // Буфер для данных
+    const uint8_t kPayloadCapacity = 255;   // Максимальная длина данных
+    uint8_t len = 0;   // Длина данных
+    bool loaded1 = false;   // Флаг загрузки данных группы 5
+    bool loaded2 = false;   // Флаг загрузки данных группы 6
 
-    if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
-        const bool ok1 = GetDefrostGroup(5, 0, buffer, kPayloadCapacity, &len);
+    // ПОЛУЧЕНИЕ ДАННЫХ ГРУППЫ 5 -------------------------------------------------------------
+    if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {   // Если dataGridView1 не уничтожена и не уничтожается
+        const bool ok1 = GetDefrostGroup(5, 0, buffer, kPayloadCapacity, &len);   // Получаем данные группы 5
         if (ok1 && len >= (uint8_t)sizeof(DefrostLogPhasePayload_t)) {
-            FillDataGridView1FromGroup5Payload(buffer, len);
+            FillDataGridView1FromGroup5Payload(buffer, len);   // Заполняем dataGridView1 данными группы 5
             loaded1 = true;
         }
         else {
-            GlobalLogger::LogMessage(String::Format("Warning: Startup group5 failed (transport={0}, len={1})", ok1 ? "ok" : "fail", (int)len));
+            GlobalLogger::LogMessage(String::Format("Предупреждение: Стартовая загрузка группы 5 не выполнена (transport={0}, len={1})", ok1 ? "ok" : "fail", (int)len));
         }
     }
-    if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
-        const bool ok2 = GetDefrostGroup(6, 0, buffer, kPayloadCapacity, &len);
+    // ПОЛУЧЕНИЕ ДАННЫХ ГРУППЫ 6 -------------------------------------------------------------
+    if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {   // Если dataGridView2 не уничтожена и не уничтожается
+        const bool ok2 = GetDefrostGroup(6, 0, buffer, kPayloadCapacity, &len);   // Получаем данные группы 6
         if (ok2 && len >= (uint8_t)sizeof(DefrostLogGlobalPayload_t)) {
-            FillDataGridView2FromGroup6Payload(buffer, len);
+            FillDataGridView2FromGroup6Payload(buffer, len);   // Заполняем dataGridView2 данными группы 6
             loaded2 = true;
         }
         else {
-            GlobalLogger::LogMessage(String::Format("Warning: Startup group6 failed (transport={0}, len={1})", ok2 ? "ok" : "fail", (int)len));
+            GlobalLogger::LogMessage(String::Format("Предупреждение: Стартовая загрузка группы 6 не выполнена (transport={0}, len={1})", ok2 ? "ok" : "fail", (int)len));
         }
     }
 
+    // ОПРЕДЕЛЕНИЕ ФЛАГА ВЫПОЛНЕНИЯ ПОСЛЕОСТАНОВОЧНОЙ ПОСЛЕДОВАТЕЛЬНОСТИ -------------------------------------------------------------
     startupSequenceCompleted = (loaded1 && loaded2);
     paramsLoadedFromDevice = startupSequenceCompleted;
     if (!startupSequenceCompleted) {
         if (sendStateTimer != nullptr) sendStateTimer->Stop();
-        GlobalLogger::LogMessage("Warning: Startup sequence failed at GET_DEFROST_GROUP(5,6)");
+        GlobalLogger::LogMessage("Предупреждение: Последовательность запуска прервана на шаге GET_DEFROST_GROUP(5,6)");
         return false;
     }
 
+    // ЗАПУСК ТАЙМЕРА СОСТОЯНИЯ -------------------------------------------------------------   
     if (sendStateTimer != nullptr) {
         sendStateTimer->Start();
     }
-    GlobalLogger::LogMessage("Information: Startup sequence completed (GET_VERSION -> SET_INTERVAL -> GET_DEFROST_GROUP[5,6])");
+    GlobalLogger::LogMessage("Информация: Последовательность запуска выполнена (GET_VERSION -> SET_INTERVAL -> GET_DEFROST_GROUP[5,6])");
     return true;
 }
 
+// Запланировать отложенный запуск после переподключения устройства
 void ProjectServerW::DataForm::ScheduleDeferredStartupOnReconnect() {
     SchedulePostResetInit();
 }
 
+// Запланировать отложенный запуск после переподключения устройства
 void ProjectServerW::DataForm::SchedulePostResetInit() {
-    if (this == nullptr || this->IsDisposed || this->Disposing) {
+    if (this == nullptr || this->IsDisposed || this->Disposing) {   // Если форма уничтожена или уничтожается или не создана
         return;
     }
 
-    postResetInitPending = true;
+    postResetInitPending = true;   // Флаг запланированного отложенного запуска
     postResetInitAttempt = 0;
-    postResetInitDeadline = DateTime::Now.AddSeconds(60);
+    postResetInitDeadline = DateTime::Now.AddSeconds(60);   // Срок выполнения отложенного запуска
 
     // Замечание: т.к. устройство могло получить RESET от контроллера, сбрасываем признак отправленных команд/параметров.
-    lastStartupCommandsSocket = INVALID_SOCKET;
+    lastStartupCommandsSocket = INVALID_SOCKET;   // Сбрасываем признак отправленных команд/параметров
 
     if (postResetInitTimer == nullptr) {
-        postResetInitTimer = gcnew System::Windows::Forms::Timer();
+        postResetInitTimer = gcnew System::Windows::Forms::Timer();   // Создаём таймер для отложенного запуска
         postResetInitTimer->Tick += gcnew EventHandler(this, &DataForm::OnPostResetInitTimerTick);
     }
 
-    postResetInitTimer->Stop();
+    postResetInitTimer->Stop();   // Останавливаем таймер для отложенного запуска
     // После RESET контроллер уже через ~1 с шлёт телеметрию, поэтому не тянем время: первая попытка через 1 с.
     postResetInitTimer->Interval = 1000;
-    postResetInitTimer->Start();
+    postResetInitTimer->Start();   // Запускаем таймер для отложенного запуска
 }
 
+// Обработка таймера отложенного запуска после переподключения устройства
 void ProjectServerW::DataForm::OnPostResetInitTimerTick(System::Object^ sender, System::EventArgs^ e) {
     try {
-        if (postResetInitTimer != nullptr) {
+        if (postResetInitTimer != nullptr) {   // Если таймер для отложенного запуска существует
             postResetInitTimer->Stop();
         }
 
-        if (!postResetInitPending) {
+        if (!postResetInitPending) {   // Если отложенный запуск не запланирован
             return;
         }
 
+        // ПРОВЕРКА ФОРМЫ -------------------------------------------------------------
         if (this == nullptr || this->IsDisposed || this->Disposing || !this->IsHandleCreated) {
-            postResetInitPending = false;
+            postResetInitPending = false;   // Сбрасываем флаг запланированного отложенного запуска
             return;
         }
 
+        // ПРОВЕРКА СРОКА ВЫПОЛНЕНИЯ ОТЛОЖЕННОГО ЗАПУСКА -------------------------------------------------------------
         DateTime now = DateTime::Now;
         if (postResetInitDeadline != DateTime::MinValue && now >= postResetInitDeadline) {
             postResetInitPending = false;
             return;
         }
 
+        // ПРОВЕРКА СОЕДИНЕНИЯ TCP -------------------------------------------------------------
         if (ClientSocket == INVALID_SOCKET) {
             // Нет соединения TCP (ожидание установки соединения сокет ещё/повтор).
             if (postResetInitTimer != nullptr) {
@@ -1122,28 +1180,36 @@ void ProjectServerW::DataForm::OnPostResetInitTimerTick(System::Object^ sender, 
             return;
         }
 
-        postResetInitAttempt++;
+        // ПРОВЕРКА ПОПЫТОК ВЫПОЛНЕНИЯ ОТЛОЖЕННОГО ЗАПУСКА -------------------------------------------------------------
+        postResetInitAttempt++;   // Увеличиваем счётчик попыток выполнения отложенного запуска
 
-        if (ExecuteStartupCommandSequence()) {
-            postResetInitPending = false;
-            lastStartupCommandsSocket = ClientSocket;
+        if (ExecuteStartupCommandSequence()) {   // Выполняем последовательность команд запуска устройства
+            postResetInitPending = false;   // Сбрасываем флаг запланированного отложенного запуска
+            lastStartupCommandsSocket = ClientSocket;   // Сохраняем сокет для отправки команд/параметров
             return;
         }
 
-        // Повтор через таймер; ожидание ответа по порту UART дольше, чем TCP.
+        // ПОВТОР ЧЕРЕЗ ТАЙМЕР; ОЖИДАНИЕ ОТВЕТА ПО ПОРТУ UART ДОЛЬШЕ, ЧЕМ TCP. -------------------------------------------------------------
         if (postResetInitTimer != nullptr) {
             postResetInitTimer->Interval = 5000;
             postResetInitTimer->Start();
         }
     }
+    // ОБРАБОТКА ИСКЛЮЧЕНИЙ -------------------------------------------------------------
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage("Error: Exception in OnPostResetInitTimerTick: " + ex->ToString());
+        GlobalLogger::LogMessage("Ошибка: Исключение в OnPostResetInitTimerTick: " + ex->ToString());
     }
     catch (...) {
-        GlobalLogger::LogMessage("Error: Unknown exception in OnPostResetInitTimerTick");
+        GlobalLogger::LogMessage("Ошибка: Неизвестное исключение в OnPostResetInitTimerTick");
     }
 }
 
+/* Добавление данных в таблицу в потоке приёмника SServer::ClientHandler
+* Потоки ClientHandler (приёмник данных) и DataForm (сохранение данных в таблицу) создаются для каждого нового Socket клиента, 
+* это разные потоки, поэтому данные добавляются в таблицу из потока приёмника в поток формы через Invoke.
+* Эта функция — потокобезопасный входной шлюз для добавления телеметрии в таблицу формы.
+* По сути: это “обёртка” между фоновым приёмом данных и UI-таблицей, чтобы данные добавлялись корректно и без гонок потоков.
+*/
 void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size, int port) {
     // Вызов приходит из потока приёмника, выполняется через Invoke
     // Важно! Данные, пришедшие в UI, обрабатываются в контексте формы, обновляем данные в UI!
@@ -1151,98 +1217,111 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
     this->clientPort = port;
 
     // Блокировка управляемого массива в неуправляемой памяти (pin_ptr для передачи в native-код)
-    pin_ptr<Byte> pinnedBuffer = &buffer[0];
-    char* rawBuffer = reinterpret_cast<char*>(pinnedBuffer);
+    pin_ptr<Byte> pinnedBuffer = &buffer[0];   // Блокируем массив байт в неуправляемой памяти
+    char* rawBuffer = reinterpret_cast<char*>(pinnedBuffer);   // Преобразуем массив байт в строку
 
     try {
-        if (this == nullptr || this->IsDisposed || this->Disposing) {
+        if (this == nullptr || this->IsDisposed || this->Disposing) {   // Если форма уничтожена или уничтожается или не создана
             return;
         }
-        if (dataGridView == nullptr || dataGridView->IsDisposed) {
+        if (dataGridView == nullptr || dataGridView->IsDisposed) {   // Если dataGridView не существует или уничтожена
             return;
         }
 
-        DateTime telemetryTime = DateTime::Now;
-        const SOCKET currentSocket = clientSocket;
+        DateTime telemetryTime = DateTime::Now;   // Время приёма данных
+        const SOCKET currentSocket = clientSocket;   // Текущий сокет клиента
         if (hasTelemetry && lastTelemetrySocket != INVALID_SOCKET && currentSocket != INVALID_SOCKET &&
-            currentSocket != lastTelemetrySocket) {
+            currentSocket != lastTelemetrySocket) {   
+            // Если есть телеметрия и сокет невалидный или текущий сокет не равен последнему сокету телеметрии
             // Замечание: переподключение после отключения в SServer. Когда сокет переподключился к другому
             // "текущему устройству" по новому сокету отображаем сообщение о переподключении TCP-соединения.
-            reconnectFixationLogPending = true;
+            reconnectFixationLogPending = true;   // Устанавливаем флаг ожидания переподключения
         }
 
-        hasTelemetry = true;
-        lastTelemetryTime = telemetryTime;
-        lastTelemetrySocket = currentSocket;
+        hasTelemetry = true;   // Устанавливаем флаг наличия телеметрии
+        lastTelemetryTime = telemetryTime;   // Сохраняем время последнего приёма телеметрии
+        lastTelemetrySocket = currentSocket;   // Сохраняем сокет последнего приёма телеметрии
+        HandleConnectionSetupOnTelemetry(telemetryTime);   // Обработка установки соединения на телеметрию
 
-        // Обновляем время начала цикла при первом приёме после переподключения.
-        if (dataCollectionStartTime == DateTime::MinValue) {
-            dataCollectionStartTime = telemetryTime;
+        // Обновляем время начала цикла (новая сессия сбора данных) при первом приёме после переподключения.
+        // Это время потом используется как «Start» в имени/метаданных Excel-экспорта для текущего цикла данных.
+        if (dataCollectionStartTime == DateTime::MinValue) {   // Если время начала цикла не установлено
+            dataCollectionStartTime = telemetryTime;   // Устанавливаем время начала цикла
         }
 
-        dataGridView->SuspendLayout();
+        dataGridView->SuspendLayout();   // Приостанавливаем обновление таблицы
+        // Зачем: нужна, чтобы временно отключить перерасчёт/перерисовку UI таблицы на время пачки операций с таблицей.
         try {
             // Замечание: вызов Add в Snapshot потоке уже потокобезопасен.
-            System::Threading::Monitor::Enter(dataTableSync);
+            // Входим в синхронизатор таблицы
+            // Это обычный объект-замок (System::Object^), который используется как mutex/lock для доступа к dataTable.
+            System::Threading::Monitor::Enter(dataTableSync);   
+            // Входим в блок синхронизации
             try {
-                AddDataToTable(rawBuffer, size, dataTable);
+                // Добавление в таблицу выполняется в UI-потоке формы DataForm для конкретного соединения
+                AddDataToTable(rawBuffer, size, dataTable);   // Добавляем данные в таблицу
             }
             finally {
-                System::Threading::Monitor::Exit(dataTableSync);
+                System::Threading::Monitor::Exit(dataTableSync);   // Выходим из синхронизатора таблицы
             }
         }
         finally {
-            dataGridView->ResumeLayout(false);
+            dataGridView->ResumeLayout(false);   // Возобновляем обновление таблицы
         }
     }
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage("Error: Exception in AddDataToTableThreadSafe: " + ex->ToString());
+        GlobalLogger::LogMessage("Ошибка: Исключение в AddDataToTableThreadSafe: " + ex->ToString());
     }
 
 }
 
+// ЛОГ ПАРАМЕТРОВ (ГРУППА 3) И ДОБАВЛЕНИЕ ЛОГА В СТРОКУ ДАННЫХ -------------------------------------------------------------
 // Парсинг лога параметров (группа 3) и добавление лога в строку данных: дополняет накопленную строку
 // телеметрии параметрами лога и добавляет эту строку в таблицу (только при приходе лога, авто-режим).
 void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte>^ packet, int size) {
-    const int expectedPayloadSize = (int)sizeof(ControlLogPayload_t);
+    const int expectedPayloadSize = (int)sizeof(ControlLogPayload_t);   // Ожидаемый размер полезной нагрузки
     // Входной массив содержит: [Type][Cmd][Status][DataLen][Data...][CRC16]
-    const int minPacketSize = 4 + expectedPayloadSize + 2;
-    if (packet == nullptr || size < minPacketSize) {
+    const int minPacketSize = 4 + expectedPayloadSize + 2;   // Минимальный размер пакета
+    if (packet == nullptr || size < minPacketSize) {   // Если пакет отсутствует или размер меньше минимального размера пакета
         GlobalLogger::LogMessage(String::Format(
-            "Warning: AppendControlLogToDataRow: packet null or size {0} < {1}", size, minPacketSize));
+            "Предупреждение: AppendControlLogToDataRow: пакет отсутствует или размер {0} < {1}", size, minPacketSize));   // Лог ошибки
         return;
     }
     const int dataLenByte = (int)packet[3];
-    if (dataLenByte != expectedPayloadSize) {
+    if (dataLenByte != expectedPayloadSize) {   // Если байт DataLen не равен ожидаемому размеру полезной нагрузки
         GlobalLogger::LogMessage(String::Format(
-            "Warning: AppendControlLogToDataRow: DataLen byte {0} != sizeof(ControlLogPayload_t)={1}, packet dropped", dataLenByte, expectedPayloadSize));
+            "Предупреждение: AppendControlLogToDataRow: байт DataLen {0} != sizeof(ControlLogPayload_t)={1}, пакет отбрасывается", dataLenByte, expectedPayloadSize));   // Лог ошибки
         return;
     }
-    pin_ptr<System::Byte> pinned = &packet[0];
-    const uint8_t* raw = reinterpret_cast<const uint8_t*>(pinned);
-    ControlLogPayload_t pl;
-    memcpy(&pl, raw + 4, sizeof(ControlLogPayload_t));
-    lastFishCold_C = pl.fishCold_C;
-    lastFishCold_C_Valid = true;
+
+    // Блокировка управляемого массива в неуправляемой памяти (pin_ptr для передачи в native-код)
+    pin_ptr<System::Byte> pinned = &packet[0];   // Блокируем массив байт в неуправляемой памяти
+    const uint8_t* raw = reinterpret_cast<const uint8_t*>(pinned);   // Преобразуем массив байт в строку
+    ControlLogPayload_t pl;   // Структура для хранения данных лога
+    memcpy(&pl, raw + 4, sizeof(ControlLogPayload_t));   // Копируем данные лога в структуру pl начиная с 4-го байта
+    lastFishCold_C = pl.fishCold_C;   // Сохраняем последнее значение параметра fishCold_C
+    lastFishCold_C_Valid = true;   // Устанавливаем флаг валидности последнего значения параметра fishCold_C
 
     // Дополняем накопленную строку телеметрии (pendingRow) параметрами лога; при _Wrk=1 добавляем строку в таблицу.
-
+    // Входим в синхронизатор таблицы
+    // Это обычный объект-замок (System::Object^), который используется как mutex/lock для доступа к dataTable.
     System::Threading::Monitor::Enter(dataTableSync);
     try {
-        if (dataTable == nullptr) {
+        if (dataTable == nullptr) {   // Если таблица не существует
             GlobalLogger::LogMessage("Warning: AppendControlLogToDataRow: dataTable == nullptr");
             return;
         }
+        // Получаем строку для обновления
         DataRow^ rowToUpdate = pendingRow;
-        const bool shouldAddToTable = pendingRowWrkBit;
-        pendingRow = nullptr;
-        pendingRowWrkBit = false;
+        const bool shouldAddToTable = pendingRowWrkBit;   // Флаг добавления строки в таблицу
+        pendingRow = nullptr;   // Сбрасываем строку, освобождаем для новой строки
+        pendingRowWrkBit = false;   // Сбрасываем флаг добавления строки в таблицу
 
-        if (rowToUpdate == nullptr) {
+        if (rowToUpdate == nullptr) {   // Если строка для обновления не существует
             // Лог пришёл без телеметрии: создаём строку только с логом.
-            rowToUpdate = dataTable->NewRow();
+            rowToUpdate = dataTable->NewRow();   // Создаём новую строку
             for (int c = 0; c < dataTable->Columns->Count; c++) {
-                rowToUpdate[c] = System::DBNull::Value;
+                rowToUpdate[c] = System::DBNull::Value;   // Заполняем строку пустыми значениями
             }
         }
         // Заполняем параметрами из лога
@@ -1271,26 +1350,28 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
         rowToUpdate["fishHot_C"] = pl.fishHot_C;
         rowToUpdate["fishCold_C"] = pl.fishCold_C;
 
+        // Если флаг добавления строки в таблицу установлен, добавляем строку в таблицу
         if (shouldAddToTable) {
-            if (dataGridView != nullptr && !dataGridView->IsDisposed) {
-                dataGridView->SuspendLayout();
+            if (dataGridView != nullptr && !dataGridView->IsDisposed) {   // Если dataGridView существует И НЕ уничтожена
+                dataGridView->SuspendLayout();   // Приостанавливаем обновление таблицы
             }
             try {
-                dataTable->Rows->Add(rowToUpdate);
-                dataExportedToExcel = false;
+                dataTable->Rows->Add(rowToUpdate);   // Добавляем строку в таблицу
+                dataExportedToExcel = false;   // Сбрасываем флаг экспорта данных в Excel
             }
             finally {
-                if (dataGridView != nullptr && !dataGridView->IsDisposed) {
-                    dataGridView->ResumeLayout(false);
+                if (dataGridView != nullptr && !dataGridView->IsDisposed) {   // Если dataGridView существует И НЕ уничтожена
+                    dataGridView->ResumeLayout(false);   // Возобновляем обновление таблицы
                 }
             }
         }
     }
+    // Выходим из синхронизатора таблицы
     catch (Exception^ ex) {
-        GlobalLogger::LogMessage("Error: AppendControlLogToDataRow exception: " + ex->ToString());
+        GlobalLogger::LogMessage("Error: AppendControlLogToDataRow exception: " + ex->ToString());   // Лог ошибки
     }
     finally {
-        System::Threading::Monitor::Exit(dataTableSync);
+        System::Threading::Monitor::Exit(dataTableSync);   // Выходим из синхронизатора таблицы
     }
 }
 
