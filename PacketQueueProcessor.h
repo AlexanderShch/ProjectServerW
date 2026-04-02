@@ -11,7 +11,9 @@ namespace ProjectServerW {
 		ref class TelemetryWorkItem sealed
 		{
 		public:
-			int itemType; // 0 = telemetry (Type 0x00), 1 = control log (Type 0x01)
+			// 0 = телеметрия (как в SServer: Type 0x03, Cmd 0x08, Status 0x00 → EnqueueTelemetry);
+			// 1 = лог управления (Type 0x00, Cmd 0x01, Status 0x00 → EnqueueControlLog).
+			int itemType;
 			cli::array<System::Byte>^ packet;
 			int size;
 			int port;

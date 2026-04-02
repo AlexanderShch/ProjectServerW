@@ -79,37 +79,12 @@ void ProjectServerW::DataForm::ParseBuffer(const char* buffer, size_t size) {
     memcpy(&data, buffer + 4, sizeof(data));
 }
 
-static void ExtractActiveProductMinTemp(
-    const MSGQUEUE_OBJ_t& data,
-    bool& currentActiveProductTempValid,
-    float& currentActiveProductMinTemp)
-{
-    // Мин. Т продукта по активным датчикам из текущей телеметрии (датчики продукта: индексы 3 и 4).
-    currentActiveProductTempValid = false;
-    currentActiveProductMinTemp = 0.0f;
-    if (SQ >= 6) {
-        if (data.Active[3] != 0) {
-            currentActiveProductMinTemp = data.T[3] / 10.0f;
-            currentActiveProductTempValid = true;
-        }
-        if (data.Active[4] != 0) {
-            const float tProdRight = data.T[4] / 10.0f;
-            if (!currentActiveProductTempValid || tProdRight < currentActiveProductMinTemp) {
-                currentActiveProductMinTemp = tProdRight;
-            }
-            currentActiveProductTempValid = true;
-        }
-    }
-}
-
 // Обновление внутренних флагов автомата по текущей телеметрии. 
 void ProjectServerW::DataForm::UpdateModeFlagsFromTelemetry(
     DateTime now,                       // Текущее время
     uint16_t deviceTime,                // Время из структуры пакета
     bool wrkBit,                        // Флаг _Wrk
     bool shdBit,                        // Флаг _Shd
-    bool currentActiveProductTempValid, // Флаг валидности мин. Т продукта
-    float currentActiveProductMinTemp,  // Мин. Т продукта
     int& outDeltaCounts)                // Дельта времени
 {
     const bool wasAuto = controllerAutoModeActive;   // Флаг автомата
@@ -151,20 +126,15 @@ void ProjectServerW::DataForm::UpdateModeFlagsFromTelemetry(
         DateTime stopTime = now;   // Время остановки
 
         String^ stopMessage = nullptr;   // Сообщение остановки
-        const bool useLogTemp = (lastFishCold_C_Valid && lastFishCold_C != 0.0f);   // Используем мин. Т рыбы если она есть
-        if (useLogTemp) {
+        // Температура в сообщении — только fishCold_C из лога параметров (контроллер).
+        if (lastFishCold_C_Valid) {
             stopMessage = String::Format(
-                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы: {1:F1} °C",
+                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы (fishCold_C): {1:F1} °C",
                 stopTime, lastFishCold_C);
-        }
-        else if (currentActiveProductTempValid) {
-            stopMessage = String::Format(
-                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы: {1:F1} °C",
-                stopTime, currentActiveProductMinTemp);
         }
         else {
             stopMessage = String::Format(
-                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}. Остановка по времени процесса без датчиков продукта.",
+                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}. Нет данных fishCold_C из лога параметров.",
                 stopTime);
         }
 
@@ -244,8 +214,6 @@ void ProjectServerW::DataForm::HandleConnectionSetupOnTelemetry(DateTime now)   
 void ProjectServerW::DataForm::ResolveModesAndFlushPendingRow(
     DateTime now,
     const MSGQUEUE_OBJ_t& data,             // Структура пакета по контракту (совпадает с контроллером) из ParseBuffer
-    bool currentActiveProductTempValid,     // Флаг валидности мин. Т продукта
-    float currentActiveProductMinTemp,      // Мин. Т продукта
     bool& outWrkBit,                        // Флаг _Wrk
     bool& outShdBit,                        // Флаг _Shd
     int& outDeltaCounts)                    // Дельта времени из UpdateModeFlagsFromTelemetry
@@ -261,8 +229,6 @@ void ProjectServerW::DataForm::ResolveModesAndFlushPendingRow(
         data.Time,                   // Время из структуры пакета
         outWrkBit,                   // Флаг _Wrk
         outShdBit,                   // Флаг _Shd
-        currentActiveProductTempValid, // Флаг валидности мин. Т продукта
-        currentActiveProductMinTemp,  // Мин. Т продукта
         outDeltaCounts);              // Дельта времени
 
     // Если строка предыдущей секунды ждала control-log, но пришла уже новая телеметрия (другое Time),
@@ -799,18 +765,6 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     temperatures[4] = data.T[4] / 10.0;  // Температура продукта справа (T_product_right)
     UpdateAllTemperatureValues(temperatures);   // Обновляем температуры в окне
 
-    // Вычисляем минимальную температуру продукта
-    bool currentActiveProductTempValid = false;   // Флаг наличия температуры продукта
-    float currentActiveProductMinTemp = 0.0f;   // Минимальная температура продукта
-    ExtractActiveProductMinTemp(data, currentActiveProductTempValid, currentActiveProductMinTemp);   // Извлекаем минимальную температуру продукта
-    if (currentActiveProductTempValid) {
-        lastActiveProductMinTemp_C = currentActiveProductMinTemp;   // Сохраняем минимальную температуру продукта
-        lastActiveProductMinTemp_Valid = true;   // Флаг наличия минимальной температуры продукта
-    }
-    else {
-        lastActiveProductMinTemp_Valid = false;   // Флаг отсутствия минимальной температуры продукта
-    }
-
     // БИТОВЫЕ ПОЛЯ -------------------------------------------------------------
     cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();   // Получаем имена битовых полей из контроллера
     uint16_t bitField;
@@ -824,12 +778,6 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         row[bitNames[0][bit]] = bitValue;
     }
 
-    // Если флаг аварии изменился, обновляем флаги аварий
-    if (!lastTelemetryAlrmBit && alrmBit) {
-        RefreshAlarmFlagsFromController();   // Обновляем флаги аварий из контроллера
-    }
-    lastTelemetryAlrmBit = alrmBit;   // Сохраняем флаг аварии
-    
     // Вторая группа (_V0.._Alr) — выходы DO модуля ввода-вывода. В контроллере: Read_Data_1 → H.
     bitField = data.H[SQ - 1];                           // Получаем биты второй группы (_V0.._Alr)
     // Записываем биты второй группы (DO) + дополнительный флаг post-shutdown.
@@ -846,7 +794,14 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     bool wrkBit = false;   // Флаг режима работы
     bool shdBit = false;   // Флаг режима shutdown
     int deltaCounts = 1;   // Количество отсчётов
-    ResolveModesAndFlushPendingRow(now, data, currentActiveProductTempValid, currentActiveProductMinTemp, wrkBit, shdBit, deltaCounts);   // Определяем режимы работы и флаги
+    ResolveModesAndFlushPendingRow(now, data, wrkBit, shdBit, deltaCounts);   // Определяем режимы работы и флаги
+    
+    // Если флаг аварии изменился, обновляем флаги аварий
+    if (!lastTelemetryAlrmBit && alrmBit) {
+        RefreshAlarmFlagsFromController();   // Обновляем флаги аварий из контроллера
+    }
+    lastTelemetryAlrmBit = alrmBit;   // Сохраняем флаг аварии
+    
 
     // ЗАПИСЬ СТРОКИ -------------------------------------------------------------
     // - при активном _Wrk ждём пакет лога (дополним pendingRow в AppendControlLogToDataRow),

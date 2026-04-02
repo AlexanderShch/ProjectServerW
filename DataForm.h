@@ -207,10 +207,8 @@ namespace ProjectServerW {
 	int shdWrkZeroStableCounts;      // стабильные отсчёты времени устройства с _Shd=0 и _Wrk=0 перед автоэкспортом
 	DateTime lastControlLogTime;     // Время последней телеметрии с _Wrk=1; сброс флага при отсутствии такой телеметрии
 	int controlLogAbsenceStrikeCount; // Счётчик подряд идущих "пропусков" _Wrk=1 для защиты от ложных срабатываний
-	float lastFishCold_C;            // Последняя мин. Т рыбы из лога параметров (для записи в лог при остановке алгоритма)
+	float lastFishCold_C;            // fishCold_C из последнего лога параметров (для сообщения об останове алгоритма)
 	bool lastFishCold_C_Valid;       // true: lastFishCold_C получен из лога
-	float lastActiveProductMinTemp_C; // Мин. Т продукта по активным датчикам из последней телеметрии
-	bool lastActiveProductMinTemp_Valid; // true: в последней телеметрии был хотя бы один активный датчик продукта
 	bool lastTelemetryAlrmBit;       // Предыдущее значение бита Alrm из телеметрии (для детекта перехода 0->1)
 	System::Windows::Forms::Timer^ controlLogAbsenceTimer; // Таймер: при отсутствии телеметрии с _Wrk=1 сбрасывает controllerAutoModeActive
 	System::Windows::Forms::Timer^ sendStateTimer;        // Таймер команды «Отправить состояние» по интервалу измерений
@@ -357,7 +355,6 @@ namespace ProjectServerW {
 		lastControlLogTime = DateTime::MinValue;
 		controlLogAbsenceStrikeCount = 0;
 		lastFishCold_C_Valid = false;
-		lastActiveProductMinTemp_Valid = false;
 	lastTelemetryAlrmBit = false;
 		controlLogAbsenceTimer = nullptr;
 		autoRestartInternalUncheck = false;
@@ -1366,14 +1363,10 @@ private: System::ComponentModel::IContainer^ components;
 				uint16_t deviceTime,
 				bool wrkBit,
 				bool shdBit,
-				bool currentActiveProductTempValid,
-				float currentActiveProductMinTemp,
 				int& outDeltaCounts);
 			void ResolveModesAndFlushPendingRow(
 				System::DateTime now,
 				const MSGQUEUE_OBJ_t& data,
-				bool currentActiveProductTempValid,
-				float currentActiveProductMinTemp,
 				bool& outWrkBit,
 				bool& outShdBit,
 				int& outDeltaCounts);
