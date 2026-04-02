@@ -750,13 +750,14 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     }
 
     // Запись строки:
-    // - при авторежиме ждём пакет лога (дополним pendingRow в AppendControlLogToDataRow),
-    // - в послеостановочном хвосте пишем телеметрию сразу, даже при _Wrk=0.
-    if (controllerAutoModeActive) {
+    // - при активном _Wrk ждём пакет лога (дополним pendingRow в AppendControlLogToDataRow),
+    // - при окне подтверждения STOP (_Wrk=0, но controllerAutoModeActive ещё true) пишем телеметрию сразу,
+    // - в послеостановочном хвосте (_Shd=1) также пишем телеметрию сразу.
+    if (controllerAutoModeActive && wrkBit) {
         pendingRow = row;
         pendingRowWrkBit = true;
     }
-    else if (postStopCaptureActive) {
+    else if ((controllerAutoModeActive && !wrkBit) || postStopCaptureActive) {
         System::Threading::Monitor::Enter(dataTableSync);
         try {
             if (dataGridView != nullptr && !dataGridView->IsDisposed) {
@@ -775,6 +776,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         finally {
             System::Threading::Monitor::Exit(dataTableSync);
         }
+        // В этом режиме строка уже зафиксирована в таблице, отложенное ожидание лога не нужно.
         pendingRow = nullptr;
         pendingRowWrkBit = false;
     }
