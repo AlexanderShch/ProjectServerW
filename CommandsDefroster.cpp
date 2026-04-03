@@ -179,28 +179,16 @@ void ProjectServerW::DataForm::SendStopCommand() {
 
     // Отправляем команду и ждем ответ
     if (SendCommandAndWaitResponse(cmd, response)) {
-        // Команда успешно выполнена на контроллере; обновление кнопок обязательно в UI-потоке и до выхода
-        if (this->InvokeRequired) {
-            this->Invoke(gcnew System::Action<bool>(this, &DataForm::SetProgramStateUi), false);
-        }
-        else {
-            SetProgramStateUi(false);
-        }
-        // После подтверждённого STOP сбрасываем признак активного авторежима.
-        controllerAutoModeActive = false;
-        lastControlLogTime = DateTime::MinValue;
-        wrkZeroConsecutiveCounts = 0;
-        wrkLastSampleValid = false;
-        lastStopSuccessTime = DateTime::Now; // чтобы запоздалый лог не перезаписал кнопки в течение 10 с
-        Label_Commands->Text = "[OK] Программа остановлена";
-        Label_Commands->ForeColor = System::Drawing::Color::Green;
-        if (labelDefrosterState != nullptr && !labelDefrosterState->IsDisposed) {
-            labelDefrosterState->Text = String::Format(
+        ApplyStopLikeSessionStateReset();
+        Label_Commands->Text = "[OK] Программа остановлена";   // обновляем текст кнопки
+        Label_Commands->ForeColor = System::Drawing::Color::Green;   // обновляем цвет кнопки
+        if (labelDefrosterState != nullptr && !labelDefrosterState->IsDisposed) {   // если лейбл состояния дефростера существует и не уничтожен
+            labelDefrosterState->Text = String::Format(   // обновляем текст лейбла состояния дефростера
                 "Команда STOP успешно выполнена контроллером. Время: {0:dd.MM.yyyy HH:mm:ss}",
                 DateTime::Now);
-            labelDefrosterState->ForeColor = System::Drawing::Color::Blue;
+            labelDefrosterState->ForeColor = System::Drawing::Color::Blue;   // обновляем цвет лейбла состояния дефростера
         }
-        GlobalLogger::LogMessage("Information: Команда STOP успешно выполнена контроллером");
+        GlobalLogger::LogMessage("Information: Команда STOP успешно выполнена контроллером");   // логируем успешное выполнение команды
 
         // Excel после СТОП не запускаем: экспорт выполняется по окончании фиксации сессии на телеметрии
         // (условие 10× _Wrk=0 и _Shd=0 в AddDataToTable), либо вручную кнопкой / при закрытии формы.
@@ -250,7 +238,7 @@ void ProjectServerW::DataForm::SendResetCommand() {
 
     // Отправляем команду и ждем ответ
     if (SendCommandAndWaitResponse(cmd, response)) {
-        // Команда успешно выполнена на контроллере
+        ApplyStopLikeSessionStateReset();
         Label_Commands->Text = "[OK] Контроллер сброшен";
         Label_Commands->ForeColor = System::Drawing::Color::Blue;
         GlobalLogger::LogMessage("Information: Команда RESET успешно выполнена контроллером");
@@ -866,55 +854,53 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
     const Command& cmd, CommandResponse& response, System::String^ commandName) {
 
     try {
-        System::Collections::Generic::List<cli::array<System::Byte>^>^ deferredResponses =
-            gcnew System::Collections::Generic::List<cli::array<System::Byte>^>();
-        System::Threading::Monitor::Enter(commandPipelineGate);
+        System::Threading::Monitor::Enter(commandPipelineGate);   // Входим в мьютекс синхронизации команд
         try {
             // Отправляем команду
-            bool sendResult;
+            bool sendResult;   // Результат отправки команды
             if (commandName != nullptr) {
-                sendResult = SendCommand(cmd, commandName);
+                sendResult = SendCommand(cmd, commandName);   // Отправляем команду с именем
             }
             else {
-                sendResult = SendCommand(cmd);
+                sendResult = SendCommand(cmd);   // Отправляем команду без имени
             }
 
             if (!sendResult) {
-                GlobalLogger::LogMessage("Error: Failed to send command");
+                GlobalLogger::LogMessage("Ошибка: Не удалось отправить команду");   // Логируем ошибку
                 return false;
             }
 
-            // Ждём нужный ответ и допускаем "чужие" ответы в общей очереди.
-            // Почему: recv()-цикл может поставить в очередь ответы от более ранних команд; отказ по первому несовпадению
-            // ломает авто-сценарии и может ошибочно пометить валидную команду как неуспешную.
+            // Ждём ответ с совпадающим Type/Code. Кадры из очереди, не относящиеся к текущей команде (в т.ч. запоздалые
+            // ответы после таймаута предыдущей сессии), отбрасываются с логом — в очередь не возвращаются.
             // Таймаут ожидания ответа на команду.
             // Для GET_DEFROST_GROUP нужен больший таймаут из-за объёма ответа.
             const int defaultTimeoutMs = 100;
             const bool isGetDefrostGroup =
                 (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_DEFROST_GROUP);
+            const bool isGetAlarmFlags =
+                (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_ALARM_FLAGS);
             const bool isProgControl = (cmd.commandType == CmdType::PROG_CONTROL);
-            const int totalTimeoutMs = isGetDefrostGroup ? 1000 : (isProgControl ? 300 : defaultTimeoutMs);
+            // GET_ALARM_FLAGS по RS-485/полудуплексу и при загрузке контроллера часто не укладывается в 100 мс.
+            const int totalTimeoutMs =
+                (isGetDefrostGroup || isGetAlarmFlags) ? 1000 : (isProgControl ? 300 : defaultTimeoutMs);
             DateTime deadline = DateTime::Now.AddMilliseconds(totalTimeoutMs);
             while (true) {
-                TimeSpan remaining = deadline.Subtract(DateTime::Now);
+                TimeSpan remaining = deadline.Subtract(DateTime::Now);   // Вычисляем оставшееся время
                 if (remaining.TotalMilliseconds <= 0) {
-                    for each (cli::array<System::Byte>^ deferred in deferredResponses) {
-                        EnqueueResponse(deferred);
-                    }
-                    response.commandType = cmd.commandType;
-                    response.commandCode = cmd.commandCode;
-                    response.status = CmdStatus::TIMEOUT;
-                    response.dataLength = 0;
-                    GlobalLogger::LogMessage(String::Format(
-                        "Error: No response received from controller (Type=0x{0:X2}, Code=0x{1:X2}, timeoutMs={2})",
-                        cmd.commandType, cmd.commandCode, totalTimeoutMs));
-                    return false;
+                    response.commandType = cmd.commandType;   // Устанавливаем тип команды
+                    response.commandCode = cmd.commandCode;   // Устанавливаем код команды
+                    response.status = CmdStatus::TIMEOUT;   // Устанавливаем статус TIMEOUT
+                    response.dataLength = 0;   // Устанавливаем длину данных
+                    GlobalLogger::LogMessage(String::Format(   // Логируем ошибку
+                        "Ошибка: Не получен ответ от контроллера (Type=0x{0:X2}, Code=0x{1:X2}, timeoutMs={2})",
+                        cmd.commandType, cmd.commandCode, totalTimeoutMs));   // Логируем ошибку
+                    return false;   // Возвращаем false
                 }
 
-                CommandResponse candidate{};
+                CommandResponse candidate{};   // Полученный ответ
                 cli::array<System::Byte>^ rawCandidate = nullptr;
                 if (!ReceiveResponse(candidate, static_cast<int>(remaining.TotalMilliseconds), rawCandidate)) {
-                    continue;
+                    continue;   // Продолжаем ждать нужный ответ
                 }
 
                 if (candidate.commandType != cmd.commandType || candidate.commandCode != cmd.commandCode) {
@@ -922,29 +908,24 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
                         // Запоздалый ответ GET_VERSION или SET_INTERVAL применён, продолжаем ждать нужный ответ
                     }
                     else {
-                        String^ hex = "";
+                        String^ hex = "";   // Строка в шестнадцатеричном формате
                         if (rawCandidate != nullptr && rawCandidate->Length > 0) {
-                            System::Text::StringBuilder^ sb = gcnew System::Text::StringBuilder(rawCandidate->Length * 3);
+                            System::Text::StringBuilder^ sb = gcnew System::Text::StringBuilder(rawCandidate->Length * 3);   // Создаём StringBuilder для хранения шестнадцатеричного представления
                             for (int i = 0; i < rawCandidate->Length; i++) {
-                                if (i != 0) sb->Append(" ");
-                                sb->Append(rawCandidate[i].ToString("X2"));
+                                if (i != 0) sb->Append(" ");   // Добавляем пробел между байтами
+                                sb->Append(rawCandidate[i].ToString("X2"));   // Добавляем байт в шестнадцатеричном формате
                             }
-                            hex = sb->ToString();
-                            deferredResponses->Add(rawCandidate);
+                            hex = sb->ToString();   // Преобразуем StringBuilder в строку
                         }
                         GlobalLogger::LogMessage(String::Format(
-                            "Warning: Deferred unrelated response. Expected Type=0x{0:X2}, Code=0x{1:X2}; Got Type=0x{2:X2}, Code=0x{3:X2}; Raw={4}",
+                            "Предупреждение: Отброшен ответ, не подходящий текущей команде (ожидалось Type=0x{0:X2}, Code=0x{1:X2}; получено Type=0x{2:X2}, Code=0x{3:X2}; Raw={4})",
                             cmd.commandType, cmd.commandCode, candidate.commandType, candidate.commandCode, hex));
                     }
-                    continue;
+                    continue;   // Продолжаем ждать нужный ответ
                 }
 
-                response = candidate;
+                response = candidate;   // Устанавливаем полученный ответ
                 break;
-            }
-
-            for each (cli::array<System::Byte>^ deferred in deferredResponses) {
-                EnqueueResponse(deferred);
             }
 
             // Обрабатываем полученный ответ
@@ -992,8 +973,6 @@ ProjectServerW::DataForm::CommandAckResult ProjectServerW::DataForm::SendControl
 {
     // Почему: сохраняем поведение протокола (ждём ACK и реагируем), но остаёмся устойчивыми при потере ACK.
     // Проверка состояния в fallback-варианте выполняется по телеметрии Work на более высоком уровне логики.
-    System::Collections::Generic::List<cli::array<System::Byte>^>^ deferredResponses =
-        gcnew System::Collections::Generic::List<cli::array<System::Byte>^>();
     lastResponse.commandType = CmdType::PROG_CONTROL;
     lastResponse.commandCode = controlCode;
     lastResponse.status = CmdStatus::TIMEOUT;
@@ -1016,7 +995,7 @@ ProjectServerW::DataForm::CommandAckResult ProjectServerW::DataForm::SendControl
                 continue;
             }
 
-        // Часть ответов может относиться к другим командам; здесь повторяем поведение сопоставления как в SendCommandAndWaitResponse.
+            // Несовпадающий с текущей командой кадр отбрасываем с логом (как в SendCommandAndWaitResponse).
             if (response.commandType != cmd.commandType || response.commandCode != cmd.commandCode) {
                 String^ hex = "";
                 if (rawResponse != nullptr && rawResponse->Length > 0) {
@@ -1026,32 +1005,21 @@ ProjectServerW::DataForm::CommandAckResult ProjectServerW::DataForm::SendControl
                         sb->Append(rawResponse[i].ToString("X2"));
                     }
                     hex = sb->ToString();
-                    deferredResponses->Add(rawResponse);
                 }
                 GlobalLogger::LogMessage(String::Format(
-                    "Warning: Deferred unrelated response in SendControlCommandWithAck. Expected Type=0x{0:X2}, Code=0x{1:X2}; Got Type=0x{2:X2}, Code=0x{3:X2}; Raw={4}",
+                    "Предупреждение: SendControlCommandWithAck — отброшен ответ, не подходящий команде (ожидалось Type=0x{0:X2}, Code=0x{1:X2}; получено Type=0x{2:X2}, Code=0x{3:X2}; Raw={4})",
                     cmd.commandType, cmd.commandCode, response.commandType, response.commandCode, hex));
-                lastResponse = response;
                 continue;
             }
-
-            for each (cli::array<System::Byte>^ deferred in deferredResponses) {
-                EnqueueResponse(deferred);
-            }
-            deferredResponses->Clear();
 
             lastResponse = response;
             ProcessResponse(response);
             return (response.status == CmdStatus::OK) ? CommandAckResult::Ok : CommandAckResult::ErrorResponse;
         }
 
-        for each (cli::array<System::Byte>^ deferred in deferredResponses) {
-            EnqueueResponse(deferred);
-        }
-
         if (hadTimeout) {
             GlobalLogger::LogMessage(String::Format(
-                "Warning: Control command ACK timeout Type=0x{0:X2}, Code=0x{1:X2}, retries={2}, timeoutMs={3}",
+                "Предупреждение: таймаут ACK управляющей команды Type=0x{0:X2}, Code=0x{1:X2}, retries={2}, timeoutMs={3}",
                 CmdType::PROG_CONTROL, controlCode, retries, timeoutMs));
         }
         return CommandAckResult::NoResponse;

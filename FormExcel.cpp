@@ -131,34 +131,45 @@ System::String^ FormExcel::ResolveExcelSaveDirectory(System::String^ preferredDi
 }
 
 void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
-	if (job == nullptr || job->tableSnapshot == nullptr) {
+	if (job == nullptr) {	// Если задача не существует, выходим
 		return;
 	}
-
-	DateTime exportStartTime = DateTime::Now;
-	bool mutexAcquired = false;
-	System::Threading::Interlocked::Increment(excelActiveExportJobs);
-	UpdateExcelIdleState();
+	if (job->tableSnapshot == nullptr) {	// Если таблица не существует, выходим
+		try {
+			DataForm^ form = nullptr;
+			if (job->formRef != nullptr && job->formRef->IsAlive) {	// Если ссылка на форму существует и жива, преобразуем её в объект DataForm
+				form = dynamic_cast<DataForm^>(job->formRef->Target);	// Преобразуем ссылку на форму в объект DataForm
+			}
+			if (form != nullptr && !form->IsDisposed && !form->Disposing) {	// Если форма существует и не уничтожена, вызываем метод OnExcelExportCompleted
+				form->OnExcelExportCompleted(job->enableButtonOnComplete);
+			}
+		}
+		catch (...) {}	// Если произошла ошибка, выходим
+		return;
+	}
+	bool mutexAcquired = false;	// Захвачен ли глобальный мьютекс Excel (нужен для finally)
 	try {
 		const int timeoutMs = 5 * 60 * 1000; // 5 минут
 		try {
-			mutexAcquired = excelGlobalMutex->WaitOne(timeoutMs);
+			mutexAcquired = excelGlobalMutex->WaitOne(timeoutMs);	// Ждём мьютекс на экспорт данных в Excel
 		}
 		catch (AbandonedMutexException^) {
-			mutexAcquired = true;
-			GlobalLogger::LogMessage("Warning: Abandoned Excel mutex detected; continuing export.");
+			mutexAcquired = true;	// Если мьютекс занят другим процессом, устанавливаем флаг в true
+			GlobalLogger::LogMessage("Предупреждение: Мьютекс Excel занят другим процессом; продолжаем экспорт.");	// Логируем предупреждение
 		}
 
-		if (!mutexAcquired) {
-			// Критично: продолжаем ретраи через очередь — Excel может быть занят во время долгих экспортов.
-			excelExportQueue->Enqueue(job);
-			excelExportQueueEvent->Set();
-			Thread::Sleep(1000);
-			return;
+		if (!mutexAcquired) {      // Если мьютекс не занят, добавляем задачу в очередь и выходим
+			// Критично: продолжаем ретраи через очередь — Excel может быть занят во время долгих экспортов.	
+			excelExportQueue->Enqueue(job);	// Добавляем задачу в очередь
+			excelExportQueueEvent->Set();	// Устанавливаем событие очереди
+			Thread::Sleep(1000);	// Ждём 1 секунду
+			return;	// Выходим
 		}
 
-		ExcelHelper^ excel = gcnew ExcelHelper();
-		if (!excel->CreateNewWorkbook()) {
+		DateTime exportStartTime = DateTime::Now;	// Начало экспорта после захвата мьютекса (для лога длительности)
+
+		ExcelHelper^ excel = gcnew ExcelHelper();	// Создаём новый экземпляр ExcelHelper
+		if (!excel->CreateNewWorkbook()) {	// Если не удалось создать новый workbook, выходим
 			return;
 		}
 
@@ -166,17 +177,18 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 		Microsoft::Office::Interop::Excel::Application^ excelApp = safe_cast<Microsoft::Office::Interop::Excel::Application^>(ws->Application);
 
 		try {
-			excelApp->ScreenUpdating = false;
-			excelApp->Calculation = Microsoft::Office::Interop::Excel::XlCalculation::xlCalculationManual;
-			excelApp->EnableEvents = false;
+			excelApp->ScreenUpdating = false;	// Отключаем обновление экрана
+			excelApp->Calculation = Microsoft::Office::Interop::Excel::XlCalculation::xlCalculationManual;	// Устанавливаем режим расчёта в ручной
+			excelApp->EnableEvents = false;	// Отключаем события
 
 			// Лист Info (метаданные)
 			try {
-				Microsoft::Office::Interop::Excel::Workbook^ wb = safe_cast<Microsoft::Office::Interop::Excel::Workbook^>(ws->Parent);
-				System::Object^ missing = System::Type::Missing;
-				Microsoft::Office::Interop::Excel::Worksheet^ infoSheet =
-					safe_cast<Microsoft::Office::Interop::Excel::Worksheet^>(wb->Worksheets->Add(missing, ws, 1, Microsoft::Office::Interop::Excel::XlSheetType::xlWorksheet));
-				infoSheet->Name = "Info";
+				Microsoft::Office::Interop::Excel::Workbook^ wb = safe_cast<Microsoft::Office::Interop::Excel::Workbook^>(ws->Parent);	// Получаем workbook
+				System::Object^ missing = System::Type::Missing;	// Получаем missing (отсутствие значения)
+				// Type::Missing — это специальное значение «параметр не задан», Excel сам подставляет своё поведение по умолчанию.
+				Microsoft::Office::Interop::Excel::Worksheet^ infoSheet =	// Создаём новый лист
+					safe_cast<Microsoft::Office::Interop::Excel::Worksheet^>(wb->Worksheets->Add(missing, ws, 1, Microsoft::Office::Interop::Excel::XlSheetType::xlWorksheet));	// Создаём новый лист
+				infoSheet->Name = "Info";	// Устанавливаем имя листа
 
 				DateTime sessionStart = (job->sessionStart == DateTime::MinValue) ? DateTime::Now : job->sessionStart;
 				DateTime sessionEnd = (job->sessionEnd == DateTime::MinValue) ? DateTime::Now : job->sessionEnd;

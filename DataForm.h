@@ -1349,6 +1349,8 @@ private: System::ComponentModel::IContainer^ components;
 			System::Void DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ e);
 			System::Void DataForm_HandleDestroyed(Object^ sender, EventArgs^ e);
 		private:
+			/** UI ПУСК/СТОП и флаги телеметрии после подтверждённого STOP/RESET. Если был stopExportPending — один раз Excel (StartExcelExportThread), без дубля с телеметрией. */
+			void ApplyStopLikeSessionStateReset();
 			/** Применить запоздалый ответ GET_VERSION или SET_INTERVAL. Возвращает true, если ответ применён (не логировать как Discarding). */
 			bool ApplyLateStartupResponse(const ::CommandResponse& candidate);
 			void ScheduleCommandInfoProbe(System::String^ reason);
