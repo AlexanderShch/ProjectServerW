@@ -150,6 +150,8 @@ void ProjectServerW::DataForm::UpdateModeFlagsFromTelemetry(
         shdWrkZeroStableCounts = 0;   // Сбрасываем счётчик стабильных отсчётов _Shd=0 && _Wrk=0
         controllerAutoModeActive = false;   // Сбрасываем флаг автомата
         wrkZeroConsecutiveCounts = 0;   // Сбрасываем счётчик нулевых последовательных отсчётов _Wrk
+        // Как при ответе на СТОП с панели: запоздалый лог не должен затирать кнопки в течение 10 с.
+        lastStopSuccessTime = now;
     }
 
     // Условие останова автомата не выполнено, продолжаем запись в таблицу данных, пока активен post-shutdown (_Shd=1).
@@ -338,6 +340,39 @@ void ProjectServerW::DataForm::ApplyStopLikeSessionStateReset()
         catch (Exception^ ex) {
             GlobalLogger::LogMessage("Ошибка: экспорт в Excel при STOP/RESET (ожидался по stopExportPending): " + ex->ToString());   // Логируем ошибку
         }
+    }
+}
+
+void ProjectServerW::DataForm::ResetProgramStateAfterLinkLoss()
+{
+    if (this == nullptr || this->IsDisposed || this->Disposing)
+        return;
+
+    const bool hadAutoSession = controllerAutoModeActive;
+
+    controllerAutoModeActive = false;
+    stopExportPending = false;
+    shdWrkZeroStableCounts = 0;
+    postStopCaptureActive = false;
+    postStopGateOpenSeen = false;
+    postStopCaptureGraceUntil = DateTime::MinValue;
+    wrkZeroConsecutiveCounts = 0;
+    lastControlLogTime = DateTime::MinValue;
+
+    System::Threading::Monitor::Enter(dataTableSync);
+    try {
+        pendingRow = nullptr;
+        pendingRowWrkBit = false;
+    }
+    finally {
+        System::Threading::Monitor::Exit(dataTableSync);
+    }
+
+    SetProgramStateUi(false);
+
+    if (hadAutoSession) {
+        GlobalLogger::LogMessage(
+            "Информация: сброс состояния ПУСК/СТОП — нет приёма телеметрии или потерян TCP (контроллер сброшен / не отвечает).");
     }
 }
 
@@ -790,6 +825,37 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
 
     // Всё хорошо, данные в буфере корректны, копируем данные из буфера в структуру data
     memcpy(&data, raw + 4, sizeof(data));
+
+    // Перезапуск контроллера: data.Time (сек с включения МК) не должен резко уменьшаться.
+    // Иначе при _Wrk=0 сервер остаётся в controllerAutoModeActive и ветка (active && !wrk) продолжает писать таблицу.
+    if (hasTelemetry) {
+        const uint16_t prevDeviceSec = lastTelemetryDeviceSeconds;
+        if (prevDeviceSec >= 15u) {
+            const int dTime = (int)data.Time - (int)prevDeviceSec;
+            if (dTime < -8) {
+                GlobalLogger::LogMessage(
+                    "Информация: перезапуск контроллера (откат поля Time телеметрии). Сброс авторежима; запись в таблицу без новой команды ПУСК отключена.");
+                controllerAutoModeActive = false;
+                stopExportPending = false;
+                shdWrkZeroStableCounts = 0;
+                wrkZeroConsecutiveCounts = 0;
+                postStopCaptureActive = false;
+                postStopGateOpenSeen = false;
+                postStopCaptureGraceUntil = DateTime::MinValue;
+                lastControlLogTime = DateTime::MinValue;
+                System::Threading::Monitor::Enter(dataTableSync);
+                try {
+                    pendingRow = nullptr;
+                    pendingRowWrkBit = false;
+                }
+                finally {
+                    System::Threading::Monitor::Exit(dataTableSync);
+                }
+                SetProgramStateUi(false);
+            }
+        }
+    }
+
     data_String = bufferToHex(buffer, size);   // Преобразуем буфер в строку в hex формате
     // Выводим содержимое пакета data_String в поле Label_Data
     DataForm::SetData_TextValue("Текущие данные: " + data_String);
@@ -864,15 +930,18 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     // - в окне подтверждения STOP (_Wrk=0, но controllerAutoModeActive ещё true) пишем телеметрию сразу,
     // - в послеостановочном хвосте (_Shd=1) пишем телеметрию сразу,
     // - после _Shd=0 пишем ещё 10 стабильных отсчётов (_Wrk=0 && _Shd=0) до автосохранения.
+    bool rowTakenForTableOrPending = false;   // Строка уходит в таблицу или в pending (ведётся запись сессии)
     if (controllerAutoModeActive && wrkBit) {               // Авторежим: ждём пакет лога (дополним pendingRow в AppendControlLogToDataRow)
         // pendingRow — это «текущая незавершённая» строка телеметрии (DataRow^), которая ещё не добавлена в dataTable.
         // pendingRow связывает пару «телеметрия + лог алгоритма» в одну строку и страхует от потери данных при смене секунды.
+        rowTakenForTableOrPending = true;                   // Строка уходит в таблицу или в pending (ведётся запись сессии)
         pendingRow = row;                                   // Сохраняем строку в pendingRow
         pendingRowWrkBit = true;                            // Сохраняем флаг режима работы в pendingRowWrkBit
     }
     else if ((controllerAutoModeActive && !wrkBit) ||
              postStopCaptureActive ||
              (stopExportPending && !wrkBit && !shdBit)) {   // Если в режиме STOP или послеостановочном хвосте, или в режиме STOP_EXPORT
+        rowTakenForTableOrPending = true;
         System::Threading::Monitor::Enter(dataTableSync);   // Захватываем мьютекс для синхронизации доступа к таблице данных
         try {
             if (dataGridView != nullptr && !dataGridView->IsDisposed) {   // Если dataGridView не nullptr и не уничтожена
@@ -902,6 +971,17 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         // Также не оставляем "висящую" pendingRow, чтобы не было отложенной записи на следующем тике.
         pendingRow = nullptr;
         pendingRowWrkBit = false;
+    }
+    // Если строка в таблицу не принимается, а UpdateModeFlagsFromTelemetry уже поднял «авторежим» по _Wrk=1,
+    // кнопки ПУСК/СТОП остаются в режиме «работа» — приводим UI и флаг к фактическому отсутствию записи.
+    if (!rowTakenForTableOrPending) {
+        controllerAutoModeActive = false;
+        if (this->InvokeRequired) {
+            this->BeginInvoke(gcnew System::Action<bool>(this, &DataForm::SetProgramStateUi), false);
+        }
+        else {
+            SetProgramStateUi(false);
+        }
     }
     //--------------------------------------------------------------------
     // ОБНОВЛЕНИЕ ФЛАГОВ ЭКСПОРТА ПОСЛЕОСТАНОВОЧНОГО ХВОСТА 
@@ -1889,7 +1969,7 @@ void ProjectServerW::DataForm::RefreshAlarmFlagsFromController() {
     }
 }
 
-// При переходе с вкладки с параметрами (tabPage3) спрашиваем про сохранение.
+// При переходе с вкладки параметров (tabPage3) не спрашиваем про сохранение.
 // Раньше при входе на tabPage3 таблицы перечитывались из файла, из-за чего значения,
 // загруженные с контроллера по кнопке «Чтение параметров», терялись при переключении вкладок.
 // Теперь таблицы живут в памяти формы и не очищаются при переходах между вкладками.
@@ -1900,22 +1980,6 @@ System::Void ProjectServerW::DataForm::tabControl1_SelectedIndexChanged(System::
     // чтение выполняется в общем порядке один раз после установки периода опроса при соединении.
 
     if (tabControl1PrevTab == tabPage3 && tc->SelectedTab != tabPage3) {
-        if (dataGridView1Dirty || dataGridView2Dirty) {
-            System::Windows::Forms::DialogResult dr = MessageBox::Show(
-                "Сохранить изменения параметров (они будут добавлены на лист \"Параметры\" при экспорте в Excel)?",
-                "Сохранение параметров",
-                MessageBoxButtons::YesNoCancel,
-                MessageBoxIcon::Question);
-            if (dr == System::Windows::Forms::DialogResult::Yes) {
-                SaveDataGridView1ToFile();
-                SaveDataGridView2ToFile();
-            }
-            else if (dr == System::Windows::Forms::DialogResult::Cancel) {
-                tc->SelectedTab = tabPage3;
-                tabControl1PrevTab = tabPage3;
-                return;
-            }
-        }
         // После выхода с вкладки считаем текущее состояние базовым (без незаписанных изменений).
         dataGridView1Dirty = false;
         dataGridView2Dirty = false;
@@ -2432,6 +2496,15 @@ void ProjectServerW::DataForm::SetProgramStateUi(bool isRunning)
 {
     if (buttonSTART == nullptr || buttonSTOP == nullptr || labelSTART == nullptr || labelSTOP == nullptr)
         return;
+    // Не дёргаем Refresh, если состояние кнопок уже соответствует (частые пакеты телеметрии вне записи в таблицу).
+    if (isRunning) {
+        if (!buttonSTART->Enabled && buttonSTOP->Enabled)
+            return;
+    }
+    else {
+        if (buttonSTART->Enabled && !buttonSTOP->Enabled)
+            return;
+    }
     if (isRunning) {
         buttonSTART->Enabled = false;
         labelSTART->BackColor = System::Drawing::Color::Lime;
@@ -2504,6 +2577,21 @@ void ProjectServerW::DataForm::OnSendStateTimerTick(System::Object^ sender, Syst
             return;
         if (!startupSequenceCompleted)
             return;
+        // TCP ещё открыт, но телеметрия не приходит (сброс МК, зависание, обрыв без закрытия сокета) —
+        // иначе AddDataToTable не вызывается и кнопки остаются в режиме «автомат».
+        if (hasTelemetry && lastTelemetryTime != DateTime::MinValue && controllerAutoModeActive) {
+            int intervalSec = 10;
+            if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
+                intervalSec = System::Math::Max(1, System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value));
+            }
+            double stallThresholdSec = (double)intervalSec * 2.0 + 10.0;
+            if (stallThresholdSec < 20.0)
+                stallThresholdSec = 20.0;
+            if (DateTime::Now.Subtract(lastTelemetryTime).TotalSeconds >= stallThresholdSec) {
+                ResetProgramStateAfterLinkLoss();
+                return;
+            }
+        }
         if (!System::Threading::Monitor::TryEnter(commandPipelineGate))
             return;
         try {
@@ -2619,15 +2707,16 @@ System::Void ProjectServerW::DataForm::timerAutoStart_Tick(System::Object^ sende
             GlobalLogger::LogMessage(Label_Commands->Text);
             
             CommandResponse startResp{};
-            CommandAckResult startResult = SendControlCommandWithAck(CmdProgControl::START, "START", 2000, 2, startResp);
+            Command startCmd = CreateControlCommand(CmdProgControl::START);
+            bool startOk = SendCommandAndWaitResponse(startCmd, startResp, "START");
 
-            if (startResult == CommandAckResult::NoResponse) {
+            if (!startOk && startResp.status == CmdStatus::TIMEOUT) {
                 GlobalLogger::LogMessage("Warning: Автозапуск: START не подтверждён (нет ответа от устройства)");
                 Label_Commands->Text = "[Ожидание] START не подтверждён...";
                 Label_Commands->ForeColor = System::Drawing::Color::Orange;
                 GlobalLogger::LogMessage(Label_Commands->Text);
             }
-            else if (startResult != CommandAckResult::Ok) {
+            else if (!startOk) {
                 GlobalLogger::LogMessage("Warning: Автозапуск: START не выполнен (ошибка связи/таймаут)");
                 Label_Commands->Text = "[!] Ошибка: START не отправлен";
                 Label_Commands->ForeColor = System::Drawing::Color::Orange;
@@ -2745,16 +2834,17 @@ System::Void ProjectServerW::DataForm::timerAutoRestart_Tick(System::Object^ sen
         GlobalLogger::LogMessage(Label_Commands->Text);
 
         CommandResponse stopResp{};
-        CommandAckResult stopResult = SendControlCommandWithAck(CmdProgControl::STOP, "STOP", 2000, 2, stopResp);
+        Command stopCmd = CreateControlCommand(CmdProgControl::STOP);
+        bool stopOk = SendCommandAndWaitResponse(stopCmd, stopResp, "STOP");
 
-        if (stopResult == CommandAckResult::Ok) {
+        if (stopOk) {
             autoRestartPending = true;
             autoRestartStopIssuedTime = DateTime::Now;
             Label_Commands->Text = "[Выполняется] STOP отправлена, ожидание экспорта данных...";
             Label_Commands->ForeColor = System::Drawing::Color::Blue;
             GlobalLogger::LogMessage(Label_Commands->Text);
         }
-        else if (stopResult == CommandAckResult::NoResponse) {
+        else if (stopResp.status == CmdStatus::TIMEOUT) {
             autoRestartPending = true;
             autoRestartStopIssuedTime = DateTime::Now;
             GlobalLogger::LogMessage(gcnew String(L"Warning: \u0410\u0432\u0442\u043E\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A: STOP \u043D\u0435 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D (\u043D\u0435\u0442 \u043E\u0442\u0432\u0435\u0442\u0430)"));
@@ -2781,14 +2871,15 @@ System::Void ProjectServerW::DataForm::timerAutoRestart_Tick(System::Object^ sen
         GlobalLogger::LogMessage(Label_Commands->Text);
 
         CommandResponse startResp{};
-        CommandAckResult startResult = SendControlCommandWithAck(CmdProgControl::START, "START", 2000, 2, startResp);
+        Command startCmd = CreateControlCommand(CmdProgControl::START);
+        bool startOk = SendCommandAndWaitResponse(startCmd, startResp, "START");
 
-        if (startResult == CommandAckResult::Ok) {
+        if (startOk) {
             Label_Commands->Text = "[Выполняется] START отправлен";
             Label_Commands->ForeColor = System::Drawing::Color::Blue;
             GlobalLogger::LogMessage(Label_Commands->Text);
         }
-        else if (startResult == CommandAckResult::NoResponse) {
+        else if (startResp.status == CmdStatus::TIMEOUT) {
             GlobalLogger::LogMessage(gcnew String(L"Warning: \u0410\u0432\u0442\u043E\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A: START \u043D\u0435 \u043F\u043E\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043D (\u043D\u0435\u0442 \u043E\u0442\u0432\u0435\u0442\u0430)"));
             Label_Commands->Text = "[Выполняется] START не подтверждён...";
             Label_Commands->ForeColor = System::Drawing::Color::Orange;

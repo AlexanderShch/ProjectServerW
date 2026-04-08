@@ -7,6 +7,9 @@
 #include <ctime>
 #include <msclr/marshal_cppstd.h>
 #include <cstdio>
+#include <set>
+#include <mutex>
+#include <atomic>
 
 // Добавьте эту строку для доступа к Marshal
 using namespace System::Runtime::InteropServices;
@@ -15,6 +18,34 @@ using namespace System::Windows::Forms;
 using namespace ProjectServerW;
 
 std::map<std::wstring, std::thread> formThreads;  // Хранение потоков форм
+namespace {
+	// Глобальное состояние останова сервера: используется и в accept-loop, и в client threads.
+	std::atomic<bool> g_serverStopping(false);
+	std::mutex g_clientsMx;
+	std::set<SOCKET> g_activeClients;
+
+	void RegisterClientSocket(SOCKET s) {
+		if (s == INVALID_SOCKET) return;
+		std::lock_guard<std::mutex> lk(g_clientsMx);
+		g_activeClients.insert(s);
+	}
+
+	void UnregisterClientSocket(SOCKET s) {
+		if (s == INVALID_SOCKET) return;
+		std::lock_guard<std::mutex> lk(g_clientsMx);
+		g_activeClients.erase(s);
+	}
+
+	void ShutdownAllClientSockets() {
+		std::lock_guard<std::mutex> lk(g_clientsMx);
+		for (SOCKET s : g_activeClients) {
+			if (s == INVALID_SOCKET) continue;
+			shutdown(s, SD_BOTH);
+			closesocket(s);
+		}
+		g_activeClients.clear();
+	}
+}
 
 /*CRC16-CITT tables*/
 const static uint16_t crc16_table[] =
@@ -51,6 +82,7 @@ SServer::~SServer() {
 }
 
 void SServer::startServer() {
+	g_serverStopping.store(false);
 	MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
 	GlobalLogger::Initialize();
 
@@ -101,7 +133,14 @@ void SServer::startServer() {
 
 void SServer::closeServer() {
 	MyForm^ form = safe_cast<MyForm^>(Application::OpenForms["MyForm"]);
-	closesocket(this_s);
+	g_serverStopping.store(true);
+	if (this_s != INVALID_SOCKET) {
+		shutdown(this_s, SD_BOTH);
+		closesocket(this_s);
+		this_s = INVALID_SOCKET;
+	}
+	// Важно: иначе client recv-потоки могут жить до SO_RCVTIMEO и держать процесс.
+	ShutdownAllClientSockets();
 	WSACleanup();
 	if (form != nullptr && !form->IsDisposed) {
 		form->SetWSA_TextValue("Server was stopped");
@@ -127,7 +166,7 @@ static String^ GetIPString(const SOCKADDR_IN& addr_c) {
 }
 
 void SServer::handle() {
-	while (true)
+	while (!g_serverStopping.load())
 	{
 		SOCKET acceptS;
 		SOCKADDR_IN addr_c{};
@@ -141,6 +180,7 @@ void SServer::handle() {
 
 		int addrlen = sizeof(addr_c);
 		if ((acceptS = accept(this_s, (struct sockaddr*)&addr_c, &addrlen)) != INVALID_SOCKET) {
+			RegisterClientSocket(acceptS);
 			int ClientPort = ntohs(addr_c.sin_port);
 			String^ address = GetIPString(addr_c);
 			if (form != nullptr && !form->IsDisposed) {
@@ -164,6 +204,7 @@ void SServer::handle() {
 					form->SetMessage_TextValue("Error: Failed to create thread");
 				}
 				GlobalLogger::LogMessage("Error: Failed to create thread");
+				UnregisterClientSocket(acceptS);
 				closesocket(acceptS);
 			} else {
 				if (form != nullptr && !form->IsDisposed) {
@@ -175,6 +216,12 @@ void SServer::handle() {
 				}
 				CloseHandle(hThread); // Закрытие дескриптора потока
             }
+		}
+		else {
+			// accept прерван закрытием listen-сокета во время выхода.
+			if (g_serverStopping.load() || this_s == INVALID_SOCKET) {
+				break;
+			}
 		}
 		Sleep(200);
 	}
@@ -310,7 +357,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	// Бесконечный цикл считывания данных
 	// Важно: recv() вызываем БЕЗ удержания recvGate, иначе UI/таймер SEND_STATE не смогут отправить команду —
 	// контроллер шлёт данные только по запросу SEND_STATE, получается deadlock (пустая шина, окно не реагирует).
-	while (true) {
+	while (!g_serverStopping.load()) {
 		int spaceAvailable = sizeof(accumulatedBuffer) - accumulatedBytes;
 		if (spaceAvailable <= 0) {
 			GlobalLogger::LogMessage("Error: Accumulated buffer overflow! Resetting buffer.");
@@ -517,6 +564,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	// Соединение оборвалось. Форму НЕ закрываем: устройство может вернуться в течение 30 минут,
 	// тогда новое подключение переиспользует текущую форму и продолжит заполнение таблицы.
 	closesocket(clientSocket);
+	UnregisterClientSocket(clientSocket);
 	// Помечаем сокет формы как недействительный (команды на отправку должны перестать проходить)
 	try {
 		DataForm^ form2 = DataForm::GetFormByGuid(guid);

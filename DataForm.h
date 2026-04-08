@@ -129,6 +129,13 @@ namespace ProjectServerW {
 					if (value == INVALID_SOCKET) {
 						if (prev != INVALID_SOCKET) {
 							System::Threading::Interlocked::Exchange(disconnectedSinceTicks, System::DateTime::Now.Ticks);
+							// Обрыв recv-потока: AddDataToTable больше не вызывается — сброс ПУСК/СТОП только через очередь UI (не блокируем setter).
+							try {
+								if (IsHandleCreated && !IsDisposed && !Disposing) {
+									BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(this, &DataForm::ResetProgramStateAfterLinkLoss));
+								}
+							}
+							catch (...) {}
 						}
 					}
 					else {
@@ -1351,8 +1358,8 @@ private: System::ComponentModel::IContainer^ components;
 		private:
 			/** UI ПУСК/СТОП и флаги телеметрии после подтверждённого STOP/RESET. Если был stopExportPending — один раз Excel (StartExcelExportThread), без дубля с телеметрией. */
 			void ApplyStopLikeSessionStateReset();
-			/** Применить запоздалый ответ GET_VERSION или SET_INTERVAL. Возвращает true, если ответ применён (не логировать как Discarding). */
-			bool ApplyLateStartupResponse(const ::CommandResponse& candidate);
+			/** Сброс «авторежим» и кнопок при обрыве TCP или при отсутствии телеметрии (без экспорта Excel). Вызывать с UI-потока либо через BeginInvoke. */
+			void ResetProgramStateAfterLinkLoss();
 			void ScheduleCommandInfoProbe(System::String^ reason);
 			void ExecuteCommandInfoProbe();
 			void SchedulePostResetInit();
@@ -1386,19 +1393,6 @@ private: System::ComponentModel::IContainer^ components;
 
 			void TriggerExcelExport();
 			void ExecuteAutoRestartStart();
-			bool TrySendControlCommandFireAndForget(uint8_t controlCode, System::String^ commandName);
-			enum class CommandAckResult {
-				Ok,
-				ErrorResponse,
-				NoResponse,
-				SendFailed
-			};
-			CommandAckResult SendControlCommandWithAck(
-				uint8_t controlCode,
-				System::String^ commandName,
-				int timeoutMs,
-				int retries,
-				::CommandResponse% lastResponse);
 			bool StartExcelExportThread(bool isEmergency);
 			void OnInactivityTimerTick(Object^ sender, EventArgs^ e);
 		private: System::Void textBoxExcelDirectory_TextChanged(System::Object^ sender, System::EventArgs^ e) {

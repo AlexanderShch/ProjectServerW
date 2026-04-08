@@ -359,12 +359,12 @@ namespace ProjectServerW {
 			return false;
 		}
 
-		if (!responseAvailable->WaitOne(timeoutMs)) {	// Если нет ответа, пропускаем.
+		if (!responseAvailable->WaitOne(timeoutMs)) {	// Если нет ответа по тайм-ауту, пропускаем.
 			return false;
 		}
 
 		cli::array<System::Byte>^ responseBuffer = nullptr;
-		if (!responseQueue->TryDequeue(responseBuffer) || responseBuffer == nullptr) {	// Если нет ответа, пропускаем.
+		if (!responseQueue->TryDequeue(responseBuffer) || responseBuffer == nullptr) {	// Если нет ответа из очереди, пропускаем.
 			return false;
 		}
 

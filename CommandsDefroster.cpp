@@ -282,30 +282,6 @@ void ProjectServerW::DataForm::SendResetCommand() {
     }
 }
 
-// Применить запоздалый ответ GET_VERSION или SET_INTERVAL (при получении «чужого» ответа в цикле ожидания)
-bool ProjectServerW::DataForm::ApplyLateStartupResponse(const CommandResponse& candidate) {
-    if (candidate.status != CmdStatus::OK) return false;
-    if (candidate.commandType == CmdType::REQUEST && candidate.commandCode == CmdRequest::GET_VERSION && candidate.dataLength > 0) {
-        String^ version = gcnew String(reinterpret_cast<const char*>(candidate.data), 0, static_cast<int>(candidate.dataLength), System::Text::Encoding::ASCII);
-        pendingVersion = version;
-        if (label_Version != nullptr && !label_Version->IsDisposed) {
-            if (label_Version->InvokeRequired) {
-                label_Version->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(this, &DataForm::UpdateVersionLabelInternal));
-            }
-            else {
-                label_Version->Text = version;
-            }
-        }
-        GlobalLogger::LogMessage("Information: Версия прошивки получена (запоздалый ответ): " + version);
-        return true;
-    }
-    if (candidate.commandType == CmdType::CONFIGURATION && candidate.commandCode == CmdConfig::SET_INTERVAL) {
-        GlobalLogger::LogMessage("Information: Интервал измерений принят контроллером (запоздалый ответ)");
-        return true;
-    }
-    return false;
-}
-
 // Метод для запроса версии прошивки контроллера
 bool ProjectServerW::DataForm::SendVersionRequest() {
     // Создаем команду GET_VERSION
@@ -517,7 +493,28 @@ bool ProjectServerW::DataForm::SetDefrostGroup(uint8_t groupId, const uint8_t* p
     Command cmd = CreateConfigCommandSetDefrostGroup(groupId, payload, payloadLen);
     if (cmd.dataLength == 0) return false;
     CommandResponse response;
-    return SendCommandAndWaitResponse(cmd, response, "SET_DEFROST_GROUP") && response.status == CmdStatus::OK;
+    const bool ok = SendCommandAndWaitResponse(cmd, response, "SET_DEFROST_GROUP");
+    if (!ok || response.status != CmdStatus::OK) {
+        // Детальный лог только для групп, которые реально пишем из UI.
+        if (groupId == 5 || groupId == 6) {
+            const char* statusName = GetStatusName(response.status);
+            GlobalLogger::LogMessage(String::Format(
+                "Ошибка при приёме ответа SET_DEFROST_GROUP(group={0}): status=0x{1:X2} ({2}), payloadLen={3}",
+                groupId,
+                response.status,
+                gcnew String(statusName),
+                response.dataLength));
+        }
+        return false;
+    }
+
+    if ((groupId == 5 || groupId == 6) && response.dataLength != 0) {
+        GlobalLogger::LogMessage(String::Format(
+            "Предупреждение: SET_DEFROST_GROUP(group={0}) вернул неожиданный payloadLen={1} при status=OK",
+            groupId,
+            response.dataLength));
+    }
+    return true;
 }
 
 void ProjectServerW::DataForm::SendCommandInfoRequest() {
@@ -879,10 +876,13 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
                 (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_DEFROST_GROUP);
             const bool isGetAlarmFlags =
                 (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_ALARM_FLAGS);
+            const bool isSetDefrostGroup =
+                (cmd.commandType == CmdType::CONFIGURATION && cmd.commandCode == CmdConfig::SET_DEFROST_GROUP);
             const bool isProgControl = (cmd.commandType == CmdType::PROG_CONTROL);
             // GET_ALARM_FLAGS по RS-485/полудуплексу и при загрузке контроллера часто не укладывается в 100 мс.
             const int totalTimeoutMs =
-                (isGetDefrostGroup || isGetAlarmFlags) ? 1000 : (isProgControl ? 300 : defaultTimeoutMs);
+                (isGetDefrostGroup || isGetAlarmFlags || isSetDefrostGroup) ? 1000 :
+                (isProgControl ? 300 : defaultTimeoutMs);
             DateTime deadline = DateTime::Now.AddMilliseconds(totalTimeoutMs);
             while (true) {
                 TimeSpan remaining = deadline.Subtract(DateTime::Now);   // Вычисляем оставшееся время
@@ -897,30 +897,25 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
                     return false;   // Возвращаем false
                 }
 
-                CommandResponse candidate{};   // Полученный ответ
-                cli::array<System::Byte>^ rawCandidate = nullptr;
-                if (!ReceiveResponse(candidate, static_cast<int>(remaining.TotalMilliseconds), rawCandidate)) {
-                    continue;   // Продолжаем ждать нужный ответ
+                CommandResponse candidate{};   // Полученный ответ будет в этой переменной
+                cli::array<System::Byte>^ rawCandidate = nullptr; // Массив байтов для хранения ответа
+                if (!ReceiveResponse(candidate, static_cast<int>(remaining.TotalMilliseconds), rawCandidate)) { // Получаем ответ от контроллера
+                    continue;   // Продолжаем ждать ответ
                 }
 
-                if (candidate.commandType != cmd.commandType || candidate.commandCode != cmd.commandCode) {
-                    if (ApplyLateStartupResponse(candidate)) {
-                        // Запоздалый ответ GET_VERSION или SET_INTERVAL применён, продолжаем ждать нужный ответ
-                    }
-                    else {
-                        String^ hex = "";   // Строка в шестнадцатеричном формате
-                        if (rawCandidate != nullptr && rawCandidate->Length > 0) {
-                            System::Text::StringBuilder^ sb = gcnew System::Text::StringBuilder(rawCandidate->Length * 3);   // Создаём StringBuilder для хранения шестнадцатеричного представления
-                            for (int i = 0; i < rawCandidate->Length; i++) {
-                                if (i != 0) sb->Append(" ");   // Добавляем пробел между байтами
-                                sb->Append(rawCandidate[i].ToString("X2"));   // Добавляем байт в шестнадцатеричном формате
-                            }
-                            hex = sb->ToString();   // Преобразуем StringBuilder в строку
+                if (candidate.commandType != cmd.commandType || candidate.commandCode != cmd.commandCode) { // Если ответ не соответствует команде (тип или код)
+                    String^ hex = "";   // Строка в шестнадцатеричном формате
+                    if (rawCandidate != nullptr && rawCandidate->Length > 0) {
+                        System::Text::StringBuilder^ sb = gcnew System::Text::StringBuilder(rawCandidate->Length * 3);   // Создаём StringBuilder для хранения шестнадцатеричного представления
+                        for (int i = 0; i < rawCandidate->Length; i++) {
+                            if (i != 0) sb->Append(" ");   // Добавляем пробел между байтами
+                            sb->Append(rawCandidate[i].ToString("X2"));   // Добавляем байт в шестнадцатеричном формате
                         }
-                        GlobalLogger::LogMessage(String::Format(
-                            "Предупреждение: Отброшен ответ, не подходящий текущей команде (ожидалось Type=0x{0:X2}, Code=0x{1:X2}; получено Type=0x{2:X2}, Code=0x{3:X2}; Raw={4})",
-                            cmd.commandType, cmd.commandCode, candidate.commandType, candidate.commandCode, hex));
+                        hex = sb->ToString();   // Преобразуем StringBuilder в строку
                     }
+                    GlobalLogger::LogMessage(String::Format(
+                        "Предупреждение: Отброшен ответ, не подходящий текущей команде (ожидалось Type=0x{0:X2}, Code=0x{1:X2}; получено Type=0x{2:X2}, Code=0x{3:X2}; Raw={4})",
+                        cmd.commandType, cmd.commandCode, candidate.commandType, candidate.commandCode, hex));
                     continue;   // Продолжаем ждать нужный ответ
                 }
 
@@ -949,84 +944,6 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
 bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
     const Command& cmd, CommandResponse& response) {
     return SendCommandAndWaitResponse(cmd, response, nullptr);
-}
-
-bool ProjectServerW::DataForm::TrySendControlCommandFireAndForget(uint8_t controlCode, System::String^ commandName) {
-    // Почему: плановые операции не должны зависеть от синхронного ответа, потому что некоторые прошивки
-    // могут выполнить START/STOP, но пропустить/потерять ACK. Реальное состояние подтверждаем по Work в телеметрии.
-    try {
-        Command cmd = CreateControlCommand(controlCode);
-        return SendCommand(cmd, commandName);
-    }
-    catch (Exception^ ex) {
-        GlobalLogger::LogMessage("Error: Exception in TrySendControlCommandFireAndForget: " + ex->Message);
-        return false;
-    }
-}
-
-ProjectServerW::DataForm::CommandAckResult ProjectServerW::DataForm::SendControlCommandWithAck(
-    uint8_t controlCode,
-    System::String^ commandName,
-    int timeoutMs,
-    int retries,
-    CommandResponse% lastResponse)
-{
-    // Почему: сохраняем поведение протокола (ждём ACK и реагируем), но остаёмся устойчивыми при потере ACK.
-    // Проверка состояния в fallback-варианте выполняется по телеметрии Work на более высоком уровне логики.
-    lastResponse.commandType = CmdType::PROG_CONTROL;
-    lastResponse.commandCode = controlCode;
-    lastResponse.status = CmdStatus::TIMEOUT;
-    lastResponse.dataLength = 0;
-    bool hadTimeout = false;
-
-    System::Threading::Monitor::Enter(commandPipelineGate);
-    try {
-        for (int attempt = 0; attempt < retries; attempt++) {
-            Command cmd = CreateControlCommand(controlCode);
-            if (!SendCommand(cmd, commandName)) {
-                return CommandAckResult::SendFailed;
-            }
-
-            CommandResponse response{};
-            cli::array<System::Byte>^ rawResponse = nullptr;
-            if (!ReceiveResponse(response, timeoutMs, rawResponse)) {
-                hadTimeout = true;
-                lastResponse.status = CmdStatus::TIMEOUT;
-                continue;
-            }
-
-            // Несовпадающий с текущей командой кадр отбрасываем с логом (как в SendCommandAndWaitResponse).
-            if (response.commandType != cmd.commandType || response.commandCode != cmd.commandCode) {
-                String^ hex = "";
-                if (rawResponse != nullptr && rawResponse->Length > 0) {
-                    System::Text::StringBuilder^ sb = gcnew System::Text::StringBuilder(rawResponse->Length * 3);
-                    for (int i = 0; i < rawResponse->Length; i++) {
-                        if (i != 0) sb->Append(" ");
-                        sb->Append(rawResponse[i].ToString("X2"));
-                    }
-                    hex = sb->ToString();
-                }
-                GlobalLogger::LogMessage(String::Format(
-                    "Предупреждение: SendControlCommandWithAck — отброшен ответ, не подходящий команде (ожидалось Type=0x{0:X2}, Code=0x{1:X2}; получено Type=0x{2:X2}, Code=0x{3:X2}; Raw={4})",
-                    cmd.commandType, cmd.commandCode, response.commandType, response.commandCode, hex));
-                continue;
-            }
-
-            lastResponse = response;
-            ProcessResponse(response);
-            return (response.status == CmdStatus::OK) ? CommandAckResult::Ok : CommandAckResult::ErrorResponse;
-        }
-
-        if (hadTimeout) {
-            GlobalLogger::LogMessage(String::Format(
-                "Предупреждение: таймаут ACK управляющей команды Type=0x{0:X2}, Code=0x{1:X2}, retries={2}, timeoutMs={3}",
-                CmdType::PROG_CONTROL, controlCode, retries, timeoutMs));
-        }
-        return CommandAckResult::NoResponse;
-    }
-    finally {
-        System::Threading::Monitor::Exit(commandPipelineGate);
-    }
 }
 
 System::Void ProjectServerW::DataForm::button_CMDINFO_Click(System::Object^ sender, System::EventArgs^ e) {
