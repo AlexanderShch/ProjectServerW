@@ -134,6 +134,9 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 	if (job == nullptr) {	// Если задача не существует, выходим
 		return;
 	}
+	// Симметрия с Decrement в finally: иначе счётчик уходит в минус и WaitForAllExports никогда не получает сигнал.
+	System::Threading::Interlocked::Increment(excelActiveExportJobs);
+	try {
 	if (job->tableSnapshot == nullptr) {	// Если таблица не существует, выходим
 		try {
 			DataForm^ form = nullptr;
@@ -148,7 +151,7 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 		return;
 	}
 	bool mutexAcquired = false;	// Захвачен ли глобальный мьютекс Excel (нужен для finally)
-	try {
+	try {	// основной экспорт в Excel
 		const int timeoutMs = 5 * 60 * 1000; // 5 минут
 		try {
 			mutexAcquired = excelGlobalMutex->WaitOne(timeoutMs);	// Ждём мьютекс на экспорт данных в Excel
@@ -621,7 +624,9 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 			}
 		}
 		catch (...) {}
-
+	}
+	}
+	finally {
 		System::Threading::Interlocked::Decrement(excelActiveExportJobs);
 		UpdateExcelIdleState();
 	}

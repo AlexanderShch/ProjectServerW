@@ -379,30 +379,31 @@ void ProjectServerW::DataForm::ResetProgramStateAfterLinkLoss()
 // Обработка выхода из программы.
 System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e)
 {
-    // Ищем GUID текущей формы в formData_Map
-    std::wstring currentFormGuid;
-    bool formFound = false;   // Флаг найденной формы
-
     try {
-        if (formFound) {
-            // Закрываем сокет формы
-            // Получаем форму по GUID
-            DataForm^ form = GetFormByGuid(currentFormGuid);
-
-            if (form != nullptr && form->ClientSocket != INVALID_SOCKET) {
-                // Закрываем сокет формы
-                closesocket(form->ClientSocket);
-                form->ClientSocket = INVALID_SOCKET;
-                GlobalLogger::LogMessage("Information: Форма успешно добавлена в список по текущему GUID");
-            }
+        // Завершаем TCP для текущего окна сразу, чтобы recv/командные потоки быстрее вышли.
+        if (this->ClientSocket != INVALID_SOCKET) {
+            closesocket(this->ClientSocket);
+            this->ClientSocket = INVALID_SOCKET;
         }
     }
     catch (Exception^ ex) {
-        MessageBox::Show("Не удалось сохранить данные: " + ex->Message);
-        GlobalLogger::LogMessage("Не удалось сохранить данные: " + ex->Message);
+        GlobalLogger::LogMessage("Ошибка при закрытии сокета в Выход(DataForm): " + ex->Message);
     }
 
-	return System::Void();
+    try {
+        // Нормальный путь завершения формы: сработает FormClosing/FormClosed (экспорт, очистка карты и т.д.).
+        if (this->InvokeRequired) {
+            this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::Close));
+        }
+        else {
+            this->Close();
+        }
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage("Ошибка при закрытии формы в Выход(DataForm): " + ex->Message);
+    }
+
+    return System::Void();
 }
 
 // Обработка нажатия кнопки EXCEL.
@@ -1214,6 +1215,50 @@ bool ProjectServerW::DataForm::ExecuteStartupCommandSequence() {
 // Запланировать отложенный запуск после переподключения устройства
 void ProjectServerW::DataForm::ScheduleDeferredStartupOnReconnect() {
     SchedulePostResetInit();
+}
+
+// Вызов из SServer после присвоения ClientIP/ClientSocket (поток ClientHandler).
+void ProjectServerW::DataForm::RequestDeferredStartupAfterSocketAttached() {
+    if (this == nullptr || this->IsDisposed || this->Disposing) {
+        return;
+    }
+    System::String^ ipForLog = (this->ClientIP != nullptr ? this->ClientIP : L"?");
+    GlobalLogger::LogMessage(String::Format(L"Information: Deferred startup scheduled for {0}", ipForLog));
+
+    if (this->IsHandleCreated) {
+        try {
+            this->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(this, &DataForm::ScheduleDeferredStartupOnReconnect));
+            return;
+        }
+        catch (System::InvalidOperationException^ ex) {
+            GlobalLogger::LogMessage(String::Format(
+                L"Warning: BeginInvoke(ScheduleDeferredStartupOnReconnect) failed, deferring to HandleCreated: {0}",
+                ex->Message));
+        }
+    }
+
+    if (handleCreatedDeferredStartupSubscription != nullptr) {
+        return;
+    }
+    handleCreatedDeferredStartupSubscription = gcnew System::EventHandler(this, &DataForm::OnHandleCreatedForDeferredStartup);
+    this->HandleCreated += handleCreatedDeferredStartupSubscription;
+    GlobalLogger::LogMessage(
+        L"Information: Стартовая последовательность будет запланирована после создания окна DataForm (HandleCreated).");
+}
+
+System::Void ProjectServerW::DataForm::OnHandleCreatedForDeferredStartup(System::Object^ sender, System::EventArgs^ e) {
+    if (handleCreatedDeferredStartupSubscription != nullptr) {
+        try {
+            this->HandleCreated -= handleCreatedDeferredStartupSubscription;
+        }
+        catch (...) {}
+        handleCreatedDeferredStartupSubscription = nullptr;
+    }
+    if (this->IsDisposed || this->Disposing) {
+        return;
+    }
+    // Событие HandleCreated — на UI-потоке владельца формы; таймеры и SchedulePostResetInit безопасны напрямую.
+    ScheduleDeferredStartupOnReconnect();
 }
 
 // Запланировать отложенный запуск после переподключения устройства
@@ -2429,9 +2474,20 @@ System::Void DataForm::DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ 
     if (!formFoundInMap) {
         GlobalLogger::LogMessage(gcnew String(L"Information: \u0424\u043E\u0440\u043C\u0430 \u0443\u0436\u0435 \u0431\u044B\u043B\u0430 \u0443\u0434\u0430\u043B\u0435\u043D\u0430 \u0438\u0437 \u043A\u0430\u0440\u0442\u044B \u0440\u0430\u043D\u0435\u0435"));
     }
-    
-    // Закрываем сокет клиента
-    closesocket(this->ClientSocket);
+
+    if (handleCreatedDeferredStartupSubscription != nullptr) {
+        try {
+            this->HandleCreated -= handleCreatedDeferredStartupSubscription;
+        }
+        catch (...) {}
+        handleCreatedDeferredStartupSubscription = nullptr;
+    }
+
+    // Закрываем сокет клиента (если ещё не закрыт в обработчике "Выход").
+    if (this->ClientSocket != INVALID_SOCKET) {
+        closesocket(this->ClientSocket);
+        this->ClientSocket = INVALID_SOCKET;
+    }
 
     // Замечание: сокет управляемый код (managed), при закрытии формы. Не вызывать native-код после этого в деструкторе/финализаторе.
     try {

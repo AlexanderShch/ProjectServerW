@@ -112,6 +112,8 @@ namespace ProjectServerW {
 			bool ExecuteStartupCommandSequence();
 			// Запуск отложенной инициализации после реконнекта (public wrapper for SServer).
 			void ScheduleDeferredStartupOnReconnect();
+			// Вызов из потока ClientHandler после присвоения ClientSocket: BeginInvoke недопустим до создания handle.
+			void RequestDeferredStartupAfterSocketAttached();
 
 			property SOCKET ClientSocket {
 				SOCKET get() { return clientSocket; }
@@ -179,6 +181,8 @@ namespace ProjectServerW {
 			System::DateTime postResetInitDeadline;
 			int postResetInitAttempt;
 			System::Windows::Forms::Timer^ postResetInitTimer;
+			// Однократная подписка на HandleCreated, если SServer назначил сокет до ShowDialog().
+			System::EventHandler^ handleCreatedDeferredStartupSubscription;
 			// Массив наименований битовых полей для каждого типа сенсора
 			// Индекс первого уровня - тип сенсора, второго уровня - номер бита
 			ManualResetEvent^ exportCompletedEvent;
@@ -258,6 +262,8 @@ namespace ProjectServerW {
 			DataForm(void)
 			{
 				InitializeComponent();
+				// Явно: иначе в ClientHandler prevSocket может быть мусором/0 и срабатывает ложный shutdown «drop old socket».
+				clientSocket = INVALID_SOCKET;
 				GetBitFieldNames();	// Инициализация имен битов (если еще не инициализированы)
 				InitializeDataTable();
 
@@ -317,6 +323,7 @@ namespace ProjectServerW {
 				postResetInitDeadline = DateTime::MinValue;
 				postResetInitAttempt = 0;
 				postResetInitTimer = nullptr;
+				handleCreatedDeferredStartupSubscription = nullptr;
 
 				// Критично: устройство может быть выключено/включено; если переподключится в пределах 30 минут — продолжаем ту же таблицу.
 				// Если телеметрии нет 30 минут — финализируем (экспорт) и закрываем форму.
@@ -1364,6 +1371,7 @@ private: System::ComponentModel::IContainer^ components;
 			void ExecuteCommandInfoProbe();
 			void SchedulePostResetInit();
 			void OnPostResetInitTimerTick(System::Object^ sender, System::EventArgs^ e);
+			System::Void OnHandleCreatedForDeferredStartup(System::Object^ sender, System::EventArgs^ e);
 			void SaveSettings();
 			void LoadSettings();
 			void UpdateDirectoryTextBox(String^ path);

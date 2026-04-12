@@ -324,13 +324,8 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 			df->ClientIP = clientIPAddress;
 			df->ClientSocket = clientSocket;
 
-			if (df->IsHandleCreated) {
-				// На любом подключении запускаем стартовые команды через отложенный механизм после установки сокета.
-				GlobalLogger::LogMessage(String::Format(
-					"Information: Deferred startup scheduled for {0}",
-					clientIPAddress));
-				df->BeginInvoke(gcnew System::Windows::Forms::MethodInvoker(df, &DataForm::ScheduleDeferredStartupOnReconnect));
-			}
+			// Отложенный старт: BeginInvoke нельзя до создания handle — см. DataForm::RequestDeferredStartupAfterSocketAttached.
+			df->RequestDeferredStartupAfterSocketAttached();
 		}
 	}
 	catch (...) {}
