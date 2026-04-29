@@ -15,6 +15,20 @@ using namespace Microsoft::Office::Interop::Excel;
 
 std::map<std::wstring, gcroot<DataForm^>> formData_Map; // глобальная карта окон formData_Map
 
+namespace
+{
+    static const short kSensorNoDataMarker = (short)-32768;
+
+    static String^ FormatTelemetryTemperature(short rawValue)
+    {
+        if (rawValue == kSensorNoDataMarker)
+        {
+            return "--";
+        }
+        return (rawValue / 10.0).ToString("F1") + "°C";
+    }
+}
+
 // Пакет лога алгоритма (Type 0x01): сначала отфильтрованные температуры 6 датчиков 0..5 (°C),
 // затем текущая фаза + группа 3 — переменные алгоритма (совпадает с ControlLogPayload_t на контроллере).
 #pragma pack(push, 1)
@@ -876,17 +890,15 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     {
         row["Typ" + i] = data.SensorType[i];
         row["Act" + i] = data.Active[i];
-        row["T" + i] = data.T[i] / 10.0;
-        row["H" + i] = data.H[i] / 10.0;
+        row["T" + i] = (data.T[i] == kSensorNoDataMarker) ? safe_cast<System::Object^>(DBNull::Value) : safe_cast<System::Object^>(data.T[i] / 10.0);
+        row["H" + i] = (data.H[i] == kSensorNoDataMarker) ? safe_cast<System::Object^>(DBNull::Value) : safe_cast<System::Object^>(data.H[i] / 10.0);
     }
-    // Температуры датчиков в градусах Цельсия
-    cli::array<double>^ temperatures = gcnew cli::array<double>(5);
-    temperatures[0] = data.T[0] / 10.0;  // Температура испарителя слева (T_def_left)
-    temperatures[1] = data.T[1] / 10.0;  // Температура испарителя справа (T_def_right)
-    temperatures[2] = data.T[2] / 10.0;  // Температура испарителя по центру (T_def_center)
-    temperatures[3] = data.T[3] / 10.0;  // Температура продукта слева (T_product_left)
-    temperatures[4] = data.T[4] / 10.0;  // Температура продукта справа (T_product_right)
-    UpdateAllTemperatureValues(temperatures);   // Обновляем температуры в окне
+    // Температуры в верхних полях DataForm: для маркера "нет данных" показываем "--".
+    SetT_def_left_Value(FormatTelemetryTemperature(data.T[0]));      // Температура испарителя слева (T_def_left)
+    SetT_def_right_Value(FormatTelemetryTemperature(data.T[1]));     // Температура испарителя справа (T_def_right)
+    SetT_def_center_Value(FormatTelemetryTemperature(data.T[2]));    // Температура испарителя по центру (T_def_center)
+    SetT_product_left_Value(FormatTelemetryTemperature(data.T[3]));  // Температура продукта слева (T_product_left)
+    SetT_product_right_Value(FormatTelemetryTemperature(data.T[4])); // Температура продукта справа (T_product_right)
 
     // БИТОВЫЕ ПОЛЯ -------------------------------------------------------------
     cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();   // Получаем имена битовых полей из контроллера
