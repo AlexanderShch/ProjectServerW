@@ -22,6 +22,7 @@ typedef struct
 	short T[SQ];
 	short H[SQ];
 	uint8_t ShutdownActive;
+	uint16_t RxErrorCnt[SQ];	// ошибки приёма ModBus (таймаут/CRC/FC) по каждому клиенту
 } MSGQUEUE_OBJ_t;
 #pragma pack(pop)
 

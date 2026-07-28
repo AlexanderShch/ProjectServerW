@@ -765,6 +765,12 @@ void ProjectServerW::DataForm::InitializeDataTable() {
     dataTable->Columns->Add("Typ" + (SQ - 1), uint8_t::typeid);
     dataTable->Columns->Add("Act" + (SQ - 1), uint8_t::typeid);
 
+    // Накопленные ошибки приёма ModBus по каждому клиенту шины (датчики + модуль ВВ)
+    for (uint8_t i = 0; i < SQ; i++)
+    {
+        dataTable->Columns->Add("RxErr" + i, uint16_t::typeid);
+    }
+
     cli::array<cli::array<String^>^>^ bitNames = GetBitFieldNames();
     if (bitNames[0] != nullptr) {
         // Добавляем в таблицу колонки битовых полей первой группы
@@ -892,6 +898,12 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         row["Act" + i] = data.Active[i];
         row["T" + i] = (data.T[i] == kSensorNoDataMarker) ? safe_cast<System::Object^>(DBNull::Value) : safe_cast<System::Object^>(data.T[i] / 10.0);
         row["H" + i] = (data.H[i] == kSensorNoDataMarker) ? safe_cast<System::Object^>(DBNull::Value) : safe_cast<System::Object^>(data.H[i] / 10.0);
+    }
+    row["Typ" + (SQ - 1)] = data.SensorType[SQ - 1];
+    row["Act" + (SQ - 1)] = data.Active[SQ - 1];
+    for (uint8_t i = 0; i < SQ; i++)
+    {
+        row["RxErr" + i] = data.RxErrorCnt[i];
     }
     // Температуры в верхних полях DataForm: для маркера "нет данных" показываем "--".
     SetT_def_left_Value(FormatTelemetryTemperature(data.T[0]));      // Температура испарителя слева (T_def_left)
