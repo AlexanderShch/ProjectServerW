@@ -1,9 +1,15 @@
 #pragma once
 
 // Строка версии для отображения
-static const wchar_t* const VERSION_STR = L"2.2.6";
+static const wchar_t* const VERSION_STR = L"2.2.7";
 
 /*
+Версия 2.2.7
+- Исправлен приём регулярной телеметрии после расширения MSGQUEUE_OBJ_t:
+  в SServer размер TELEMETRY_DATA_LEN теперь берётся как sizeof(MSGQUEUE_OBJ_t),
+  поэтому кадры с DataLen=60 не отбрасываются фильтром длины.
+- Восстановлен вывод строк телеметрии и столбцов RxErr0…RxErr6 в DataForm/Excel.
+
 Версия 2.2.6
 - Структура телеметрии приведена к прошивке Defrost 2.6.4: добавлен RxErrorCnt[SQ]
   (накопленные ошибки приёма ModBus по каждому клиенту шины).
