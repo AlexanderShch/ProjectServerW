@@ -2351,7 +2351,7 @@ System::Void ProjectServerW::DataForm::buttonLoadDefrostDefaults_Click(System::O
         if (!LoadDefrostDefaultsOnController()) {
             MessageBox::Show(
                 "Не удалось загрузить параметры по умолчанию на контроллер.\n"
-                "Проверьте связь и версию прошивки (нужна >= 2.6.10).\n"
+                "Проверьте связь и версию прошивки (нужна >= 2.7.0).\n"
                 "Подробности — в логе сервера.",
                 "Параметры по умолчанию",
                 MessageBoxButtons::OK,

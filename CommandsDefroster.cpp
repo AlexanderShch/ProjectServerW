@@ -526,7 +526,7 @@ bool ProjectServerW::DataForm::LoadDefrostDefaultsOnController() {
         const char* statusName = GetStatusName(response.status);
         GlobalLogger::LogMessage(String::Format(
             "Ошибка LOAD_DEFROST_DEFAULTS: ok={0}, status=0x{1:X2} ({2}). "
-            "Нужна прошивка контроллера >= 2.6.10.",
+            "Нужна прошивка контроллера >= 2.7.0.",
             ok ? "true" : "false",
             response.status,
             gcnew String(statusName)));

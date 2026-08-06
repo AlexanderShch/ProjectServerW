@@ -65,8 +65,11 @@ Command cmd = CreateControlCommand(CmdProgControl::START);
 // Установка температуры (float)
 Command cmd = CreateConfigCommandFloat(CmdConfig::SET_TEMPERATURE, 25.5f);
 
-// Установка интервала (int)
-Command cmd = CreateConfigCommandInt(CmdConfig::SET_INTERVAL, 1000);
+// Установка интервала (uint16)
+Command cmd = CreateConfigCommandU16(CmdConfig::SET_INTERVAL, 1000);
+
+// Заводские параметры дефростации (без payload; прошивка >= 2.7.0)
+Command cmd = CreateConfigCommand(CmdConfig::LOAD_DEFROST_DEFAULTS);
 ```
 
 ### Команды запроса (REQUEST)
