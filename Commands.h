@@ -33,6 +33,7 @@ struct CmdConfig {
     static const uint8_t SET_MODE = 0x03;          // Установить режим работы
     static const uint8_t SET_DEFROST_PARAM = 0x04; // Установить один параметр авто-дефроста (payload: groupId, paramId, valueType, value)
     static const uint8_t SET_DEFROST_GROUP  = 0x05; // Записать группу параметров (payload: groupId + данные группы 5 или 6)
+    static const uint8_t LOAD_DEFROST_DEFAULTS = 0x06; // Загрузить заводские параметры дефростации на контроллер
 };
 
 // Коды команд запроса (тип REQUEST)
@@ -146,6 +147,15 @@ inline Command CreateConfigCommandU16(uint8_t commandCode, uint16_t value) {
     cmd.commandCode = commandCode;
     cmd.dataLength = 2;
     memcpy(cmd.data, &value, 2);
+    return cmd;
+}
+
+// Создать команду конфигурации без параметров
+inline Command CreateConfigCommand(uint8_t commandCode) {
+    Command cmd;
+    cmd.commandType = CmdType::CONFIGURATION;
+    cmd.commandCode = commandCode;
+    cmd.dataLength = 0;
     return cmd;
 }
 

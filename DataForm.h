@@ -68,6 +68,7 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::DataGridViewTextBoxColumn^ Value;
 	private: System::Windows::Forms::Button^ buttonWriteParameters;
 	private: System::Windows::Forms::Button^ buttonReadParameters;
+	private: System::Windows::Forms::Button^ buttonLoadDefrostDefaults;
 	private: System::Windows::Forms::Label^ label1;
 
 
@@ -495,6 +496,8 @@ private: System::ComponentModel::IContainer^ components;
 				this->Label_Data = (gcnew System::Windows::Forms::Label());
 				this->dataGridView = (gcnew System::Windows::Forms::DataGridView());
 				this->tabPage2 = (gcnew System::Windows::Forms::TabPage());
+				this->label_Defroster_Info = (gcnew System::Windows::Forms::Label());
+				this->labelDefrosterState = (gcnew System::Windows::Forms::Label());
 				this->label_Version = (gcnew System::Windows::Forms::Label());
 				this->labelVersion = (gcnew System::Windows::Forms::Label());
 				this->button_RESET = (gcnew System::Windows::Forms::Button());
@@ -520,6 +523,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage3 = (gcnew System::Windows::Forms::TabPage());
 				this->buttonLoadFromFile = (gcnew System::Windows::Forms::Button());
 				this->label2 = (gcnew System::Windows::Forms::Label());
+				this->buttonLoadDefrostDefaults = (gcnew System::Windows::Forms::Button());
 				this->buttonWriteParameters = (gcnew System::Windows::Forms::Button());
 				this->buttonReadParameters = (gcnew System::Windows::Forms::Button());
 				this->label1 = (gcnew System::Windows::Forms::Label());
@@ -537,8 +541,6 @@ private: System::ComponentModel::IContainer^ components;
 				this->dataGridEquipmentAlarm = (gcnew System::Windows::Forms::DataGridView());
 				this->timerAutoStart = (gcnew System::Windows::Forms::Timer(this->components));
 				this->timerAutoRestart = (gcnew System::Windows::Forms::Timer(this->components));
-				this->label_Defroster_Info = (gcnew System::Windows::Forms::Label());
-				this->labelDefrosterState = (gcnew System::Windows::Forms::Label());
 				this->menuStrip1->SuspendLayout();
 				this->tabControl1->SuspendLayout();
 				this->tabPage1->SuspendLayout();
@@ -559,7 +561,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->выходToolStripMenuItem });
 				this->menuStrip1->Location = System::Drawing::Point(0, 0);
 				this->menuStrip1->Name = L"menuStrip1";
-				this->menuStrip1->Size = System::Drawing::Size(1494, 33);
+				this->menuStrip1->Size = System::Drawing::Size(1435, 33);
 				this->menuStrip1->TabIndex = 0;
 				this->menuStrip1->Text = L"menuStrip1";
 				this->menuStrip1->ItemClicked += gcnew System::Windows::Forms::ToolStripItemClickedEventHandler(this, &DataForm::menuStrip1_ItemClicked);
@@ -567,7 +569,7 @@ private: System::ComponentModel::IContainer^ components;
 				// выходToolStripMenuItem
 				// 
 				this->выходToolStripMenuItem->Name = L"выходToolStripMenuItem";
-				this->выходToolStripMenuItem->Size = System::Drawing::Size(80, 29);
+				this->выходToolStripMenuItem->Size = System::Drawing::Size(80, 30);
 				this->выходToolStripMenuItem->Text = L"Выход";
 				this->выходToolStripMenuItem->Click += gcnew System::EventHandler(this, &DataForm::выходToolStripMenuItem_Click);
 				// 
@@ -590,7 +592,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabControl1->Location = System::Drawing::Point(0, 36);
 				this->tabControl1->Name = L"tabControl1";
 				this->tabControl1->SelectedIndex = 0;
-				this->tabControl1->Size = System::Drawing::Size(1494, 527);
+				this->tabControl1->Size = System::Drawing::Size(1411, 527);
 				this->tabControl1->TabIndex = 6;
 				this->tabControl1->SelectedIndexChanged += gcnew System::EventHandler(this, &DataForm::tabControl1_SelectedIndexChanged);
 				// 
@@ -615,7 +617,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage1->Location = System::Drawing::Point(4, 29);
 				this->tabPage1->Name = L"tabPage1";
 				this->tabPage1->Padding = System::Windows::Forms::Padding(3);
-				this->tabPage1->Size = System::Drawing::Size(1486, 494);
+				this->tabPage1->Size = System::Drawing::Size(1729, 494);
 				this->tabPage1->TabIndex = 0;
 				this->tabPage1->Text = L"Данные";
 				this->tabPage1->UseVisualStyleBackColor = true;
@@ -757,7 +759,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->dataGridView->RowHeadersWidthSizeMode = System::Windows::Forms::DataGridViewRowHeadersWidthSizeMode::AutoSizeToDisplayedHeaders;
 				this->dataGridView->RowTemplate->Height = 20;
 				this->dataGridView->RowTemplate->Resizable = System::Windows::Forms::DataGridViewTriState::True;
-				this->dataGridView->Size = System::Drawing::Size(1276, 400);
+				this->dataGridView->Size = System::Drawing::Size(1711, 400);
 				this->dataGridView->TabIndex = 6;
 				this->dataGridView->CellContentClick += gcnew System::Windows::Forms::DataGridViewCellEventHandler(this, &DataForm::dataGridView_CellContentClick);
 				// 
@@ -790,10 +792,28 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage2->Location = System::Drawing::Point(4, 29);
 				this->tabPage2->Name = L"tabPage2";
 				this->tabPage2->Padding = System::Windows::Forms::Padding(3);
-				this->tabPage2->Size = System::Drawing::Size(1486, 494);
+				this->tabPage2->Size = System::Drawing::Size(1729, 494);
 				this->tabPage2->TabIndex = 1;
 				this->tabPage2->Text = L"Настройки";
 				this->tabPage2->UseVisualStyleBackColor = true;
+				// 
+				// label_Defroster_Info
+				// 
+				this->label_Defroster_Info->AutoSize = true;
+				this->label_Defroster_Info->Location = System::Drawing::Point(339, 122);
+				this->label_Defroster_Info->Name = L"label_Defroster_Info";
+				this->label_Defroster_Info->Size = System::Drawing::Size(196, 20);
+				this->label_Defroster_Info->TabIndex = 18;
+				this->label_Defroster_Info->Text = L"Состояние дефростера:";
+				// 
+				// labelDefrosterState
+				// 
+				this->labelDefrosterState->AutoSize = true;
+				this->labelDefrosterState->Location = System::Drawing::Point(541, 122);
+				this->labelDefrosterState->Name = L"labelDefrosterState";
+				this->labelDefrosterState->Size = System::Drawing::Size(212, 20);
+				this->labelDefrosterState->TabIndex = 17;
+				this->labelDefrosterState->Text = L"Команда не отправлялась";
 				// 
 				// label_Version
 				// 
@@ -1016,6 +1036,7 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				this->tabPage3->Controls->Add(this->buttonLoadFromFile);
 				this->tabPage3->Controls->Add(this->label2);
+				this->tabPage3->Controls->Add(this->buttonLoadDefrostDefaults);
 				this->tabPage3->Controls->Add(this->buttonWriteParameters);
 				this->tabPage3->Controls->Add(this->buttonReadParameters);
 				this->tabPage3->Controls->Add(this->label1);
@@ -1023,14 +1044,14 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage3->Controls->Add(this->dataGridView1);
 				this->tabPage3->Location = System::Drawing::Point(4, 29);
 				this->tabPage3->Name = L"tabPage3";
-				this->tabPage3->Size = System::Drawing::Size(1486, 494);
+				this->tabPage3->Size = System::Drawing::Size(1403, 494);
 				this->tabPage3->TabIndex = 2;
 				this->tabPage3->Text = L"Параметры";
 				this->tabPage3->UseVisualStyleBackColor = true;
 				// 
 				// buttonLoadFromFile
 				// 
-				this->buttonLoadFromFile->Location = System::Drawing::Point(1013, 8);
+				this->buttonLoadFromFile->Location = System::Drawing::Point(856, 8);
 				this->buttonLoadFromFile->Name = L"buttonLoadFromFile";
 				this->buttonLoadFromFile->Size = System::Drawing::Size(117, 36);
 				this->buttonLoadFromFile->TabIndex = 7;
@@ -1041,16 +1062,26 @@ private: System::ComponentModel::IContainer^ components;
 				// label2
 				// 
 				this->label2->AutoSize = true;
-				this->label2->Location = System::Drawing::Point(858, 16);
+				this->label2->Location = System::Drawing::Point(701, 16);
 				this->label2->Name = L"label2";
 				this->label2->Size = System::Drawing::Size(149, 20);
 				this->label2->TabIndex = 6;
 				this->label2->Text = L"Данные из файла:";
 				this->label2->TextAlign = System::Drawing::ContentAlignment::TopCenter;
 				// 
+				// buttonLoadDefrostDefaults
+				// 
+				this->buttonLoadDefrostDefaults->Location = System::Drawing::Point(1164, 60);
+				this->buttonLoadDefrostDefaults->Name = L"buttonLoadDefrostDefaults";
+				this->buttonLoadDefrostDefaults->Size = System::Drawing::Size(117, 36);
+				this->buttonLoadDefrostDefaults->TabIndex = 8;
+				this->buttonLoadDefrostDefaults->Text = L"Исх.знач.";
+				this->buttonLoadDefrostDefaults->UseVisualStyleBackColor = true;
+				this->buttonLoadDefrostDefaults->Click += gcnew System::EventHandler(this, &DataForm::buttonLoadDefrostDefaults_Click);
+				// 
 				// buttonWriteParameters
 				// 
-				this->buttonWriteParameters->Location = System::Drawing::Point(1167, 60);
+				this->buttonWriteParameters->Location = System::Drawing::Point(1010, 60);
 				this->buttonWriteParameters->Name = L"buttonWriteParameters";
 				this->buttonWriteParameters->Size = System::Drawing::Size(117, 36);
 				this->buttonWriteParameters->TabIndex = 5;
@@ -1060,7 +1091,7 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// buttonReadParameters
 				// 
-				this->buttonReadParameters->Location = System::Drawing::Point(1013, 60);
+				this->buttonReadParameters->Location = System::Drawing::Point(856, 60);
 				this->buttonReadParameters->Name = L"buttonReadParameters";
 				this->buttonReadParameters->Size = System::Drawing::Size(117, 36);
 				this->buttonReadParameters->TabIndex = 4;
@@ -1071,7 +1102,7 @@ private: System::ComponentModel::IContainer^ components;
 				// label1
 				// 
 				this->label1->AutoSize = true;
-				this->label1->Location = System::Drawing::Point(905, 68);
+				this->label1->Location = System::Drawing::Point(748, 68);
 				this->label1->Name = L"label1";
 				this->label1->Size = System::Drawing::Size(102, 20);
 				this->label1->TabIndex = 3;
@@ -1161,7 +1192,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage4->Controls->Add(this->dataGridEquipmentAlarm);
 				this->tabPage4->Location = System::Drawing::Point(4, 29);
 				this->tabPage4->Name = L"tabPage4";
-				this->tabPage4->Size = System::Drawing::Size(1486, 494);
+				this->tabPage4->Size = System::Drawing::Size(1729, 494);
 				this->tabPage4->TabIndex = 3;
 				this->tabPage4->Text = L"АВАРИЯ";
 				this->tabPage4->UseVisualStyleBackColor = true;
@@ -1196,31 +1227,13 @@ private: System::ComponentModel::IContainer^ components;
 				this->timerAutoRestart->Interval = 30000;
 				this->timerAutoRestart->Tick += gcnew System::EventHandler(this, &DataForm::timerAutoRestart_Tick);
 				// 
-				// label_Defroster_Info
-				// 
-				this->label_Defroster_Info->AutoSize = true;
-				this->label_Defroster_Info->Location = System::Drawing::Point(339, 122);
-				this->label_Defroster_Info->Name = L"label_Defroster_Info";
-				this->label_Defroster_Info->Size = System::Drawing::Size(196, 20);
-				this->label_Defroster_Info->TabIndex = 18;
-				this->label_Defroster_Info->Text = L"Состояние дефростера:";
-				// 
-				// labelDefrosterState
-				// 
-				this->labelDefrosterState->AutoSize = true;
-				this->labelDefrosterState->Location = System::Drawing::Point(541, 122);
-				this->labelDefrosterState->Name = L"labelDefrosterState";
-				this->labelDefrosterState->Size = System::Drawing::Size(212, 20);
-				this->labelDefrosterState->TabIndex = 17;
-				this->labelDefrosterState->Text = L"Команда не отправлялась";
-				// 
 				// DataForm
 				// 
 				this->AutoScaleDimensions = System::Drawing::SizeF(9, 20);
 				this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
 				this->AutoScroll = true;
 				this->AutoSizeMode = System::Windows::Forms::AutoSizeMode::GrowAndShrink;
-				this->ClientSize = System::Drawing::Size(1317, 575);
+				this->ClientSize = System::Drawing::Size(1435, 601);
 				this->Controls->Add(this->tabControl1);
 				this->Controls->Add(this->menuStrip1);
 				this->MainMenuStrip = this->menuStrip1;
@@ -1341,6 +1354,7 @@ private: System::ComponentModel::IContainer^ components;
 		bool GetAlarmFlags(::AlarmFlagsPayload* outFlags); // Запросить регистры аварий устройств и датчиков
 		/** Отправить группу параметров (payload как в GET_DEFROST_GROUP). groupId 5 или 6. */
 		bool SetDefrostGroup(uint8_t groupId, const uint8_t* payload, uint8_t payloadLen);
+		bool LoadDefrostDefaultsOnController();
 		void EnsureEquipmentAlarmGridColumns();
 		void PopulateEquipmentAlarmGrid(uint16_t deviceFlags, uint16_t sensorFlags);
 		void RefreshAlarmFlagsFromController();
@@ -1454,6 +1468,7 @@ private: System::Void button_CMDINFO_Click(System::Object^ sender, System::Event
 	private: System::Void buttonReadParameters_Click(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void AutoReadParametersFromController();
 	private: System::Void buttonWriteParameters_Click(System::Object^ sender, System::EventArgs^ e);
+	private: System::Void buttonLoadDefrostDefaults_Click(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void dataGridView1_CellValueChanged(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e);
 	private: System::Void dataGridView1_RowChanged(System::Object^ sender, System::Windows::Forms::DataGridViewRowEventArgs^ e);
 	private: System::Void dataGridView2_CellValueChanged(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e);

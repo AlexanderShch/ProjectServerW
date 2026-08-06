@@ -517,6 +517,24 @@ bool ProjectServerW::DataForm::SetDefrostGroup(uint8_t groupId, const uint8_t* p
     return true;
 }
 
+bool ProjectServerW::DataForm::LoadDefrostDefaultsOnController() {
+    if (clientSocket == INVALID_SOCKET) return false;
+    Command cmd = CreateConfigCommand(CmdConfig::LOAD_DEFROST_DEFAULTS);
+    CommandResponse response;
+    const bool ok = SendCommandAndWaitResponse(cmd, response, "LOAD_DEFROST_DEFAULTS");
+    if (!ok || response.status != CmdStatus::OK) {
+        const char* statusName = GetStatusName(response.status);
+        GlobalLogger::LogMessage(String::Format(
+            "Ошибка LOAD_DEFROST_DEFAULTS: ok={0}, status=0x{1:X2} ({2}). "
+            "Нужна прошивка контроллера >= 2.6.10.",
+            ok ? "true" : "false",
+            response.status,
+            gcnew String(statusName)));
+        return false;
+    }
+    return true;
+}
+
 void ProjectServerW::DataForm::SendCommandInfoRequest() {
     // Почему: это аудит обработки команд, а не "состояние устройства" (телеметрия).
     // Ожидается, что прошивка запоминает последнюю принятую команду и отдаёт её по этому запросу.
@@ -878,10 +896,13 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
                 (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_ALARM_FLAGS);
             const bool isSetDefrostGroup =
                 (cmd.commandType == CmdType::CONFIGURATION && cmd.commandCode == CmdConfig::SET_DEFROST_GROUP);
+            // ACK после синхронной записи EEPROM (~130 байт по I2C) — 100 мс мало.
+            const bool isLoadDefrostDefaults =
+                (cmd.commandType == CmdType::CONFIGURATION && cmd.commandCode == CmdConfig::LOAD_DEFROST_DEFAULTS);
             const bool isProgControl = (cmd.commandType == CmdType::PROG_CONTROL);
             // GET_ALARM_FLAGS по RS-485/полудуплексу и при загрузке контроллера часто не укладывается в 100 мс.
             const int totalTimeoutMs =
-                (isGetDefrostGroup || isGetAlarmFlags || isSetDefrostGroup) ? 1000 :
+                (isGetDefrostGroup || isGetAlarmFlags || isSetDefrostGroup || isLoadDefrostDefaults) ? 1000 :
                 (isProgControl ? 300 : defaultTimeoutMs);
             DateTime deadline = DateTime::Now.AddMilliseconds(totalTimeoutMs);
             while (true) {

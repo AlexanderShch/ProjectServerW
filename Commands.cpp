@@ -89,6 +89,7 @@ const char* GetCommandName(const Command& cmd) {
         case 0x03: return "SET_MODE";
         case 0x04: return "SET_DEFROST_PARAM";
         case 0x05: return "SET_DEFROST_GROUP";
+        case 0x06: return "LOAD_DEFROST_DEFAULTS";
         default: return "CONFIG_UNKNOWN";
         }
     }

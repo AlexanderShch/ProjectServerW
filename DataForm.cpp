@@ -2333,6 +2333,49 @@ System::Void ProjectServerW::DataForm::buttonReadParameters_Click(System::Object
     }
 }
 
+System::Void ProjectServerW::DataForm::buttonLoadDefrostDefaults_Click(System::Object^ sender, System::EventArgs^ e) {
+    try {
+        if (ClientSocket == INVALID_SOCKET) {
+            MessageBox::Show("Нет соединения с устройством. Подключитесь к устройству.");
+            return;
+        }
+        const System::Windows::Forms::DialogResult answer = MessageBox::Show(
+            "Загрузить на контроллер заводские параметры дефростации?\n"
+            "Текущие значения в EEPROM будут перезаписаны. Режим работы (ПУСК/СТОП) не изменится.",
+            "Параметры по умолчанию",
+            MessageBoxButtons::YesNo,
+            MessageBoxIcon::Question);
+        if (answer != System::Windows::Forms::DialogResult::Yes) {
+            return;
+        }
+        if (!LoadDefrostDefaultsOnController()) {
+            MessageBox::Show(
+                "Не удалось загрузить параметры по умолчанию на контроллер.\n"
+                "Проверьте связь и версию прошивки (нужна >= 2.6.10).\n"
+                "Подробности — в логе сервера.",
+                "Параметры по умолчанию",
+                MessageBoxButtons::OK,
+                MessageBoxIcon::Warning);
+            if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+                Label_Commands->Text = "Ошибка загрузки параметров по умолчанию";
+                Label_Commands->ForeColor = System::Drawing::Color::Red;
+            }
+            return;
+        }
+        if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+            Label_Commands->Text = "Заводские параметры дефростации загружены на контроллер";
+            Label_Commands->ForeColor = System::Drawing::Color::DarkGreen;
+        }
+        GlobalLogger::LogMessage("Information: LOAD_DEFROST_DEFAULTS выполнена успешно");
+        buttonReadParameters_Click(nullptr, nullptr);
+    }
+    catch (Exception^ ex) {
+        String^ msg = "Ошибка при загрузке параметров по умолчанию: " + (ex->Message != nullptr ? ex->Message : "");
+        MessageBox::Show(msg, "Параметры по умолчанию", MessageBoxButtons::OK, MessageBoxIcon::Warning);
+        GlobalLogger::LogMessage("Error: buttonLoadDefrostDefaults_Click: " + msg);
+    }
+}
+
 System::Void ProjectServerW::DataForm::buttonWriteParameters_Click(System::Object^ sender, System::EventArgs^ e) {
     if ((dataGridView1 == nullptr || dataGridView1->IsDisposed) && (dataGridView2 == nullptr || dataGridView2->IsDisposed)) return;
     if (ClientSocket == INVALID_SOCKET) {

@@ -1,9 +1,15 @@
 #pragma once
 
 // Строка версии для отображения
-static const wchar_t* const VERSION_STR = L"2.2.7";
+static const wchar_t* const VERSION_STR = L"2.3.0";
 
 /*
+Версия 2.3.0
+- Команда LOAD_DEFROST_DEFAULTS (CONFIGURATION 0x06): кнопка «По умолчанию» на вкладке «Параметры».
+- Для LOAD_DEFROST_DEFAULTS увеличен таймаут ожидания ответа до 1000 мс
+  (контроллер шлёт ACK только после записи параметров в EEPROM).
+  Требуется прошивка контроллера ≥ 2.6.10.
+
 Версия 2.2.7
 - Исправлен приём регулярной телеметрии после расширения MSGQUEUE_OBJ_t:
   в SServer размер TELEMETRY_DATA_LEN теперь берётся как sizeof(MSGQUEUE_OBJ_t),
