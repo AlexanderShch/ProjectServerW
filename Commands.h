@@ -65,6 +65,8 @@ struct DefrostParamValue {
 };
 
 // Ответ GET_ALARM_FLAGS: два 16-битных регистра аварий.
+// Device: бит 13/14 — выпадение датчика продукта (T-переход вверх).
+// Sensor: бит 0..6 — помехи канала; бит 8/9 — T-переход вниз датчиков продукта 3/4.
 struct AlarmFlagsPayload {
     uint16_t deviceAlarmFlags;
     uint16_t sensorAlarmFlags;

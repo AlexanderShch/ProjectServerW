@@ -465,6 +465,18 @@ void ProjectServerW::DataForm::PopulateEquipmentAlarmGrid(uint16_t deviceFlags, 
             "Нет подтверждения конечного положения Air_Open/Air_Close за 180 секунд.");
     }
 
+    // Device_AlarmFlags бит 13/14: T-переход вверх — выпадение датчика продукта из изделия.
+    if ((deviceFlags & (1u << 13)) != 0) {
+        dataGridEquipmentAlarm->Rows->Add(
+            "Датчик T продукт левый",
+            "Выпадение датчика из продукта.");
+    }
+    if ((deviceFlags & (1u << 14)) != 0) {
+        dataGridEquipmentAlarm->Rows->Add(
+            "Датчик T продукт правый",
+            "Выпадение датчика из продукта.");
+    }
+
     // Биты 0..6: аварии температурных каналов и IO-модуля в Sensor_AlarmFlags.
     cli::array<String^>^ sensorNames = gcnew cli::array<String^> {
         "Датчик T дефрост левый",
@@ -481,6 +493,18 @@ void ProjectServerW::DataForm::PopulateEquipmentAlarmGrid(uint16_t deviceFlags, 
                 sensorNames[bit],
                 "Зафиксирована авария датчика (избыточные выбросы/помехи).");
         }
+    }
+
+    // Sensor_AlarmFlags бит 8/9: T-переход вниз датчиков продукта 3/4 (установка в продукт).
+    if ((sensorFlags & (1u << 8)) != 0) {
+        dataGridEquipmentAlarm->Rows->Add(
+            "Датчик T продукт левый",
+            "Авария датчика по T-переходу вниз.");
+    }
+    if ((sensorFlags & (1u << 9)) != 0) {
+        dataGridEquipmentAlarm->Rows->Add(
+            "Датчик T продукт правый",
+            "Авария датчика по T-переходу вниз.");
     }
 
     if (dataGridEquipmentAlarm->Rows->Count == 0) {
