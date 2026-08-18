@@ -1553,11 +1553,12 @@ void ProjectServerW::DataForm::SaveSettings() {
         // Строка 1 — путь к "папке" экспорта Excel для сохранения данных.
         writer->WriteLine(textBoxExcelDirectory->Text);
 
-        // Замечание: настройки формы сохраняются в файл при закрытии; при открытии форма загружает настройки из файла.
+        // Чек-бокс и время автозапуска пишутся при каждом изменении и ещё раз при закрытии формы.
+        System::Globalization::CultureInfo^ inv = System::Globalization::CultureInfo::InvariantCulture;
         writer->WriteLine("AutoStartEnabled=" + (checkBoxAutoStart->Checked ? "1" : "0"));
-        writer->WriteLine("AutoStartTime=" + dateTimePickerAutoStart->Value.ToString("HH:mm"));
+        writer->WriteLine("AutoStartTime=" + dateTimePickerAutoStart->Value.ToString("HH:mm", inv));
         writer->WriteLine("AutoRestartEnabled=" + (checkBoxAutoRestart->Checked ? "1" : "0"));
-        writer->WriteLine("AutoRestartTime=" + dateTimePickerAutoRestart->Value.ToString("HH:mm"));
+        writer->WriteLine("AutoRestartTime=" + dateTimePickerAutoRestart->Value.ToString("HH:mm", inv));
         int intervalSeconds = 10;
         if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
             intervalSeconds = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
@@ -1592,6 +1593,17 @@ void ProjectServerW::DataForm::LoadSettings() {
                 }
             }
 
+            // Сначала читаем ключи, затем применяем время и только потом чек-боксы:
+            // иначе лог/таймер автозапуска возьмёт дизайнерское время 19:29 вместо сохранённого.
+            bool hasAutoStartEnabled = false;
+            bool autoStartEnabled = false;
+            bool hasAutoRestartEnabled = false;
+            bool autoRestartEnabled = false;
+            bool hasAutoStartTime = false;
+            bool hasAutoRestartTime = false;
+            DateTime autoStartTime;
+            DateTime autoRestartTime;
+
             for (int i = 1; i < lines->Length; i++) {
                 String^ line = lines[i];
                 if (String::IsNullOrWhiteSpace(line)) {
@@ -1606,26 +1618,38 @@ void ProjectServerW::DataForm::LoadSettings() {
                 String^ value = line->Substring(eq + 1)->Trim();
 
                 if (key->Equals("AutoStartEnabled", StringComparison::OrdinalIgnoreCase)) {
-                    checkBoxAutoStart->Checked = (value == "1" || value->Equals("true", StringComparison::OrdinalIgnoreCase));
+                    hasAutoStartEnabled = true;
+                    autoStartEnabled = (value == "1" || value->Equals("true", StringComparison::OrdinalIgnoreCase));
                 }
                 else if (key->Equals("AutoStartTime", StringComparison::OrdinalIgnoreCase)) {
-                    DateTime t = DateTime::ParseExact(
-                        value, "HH:mm",
-                        System::Globalization::CultureInfo::InvariantCulture,
-                        System::Globalization::DateTimeStyles::None);
-                    DateTime baseDate = dateTimePickerAutoStart->Value;
-                    dateTimePickerAutoStart->Value = DateTime(baseDate.Year, baseDate.Month, baseDate.Day, t.Hour, t.Minute, 0);
+                    DateTime t;
+                    if (DateTime::TryParseExact(
+                            value, "HH:mm",
+                            System::Globalization::CultureInfo::InvariantCulture,
+                            System::Globalization::DateTimeStyles::None, t)) {
+                        hasAutoStartTime = true;
+                        autoStartTime = t;
+                    }
+                    else {
+                        GlobalLogger::LogMessage("Warning: не удалось разобрать AutoStartTime=" + value);
+                    }
                 }
                 else if (key->Equals("AutoRestartEnabled", StringComparison::OrdinalIgnoreCase)) {
-                    checkBoxAutoRestart->Checked = (value == "1" || value->Equals("true", StringComparison::OrdinalIgnoreCase));
+                    hasAutoRestartEnabled = true;
+                    autoRestartEnabled = (value == "1" || value->Equals("true", StringComparison::OrdinalIgnoreCase));
                 }
                 else if (key->Equals("AutoRestartTime", StringComparison::OrdinalIgnoreCase)) {
-                    DateTime t = DateTime::ParseExact(
-                        value, "HH:mm",
-                        System::Globalization::CultureInfo::InvariantCulture,
-                        System::Globalization::DateTimeStyles::None);
-                    DateTime baseDate = dateTimePickerAutoRestart->Value;
-                    dateTimePickerAutoRestart->Value = DateTime(baseDate.Year, baseDate.Month, baseDate.Day, t.Hour, t.Minute, 0);
+                    DateTime t;
+                    if (DateTime::TryParseExact(
+                            value, "HH:mm",
+                            System::Globalization::CultureInfo::InvariantCulture,
+                            System::Globalization::DateTimeStyles::None, t)) {
+                        hasAutoRestartTime = true;
+                        autoRestartTime = t;
+                    }
+                    else {
+                        GlobalLogger::LogMessage("Warning: не удалось разобрать AutoRestartTime=" + value);
+                    }
                 }
                 else if (key->Equals("MeasurementIntervalSeconds", StringComparison::OrdinalIgnoreCase)) {
                     int parsed = 0;
@@ -1642,6 +1666,23 @@ void ProjectServerW::DataForm::LoadSettings() {
                         }
                     }
                 }
+            }
+
+            if (hasAutoStartTime && dateTimePickerAutoStart != nullptr && !dateTimePickerAutoStart->IsDisposed) {
+                DateTime baseDate = dateTimePickerAutoStart->Value;
+                dateTimePickerAutoStart->Value = DateTime(baseDate.Year, baseDate.Month, baseDate.Day,
+                    autoStartTime.Hour, autoStartTime.Minute, 0);
+            }
+            if (hasAutoRestartTime && dateTimePickerAutoRestart != nullptr && !dateTimePickerAutoRestart->IsDisposed) {
+                DateTime baseDate = dateTimePickerAutoRestart->Value;
+                dateTimePickerAutoRestart->Value = DateTime(baseDate.Year, baseDate.Month, baseDate.Day,
+                    autoRestartTime.Hour, autoRestartTime.Minute, 0);
+            }
+            if (hasAutoStartEnabled && checkBoxAutoStart != nullptr && !checkBoxAutoStart->IsDisposed) {
+                checkBoxAutoStart->Checked = autoStartEnabled;
+            }
+            if (hasAutoRestartEnabled && checkBoxAutoRestart != nullptr && !checkBoxAutoRestart->IsDisposed) {
+                checkBoxAutoRestart->Checked = autoRestartEnabled;
             }
         }
     }
@@ -2474,6 +2515,8 @@ void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::ar
 System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ sender, System::Windows::Forms::FormClosingEventArgs^ e) {
     try {
         isFormClosingNow = true;
+        // На случай, если последнее изменение чек-бокса/времени не успели записать в файл.
+        SaveSettings();
         // Проверяем, есть ли данные в таблице и не были ли они уже экспортированы
         if (dataTable != nullptr && dataTable->Rows->Count > 0) {
             
@@ -2800,6 +2843,11 @@ System::Void ProjectServerW::DataForm::checkBoxAutoStart_CheckedChanged(System::
         
         // Выключение элементов
         labelAutoStart->ForeColor = System::Drawing::SystemColors::ControlText;
+    }
+    // Сохраняем сразу при изменении, иначе после перезапуска программы чек-бокс теряется
+    // (время уже писалось из dateTimePickerAutoStart_ValueChanged).
+    if (!settingsLoading) {
+        SaveSettings();
     }
 }
 
