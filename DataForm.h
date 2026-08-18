@@ -226,6 +226,8 @@ namespace ProjectServerW {
 	System::Windows::Forms::Timer^ controlLogAbsenceTimer; // Таймер: при отсутствии телеметрии с _Wrk=1 сбрасывает controllerAutoModeActive
 	System::Windows::Forms::Timer^ sendStateTimer;        // Таймер команды «Отправить состояние» по интервалу измерений
 	bool autoRestartInternalUncheck; // Why: one-shot UX unchecks the box; we must not cancel the pending START.
+	DateTime lastAutoStartFired;     // защита от повторного START в ту же минуту (таймер 30 с)
+	DateTime lastAutoRestartFired;   // защита от повторного STOP/START в ту же минуту
 	bool settingsLoading;            // Why: avoid side-effects (timers/log/save) while applying persisted settings.
 	bool isFormClosingNow;           // true: форма закрывается, сетевые MessageBox нужно подавлять.
 	System::String^ pendingVersion;  // временное хранение версии для обновления UI из другого потока
@@ -374,6 +376,8 @@ namespace ProjectServerW {
 	lastTelemetryAlrmBit = false;
 		controlLogAbsenceTimer = nullptr;
 		autoRestartInternalUncheck = false;
+	lastAutoStartFired = DateTime::MinValue;
+	lastAutoRestartFired = DateTime::MinValue;
 	settingsLoading = false;
 	isFormClosingNow = false;
 	pendingVersion = nullptr;       // Временная версия для обновления UI

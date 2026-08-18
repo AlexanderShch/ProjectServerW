@@ -2853,79 +2853,75 @@ System::Void ProjectServerW::DataForm::checkBoxAutoStart_CheckedChanged(System::
 
 // Таймер автозапуска по времени
 System::Void ProjectServerW::DataForm::timerAutoStart_Tick(System::Object^ sender, System::EventArgs^ e) {
-    // Проверка флажка автозапуска
     if (!checkBoxAutoStart->Checked) {
-        return; // если чекбокс снят, выходим
+        return;
     }
-    
+
     DateTime now = DateTime::Now;
     DateTime targetTime = dateTimePickerAutoStart->Value;
-    
-    // Сравниваем текущее время с целевым (час и минута)
-    if (now.Hour == targetTime.Hour && now.Minute == targetTime.Minute) {
-        // Время пришло — срабатывание автозапуска
-        GlobalLogger::LogMessage(String::Format(
-            "Information: Автозапуск сработал в {0} (целевое: {1})",
-            now.ToString("HH:mm:ss"),
-            targetTime.ToString("HH:mm")));
-        
-        // Проверяем, что кнопка START доступна (нажатие по таймеру)
-        if (buttonSTART->Enabled) {
-            // Включение элементов
-            labelAutoStart->ForeColor = System::Drawing::Color::Blue;
-            Label_Commands->Text = "[Ожидание] Выполняется команда остановки...";
-            Label_Commands->ForeColor = System::Drawing::Color::Blue;
-            GlobalLogger::LogMessage(Label_Commands->Text);
-            
-            CommandResponse startResp{};
-            Command startCmd = CreateControlCommand(CmdProgControl::START);
-            bool startOk = SendCommandAndWaitResponse(startCmd, startResp, "START");
 
-            if (!startOk && startResp.status == CmdStatus::TIMEOUT) {
-                GlobalLogger::LogMessage("Warning: Автозапуск: START не подтверждён (нет ответа от устройства)");
-                Label_Commands->Text = "[Ожидание] START не подтверждён...";
-                Label_Commands->ForeColor = System::Drawing::Color::Orange;
-                GlobalLogger::LogMessage(Label_Commands->Text);
-            }
-            else if (!startOk) {
-                GlobalLogger::LogMessage("Warning: Автозапуск: START не выполнен (ошибка связи/таймаут)");
-                Label_Commands->Text = "[!] Ошибка: START не отправлен";
-                Label_Commands->ForeColor = System::Drawing::Color::Orange;
-                GlobalLogger::LogMessage(Label_Commands->Text);
-            }
-            
-            // Отключаем чекбокс автозапуска
-            checkBoxAutoStart->Checked = false;
-            
-            // Таймер сброса цвета через 3 секунды
-            System::Windows::Forms::Timer^ colorTimer = gcnew System::Windows::Forms::Timer();
-            colorTimer->Interval = 3000;
-            colorTimer->Tick += gcnew EventHandler(this, &DataForm::RestoreAutoStartColor);
-            colorTimer->Start();
-        }
-        else {
-            // Кнопка недоступна
-            GlobalLogger::LogMessage("Warning: Автозапуск не выполнен — кнопка недоступна");
-            Label_Commands->Text = "[!] Таймаут операции - проверьте подключение";
+    if (now.Hour != targetTime.Hour || now.Minute != targetTime.Minute) {
+        return;
+    }
+    // Таймер 30 с: без защёлки команда уйдёт дважды в ту же минуту.
+    if (lastAutoStartFired.Date == now.Date &&
+        lastAutoStartFired.Hour == now.Hour &&
+        lastAutoStartFired.Minute == now.Minute) {
+        return;
+    }
+    lastAutoStartFired = now;
+
+    GlobalLogger::LogMessage(String::Format(
+        "Information: Автозапуск сработал в {0} (целевое: {1})",
+        now.ToString("HH:mm:ss"),
+        targetTime.ToString("HH:mm")));
+
+    if (buttonSTART->Enabled) {
+        labelAutoStart->ForeColor = System::Drawing::Color::Blue;
+        Label_Commands->Text = "[Ожидание] Выполняется команда остановки...";
+        Label_Commands->ForeColor = System::Drawing::Color::Blue;
+        GlobalLogger::LogMessage(Label_Commands->Text);
+
+        CommandResponse startResp{};
+        Command startCmd = CreateControlCommand(CmdProgControl::START);
+        bool startOk = SendCommandAndWaitResponse(startCmd, startResp, "START");
+
+        if (!startOk && startResp.status == CmdStatus::TIMEOUT) {
+            GlobalLogger::LogMessage("Warning: Автозапуск: START не подтверждён (нет ответа от устройства)");
+            Label_Commands->Text = "[Ожидание] START не подтверждён...";
             Label_Commands->ForeColor = System::Drawing::Color::Orange;
             GlobalLogger::LogMessage(Label_Commands->Text);
-            
-            // Отключаем автозапуск
-            checkBoxAutoStart->Checked = false;
         }
+        else if (!startOk) {
+            GlobalLogger::LogMessage("Warning: Автозапуск: START не выполнен (ошибка связи/таймаут)");
+            Label_Commands->Text = "[!] Ошибка: START не отправлен";
+            Label_Commands->ForeColor = System::Drawing::Color::Orange;
+            GlobalLogger::LogMessage(Label_Commands->Text);
+        }
+
+        System::Windows::Forms::Timer^ colorTimer = gcnew System::Windows::Forms::Timer();
+        colorTimer->Interval = 3000;
+        colorTimer->Tick += gcnew EventHandler(this, &DataForm::RestoreAutoStartColor);
+        colorTimer->Start();
+    }
+    else {
+        GlobalLogger::LogMessage("Warning: Автозапуск не выполнен — кнопка недоступна");
+        Label_Commands->Text = "[!] Таймаут операции - проверьте подключение";
+        Label_Commands->ForeColor = System::Drawing::Color::Orange;
+        GlobalLogger::LogMessage(Label_Commands->Text);
     }
 }
 
 // Восстановление цвета метки автозапуска
 System::Void ProjectServerW::DataForm::RestoreAutoStartColor(System::Object^ sender, System::EventArgs^ e) {
     try {
-        // Останавливаем таймер
         System::Windows::Forms::Timer^ timer = safe_cast<System::Windows::Forms::Timer^>(sender);
         timer->Stop();
         timer->Tick -= gcnew EventHandler(this, &DataForm::RestoreAutoStartColor);
-        
-        // Восстановление цвета
-        labelAutoStart->ForeColor = System::Drawing::SystemColors::ControlText;
+
+        labelAutoStart->ForeColor = checkBoxAutoStart->Checked
+            ? System::Drawing::Color::Green
+            : System::Drawing::SystemColors::ControlText;
     }
     catch (Exception^ ex) {
         GlobalLogger::LogMessage("Error in RestoreAutoStartColor: " + ex->Message);
@@ -2985,6 +2981,12 @@ System::Void ProjectServerW::DataForm::timerAutoRestart_Tick(System::Object^ sen
     if (now.Hour != targetTime.Hour || now.Minute != targetTime.Minute) {
         return;
     }
+    if (lastAutoRestartFired.Date == now.Date &&
+        lastAutoRestartFired.Hour == now.Hour &&
+        lastAutoRestartFired.Minute == now.Minute) {
+        return;
+    }
+    lastAutoRestartFired = now;
 
     GlobalLogger::LogMessage(String::Format(
         "Information: Автоперезапуск сработал в {0} (целевое: {1})",
@@ -3031,9 +3033,7 @@ System::Void ProjectServerW::DataForm::timerAutoRestart_Tick(System::Object^ sen
             Label_Commands->ForeColor = System::Drawing::Color::Orange;
             GlobalLogger::LogMessage(Label_Commands->Text);
         }
-
-            autoRestartInternalUncheck = true;
-        checkBoxAutoRestart->Checked = false; // сбрасываем, UX чекбокс не связан с AutoStart
+        // Чек-бокс не сбрасываем: расписание ежедневное, как у автозапуска.
     }
     else if (buttonSTART->Enabled) {
         // Устройство уже остановлено в этот момент — отправляем START.
@@ -3062,8 +3062,7 @@ System::Void ProjectServerW::DataForm::timerAutoRestart_Tick(System::Object^ sen
             Label_Commands->ForeColor = System::Drawing::Color::Orange;
             GlobalLogger::LogMessage(Label_Commands->Text);
         }
-        autoRestartInternalUncheck = true;
-        checkBoxAutoRestart->Checked = false;
+        // Чек-бокс не сбрасываем: расписание ежедневное, как у автозапуска.
     }
 
     // Восстановление цвета метки автоперезапуска через 3 сек, как для "автозапуска".
@@ -3078,7 +3077,9 @@ System::Void ProjectServerW::DataForm::RestoreAutoRestartColor(System::Object^ s
         System::Windows::Forms::Timer^ timer = safe_cast<System::Windows::Forms::Timer^>(sender);
         timer->Stop();
         timer->Tick -= gcnew EventHandler(this, &DataForm::RestoreAutoRestartColor);
-        labelAutoRestart->ForeColor = System::Drawing::SystemColors::ControlText;
+        labelAutoRestart->ForeColor = checkBoxAutoRestart->Checked
+            ? System::Drawing::Color::Green
+            : System::Drawing::SystemColors::ControlText;
     }
     catch (Exception^ ex) {
         GlobalLogger::LogMessage("Error in RestoreAutoRestartColor: " + ex->Message);
