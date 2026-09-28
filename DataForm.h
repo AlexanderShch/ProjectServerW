@@ -210,6 +210,9 @@ namespace ProjectServerW {
 	DateTime lastStopSuccessTime; // Время последнего успешного ответа на СТОП; лог не перезаписывает кнопки в течение 10 с
 	DateTime lastStartSuccessTime; // Время последнего успешного START; защита от ложного "останов" сразу после запуска
 	bool controllerAutoModeActive;   // true: в телеметрии бит _Wrk (DO) == 1 — контроллер в автоматическом режиме
+	bool siemensRecordingActive;     // Siemens: запись телеметрии запущена входом But_Start
+	int siemensButStartZeroCount;    // подряд полученные пакеты телеметрии с But_Start=0
+	int siemensSessionStartRowIndex; // первая строка текущей сессии в общей таблице
 	int wrkZeroConsecutiveCounts;    // Подряд идущие "нулевые" отсчёты _Wrk (по Time устройства)
 	bool wrkLastSampleValid;         // true: есть предыдущий отсчёт Time для расчёта дельты
 	uint16_t wrkLastSampleTime;      // Предыдущий Time устройства для расчёта дельты отсчётов
@@ -251,7 +254,9 @@ namespace ProjectServerW {
 		
 		// Элементы автозапуска по времени
 		private: System::Windows::Forms::CheckBox^ checkBoxAutoStart;
-		private: System::Windows::Forms::CheckBox^ checkBoxNewWrkAlrAlgorithm;
+		private: System::Windows::Forms::GroupBox^ groupBoxWrkAlrMode;
+		private: System::Windows::Forms::RadioButton^ radioButtonSiemens;
+		private: System::Windows::Forms::RadioButton^ radioButtonSTM32;
 		private: System::Windows::Forms::DateTimePicker^ dateTimePickerAutoStart;
 		private: System::Windows::Forms::Label^ labelAutoStart;
 		private: System::Windows::Forms::Timer^ timerAutoStart;
@@ -367,6 +372,9 @@ namespace ProjectServerW {
 		lastStopSuccessTime = DateTime::MinValue;
 		lastStartSuccessTime = DateTime::MinValue;
 		controllerAutoModeActive = false;
+		siemensRecordingActive = false;
+		siemensButStartZeroCount = 0;
+		siemensSessionStartRowIndex = 0;
 		wrkZeroConsecutiveCounts = 0;
 		wrkLastSampleValid = false;
 		wrkLastSampleTime = 0;
@@ -522,7 +530,9 @@ private: System::ComponentModel::IContainer^ components;
 				this->buttonSTOP = (gcnew System::Windows::Forms::Button());
 				this->buttonSTART = (gcnew System::Windows::Forms::Button());
 				this->checkBoxAutoStart = (gcnew System::Windows::Forms::CheckBox());
-				this->checkBoxNewWrkAlrAlgorithm = (gcnew System::Windows::Forms::CheckBox());
+				this->groupBoxWrkAlrMode = (gcnew System::Windows::Forms::GroupBox());
+				this->radioButtonSiemens = (gcnew System::Windows::Forms::RadioButton());
+				this->radioButtonSTM32 = (gcnew System::Windows::Forms::RadioButton());
 				this->dateTimePickerAutoStart = (gcnew System::Windows::Forms::DateTimePicker());
 				this->labelAutoStart = (gcnew System::Windows::Forms::Label());
 				this->checkBoxAutoRestart = (gcnew System::Windows::Forms::CheckBox());
@@ -560,6 +570,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage1->SuspendLayout();
 				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView))->BeginInit();
 				this->tabPage2->SuspendLayout();
+				this->groupBoxWrkAlrMode->SuspendLayout();
 				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->numericUpDownMeasurementInterval))->BeginInit();
 				this->tabPage3->SuspendLayout();
 				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView2))->BeginInit();
@@ -583,7 +594,7 @@ private: System::ComponentModel::IContainer^ components;
 				// выходToolStripMenuItem
 				// 
 				this->выходToolStripMenuItem->Name = L"выходToolStripMenuItem";
-				this->выходToolStripMenuItem->Size = System::Drawing::Size(80, 30);
+				this->выходToolStripMenuItem->Size = System::Drawing::Size(80, 29);
 				this->выходToolStripMenuItem->Text = L"Выход";
 				this->выходToolStripMenuItem->Click += gcnew System::EventHandler(this, &DataForm::выходToolStripMenuItem_Click);
 				// 
@@ -631,7 +642,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage1->Location = System::Drawing::Point(4, 29);
 				this->tabPage1->Name = L"tabPage1";
 				this->tabPage1->Padding = System::Windows::Forms::Padding(3);
-				this->tabPage1->Size = System::Drawing::Size(1729, 494);
+				this->tabPage1->Size = System::Drawing::Size(1403, 494);
 				this->tabPage1->TabIndex = 0;
 				this->tabPage1->Text = L"Данные";
 				this->tabPage1->UseVisualStyleBackColor = true;
@@ -792,7 +803,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage2->Controls->Add(this->buttonSTOP);
 				this->tabPage2->Controls->Add(this->buttonSTART);
 				this->tabPage2->Controls->Add(this->checkBoxAutoStart);
-				this->tabPage2->Controls->Add(this->checkBoxNewWrkAlrAlgorithm);
+				this->tabPage2->Controls->Add(this->groupBoxWrkAlrMode);
 				this->tabPage2->Controls->Add(this->dateTimePickerAutoStart);
 				this->tabPage2->Controls->Add(this->labelAutoStart);
 				this->tabPage2->Controls->Add(this->checkBoxAutoRestart);
@@ -807,7 +818,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage2->Location = System::Drawing::Point(4, 29);
 				this->tabPage2->Name = L"tabPage2";
 				this->tabPage2->Padding = System::Windows::Forms::Padding(3);
-				this->tabPage2->Size = System::Drawing::Size(1729, 494);
+				this->tabPage2->Size = System::Drawing::Size(1403, 494);
 				this->tabPage2->TabIndex = 1;
 				this->tabPage2->Text = L"Настройки";
 				this->tabPage2->UseVisualStyleBackColor = true;
@@ -928,17 +939,6 @@ private: System::ComponentModel::IContainer^ components;
 				this->buttonSTART->Click += gcnew System::EventHandler(this, &DataForm::buttonSTART_Click);
 				// 
 				// checkBoxAutoStart
-				// checkBoxNewWrkAlrAlgorithm
-				this->checkBoxNewWrkAlrAlgorithm->AutoSize = true;
-				this->checkBoxNewWrkAlrAlgorithm->Location = System::Drawing::Point(870, 215);
-				this->checkBoxNewWrkAlrAlgorithm->Name = L"checkBoxNewWrkAlrAlgorithm";
-				this->checkBoxNewWrkAlrAlgorithm->Size = System::Drawing::Size(330, 24);
-				this->checkBoxNewWrkAlrAlgorithm->TabIndex = 17;
-				this->checkBoxNewWrkAlrAlgorithm->Text = L"Режим: STM32";
-				this->checkBoxNewWrkAlrAlgorithm->Checked = true;
-				this->checkBoxNewWrkAlrAlgorithm->UseVisualStyleBackColor = true;
-				this->checkBoxNewWrkAlrAlgorithm->CheckedChanged += gcnew System::EventHandler(this, &DataForm::checkBoxNewWrkAlrAlgorithm_CheckedChanged);
-				// checkBoxAutoStart
 				// 
 				this->checkBoxAutoStart->AutoSize = true;
 				this->checkBoxAutoStart->Location = System::Drawing::Point(48, 215);
@@ -948,6 +948,41 @@ private: System::ComponentModel::IContainer^ components;
 				this->checkBoxAutoStart->Text = L"Включен";
 				this->checkBoxAutoStart->UseVisualStyleBackColor = true;
 				this->checkBoxAutoStart->CheckedChanged += gcnew System::EventHandler(this, &DataForm::checkBoxAutoStart_CheckedChanged);
+				// 
+				// groupBoxWrkAlrMode
+				// 
+				this->groupBoxWrkAlrMode->Controls->Add(this->radioButtonSiemens);
+				this->groupBoxWrkAlrMode->Controls->Add(this->radioButtonSTM32);
+				this->groupBoxWrkAlrMode->Location = System::Drawing::Point(850, 187);
+				this->groupBoxWrkAlrMode->Name = L"groupBoxWrkAlrMode";
+				this->groupBoxWrkAlrMode->Size = System::Drawing::Size(300, 68);
+				this->groupBoxWrkAlrMode->TabIndex = 17;
+				this->groupBoxWrkAlrMode->TabStop = false;
+				this->groupBoxWrkAlrMode->Text = L"Режим работы";
+				// 
+				// radioButtonSiemens
+				// 
+				this->radioButtonSiemens->AutoSize = true;
+				this->radioButtonSiemens->Location = System::Drawing::Point(20, 28);
+				this->radioButtonSiemens->Name = L"radioButtonSiemens";
+				this->radioButtonSiemens->Size = System::Drawing::Size(96, 24);
+				this->radioButtonSiemens->TabIndex = 0;
+				this->radioButtonSiemens->Text = L"Siemens";
+				this->radioButtonSiemens->UseVisualStyleBackColor = true;
+				this->radioButtonSiemens->CheckedChanged += gcnew System::EventHandler(this, &DataForm::modeRadioButton_CheckedChanged);
+				// 
+				// radioButtonSTM32
+				// 
+				this->radioButtonSTM32->AutoSize = true;
+				this->radioButtonSTM32->Checked = true;
+				this->radioButtonSTM32->Location = System::Drawing::Point(155, 28);
+				this->radioButtonSTM32->Name = L"radioButtonSTM32";
+				this->radioButtonSTM32->Size = System::Drawing::Size(85, 24);
+				this->radioButtonSTM32->TabIndex = 1;
+				this->radioButtonSTM32->TabStop = true;
+				this->radioButtonSTM32->Text = L"STM32";
+				this->radioButtonSTM32->UseVisualStyleBackColor = true;
+				this->radioButtonSTM32->CheckedChanged += gcnew System::EventHandler(this, &DataForm::modeRadioButton_CheckedChanged);
 				// 
 				// dateTimePickerAutoStart
 				// 
@@ -1218,7 +1253,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage4->Controls->Add(this->dataGridEquipmentAlarm);
 				this->tabPage4->Location = System::Drawing::Point(4, 29);
 				this->tabPage4->Name = L"tabPage4";
-				this->tabPage4->Size = System::Drawing::Size(1729, 494);
+				this->tabPage4->Size = System::Drawing::Size(1403, 494);
 				this->tabPage4->TabIndex = 3;
 				this->tabPage4->Text = L"АВАРИЯ";
 				this->tabPage4->UseVisualStyleBackColor = true;
@@ -1274,6 +1309,8 @@ private: System::ComponentModel::IContainer^ components;
 				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView))->EndInit();
 				this->tabPage2->ResumeLayout(false);
 				this->tabPage2->PerformLayout();
+				this->groupBoxWrkAlrMode->ResumeLayout(false);
+				this->groupBoxWrkAlrMode->PerformLayout();
 				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->numericUpDownMeasurementInterval))->EndInit();
 				this->tabPage3->ResumeLayout(false);
 				this->tabPage3->PerformLayout();
@@ -1417,7 +1454,7 @@ private: System::ComponentModel::IContainer^ components;
 			void LoadSettings();
 			void SyncModeRowFromSwitch();
 			void SyncModeSwitchFromGrid();
-			void UpdateModeSwitchText();
+			void SelectModeRadioButton(bool stm32Mode);
 			bool ApplyServerGroupsAfterConnect();
 			void UpdateDirectoryTextBox(String^ path);
 			void UpdateModeFlagsFromTelemetry(
@@ -1447,6 +1484,7 @@ private: System::ComponentModel::IContainer^ components;
 			void TriggerExcelExport();
 			void ExecuteAutoRestartStart();
 			bool StartExcelExportThread(bool isEmergency);
+			bool StartExcelExportThread(bool isEmergency, int firstRowIndex, bool includeLastRow, bool allowQueueIfBusy);
 			void OnInactivityTimerTick(Object^ sender, EventArgs^ e);
 		private: System::Void textBoxExcelDirectory_TextChanged(System::Object^ sender, System::EventArgs^ e) {
 		}
@@ -1502,7 +1540,7 @@ private: System::Void button_CMDINFO_Click(System::Object^ sender, System::Event
 	private: System::Void dataGridView1_CellValueChanged(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e);
 	private: System::Void dataGridView1_RowChanged(System::Object^ sender, System::Windows::Forms::DataGridViewRowEventArgs^ e);
 	private: System::Void dataGridView2_CellValueChanged(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e);
-	private: System::Void checkBoxNewWrkAlrAlgorithm_CheckedChanged(System::Object^ sender, System::EventArgs^ e);
+	private: System::Void modeRadioButton_CheckedChanged(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void dataGridView2_RowChanged(System::Object^ sender, System::Windows::Forms::DataGridViewRowEventArgs^ e);
 	private: System::Void buttonCheckAlarm_Click(System::Object^ sender, System::EventArgs^ e);
 	void LoadDataGridView1Defaults();

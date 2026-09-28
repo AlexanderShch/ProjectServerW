@@ -440,12 +440,16 @@ System::Void ProjectServerW::DataForm::buttonEXCEL_Click(System::Object^ sender,
 }
 
 // Запуск потока экспорта данных в EXCEL.
-bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency) {   // Флаг аварийного экспорта
+bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency) {
+    return StartExcelExportThread(isEmergency, -1, false, false);
+}
+
+bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency, int firstRowIndex, bool includeLastRow, bool allowQueueIfBusy) {
     try {
         // Замечание: блок не по потоку — захват монитора в контексте этого потока (UI поток захватывает монитор по кнопке).
         System::Threading::Monitor::Enter(excelExportSync);
         try {
-            if (excelExportInProgress != 0) {
+            if (excelExportInProgress != 0 && !allowQueueIfBusy) {
                 GlobalLogger::LogMessage("Information: Excel export already pending/in progress (per-form guard)");
                 return true;
             }
@@ -468,13 +472,19 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency) {   // �
         System::Data::DataTable^ snapshot = nullptr;
         System::Threading::Monitor::Enter(dataTableSync);
         try {
-            snapshot = dataTable->Copy();
+            if (firstRowIndex >= 0) {
+                snapshot = dataTable->Clone();
+                for (int i = firstRowIndex; i < dataTable->Rows->Count; ++i)
+                    snapshot->ImportRow(dataTable->Rows[i]);
+            }
+            else snapshot = dataTable->Copy();
         }
         finally {
             System::Threading::Monitor::Exit(dataTableSync);
         }
 
-        if (snapshot != nullptr && snapshot->Rows->Count > 0) {
+        // Siemens: текущая сессия уже выделена в snapshot; её последнюю строку сохраняем.
+        if (!includeLastRow && snapshot != nullptr && snapshot->Rows->Count > 0) {
             snapshot->Rows->RemoveAt(snapshot->Rows->Count - 1);
         }
 
@@ -946,10 +956,59 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     //--------------------------------------------------------------------
 
     // Определяем режимы работы и флаги
+    const bool siemensMode = (radioButtonSiemens != nullptr && radioButtonSiemens->Checked);
+    // 0x8000 для DI может быть корректным словом (But_Stop=1, остальные входы=0),
+    // поэтому маркер отсутствия данных здесь не используем: проверяем тип и Active.
+    const bool butStartValid = (data.SensorType[SQ - 1] == 4u && data.Active[SQ - 1] != 0u);
+    const bool butStartBit = (data.T[SQ - 1] & (1u << 14)) != 0u;
+    bool finishSiemensRecordingAfterRow = false;
     bool wrkBit = false;   // Флаг режима работы
     bool shdBit = false;   // Флаг режима shutdown
     int deltaCounts = 1;   // Количество отсчётов
-    ResolveModesAndFlushPendingRow(now, data, wrkBit, shdBit, deltaCounts);   // Определяем режимы работы и флаги
+    if (siemensMode) {
+        // В режиме Siemens ни импульс _Wrk, ни ответ на серверный ПУСК не управляют записью.
+        // Незавершённую строку STM32 фиксируем до определения начала новой сессии.
+        if (pendingRow != nullptr) {
+            table->Rows->Add(pendingRow);
+            pendingRow = nullptr;
+            pendingRowWrkBit = false;
+            dataExportedToExcel = false;
+        }
+        controllerAutoModeActive = false;
+        stopExportPending = false;
+        postStopCaptureActive = false;
+        shdWrkZeroStableCounts = 0;
+        if (butStartValid && butStartBit) {
+            if (!siemensRecordingActive) {
+                siemensRecordingActive = true;
+                siemensSessionStartRowIndex = table->Rows->Count;
+                dataCollectionStartTime = now;
+                dataCollectionEndTime = DateTime::MinValue;
+                dataExportedToExcel = false;
+                GlobalLogger::LogMessage("Информация: Siemens: But_Start=1, начата запись телеметрии");
+            }
+            siemensButStartZeroCount = 0;
+        }
+        else if (butStartValid && siemensRecordingActive) {
+            ++siemensButStartZeroCount; // считаем пакеты, а не секунды Time или интервал SEND_STATE
+            finishSiemensRecordingAfterRow = (siemensButStartZeroCount >= 10);
+        }
+        else if (!butStartValid) {
+            siemensButStartZeroCount = 0; // неизвестное состояние входа разрывает серию нулей
+        }
+        SetProgramStateUi(siemensRecordingActive);
+    }
+    else {
+        if (siemensRecordingActive) {
+            dataCollectionEndTime = now;
+            if (StartExcelExportThread(true, siemensSessionStartRowIndex, true, true))
+                dataExportedToExcel = true;
+            siemensRecordingActive = false;
+            siemensButStartZeroCount = 0;
+            GlobalLogger::LogMessage("Информация: Siemens: запись завершена при переключении в STM32");
+        }
+        ResolveModesAndFlushPendingRow(now, data, wrkBit, shdBit, deltaCounts);   // STM32: прежняя логика _Wrk/_Shd
+    }
     
     // Если флаг аварии изменился, обновляем флаги аварий
     if (!lastTelemetryAlrmBit && alrmBit) {
@@ -964,14 +1023,15 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     // - в послеостановочном хвосте (_Shd=1) пишем телеметрию сразу,
     // - после _Shd=0 пишем ещё 10 стабильных отсчётов (_Wrk=0 && _Shd=0) до автосохранения.
     bool rowTakenForTableOrPending = false;   // Строка уходит в таблицу или в pending (ведётся запись сессии)
-    if (controllerAutoModeActive && wrkBit) {               // Авторежим: ждём пакет лога (дополним pendingRow в AppendControlLogToDataRow)
+    if (!siemensMode && controllerAutoModeActive && wrkBit) { // Авторежим: ждём пакет лога (дополним pendingRow в AppendControlLogToDataRow)
         // pendingRow — это «текущая незавершённая» строка телеметрии (DataRow^), которая ещё не добавлена в dataTable.
         // pendingRow связывает пару «телеметрия + лог алгоритма» в одну строку и страхует от потери данных при смене секунды.
         rowTakenForTableOrPending = true;                   // Строка уходит в таблицу или в pending (ведётся запись сессии)
         pendingRow = row;                                   // Сохраняем строку в pendingRow
         pendingRowWrkBit = true;                            // Сохраняем флаг режима работы в pendingRowWrkBit
     }
-    else if ((controllerAutoModeActive && !wrkBit) ||
+    else if ((siemensMode && siemensRecordingActive) ||
+             (!siemensMode && controllerAutoModeActive && !wrkBit) ||
              postStopCaptureActive ||
              (stopExportPending && !wrkBit && !shdBit)) {   // Если в режиме STOP или послеостановочном хвосте, или в режиме STOP_EXPORT
         rowTakenForTableOrPending = true;
@@ -1018,7 +1078,21 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     }
     //--------------------------------------------------------------------
     // ОБНОВЛЕНИЕ ФЛАГОВ ЭКСПОРТА ПОСЛЕОСТАНОВОЧНОГО ХВОСТА 
-    UpdateShutdownExportFlags(now, wrkBit, shdBit, deltaCounts);   
+    if (siemensMode) {
+        if (finishSiemensRecordingAfterRow) {
+            dataCollectionEndTime = now;
+            const bool queued = StartExcelExportThread(true, siemensSessionStartRowIndex, true, true);
+            if (queued) dataExportedToExcel = true;
+            else GlobalLogger::LogMessage("Предупреждение: Siemens: не удалось поставить экспорт телеметрии в очередь");
+            siemensRecordingActive = false;
+            siemensButStartZeroCount = 0;
+            SetProgramStateUi(false);
+            GlobalLogger::LogMessage("Информация: Siemens: But_Start=0 в 10 отсчётах подряд, запись телеметрии завершена");
+        }
+    }
+    else {
+        UpdateShutdownExportFlags(now, wrkBit, shdBit, deltaCounts);
+    }
     //--------------------------------------------------------------------
 }
 
@@ -1080,16 +1154,19 @@ void ProjectServerW::DataForm::OnInactivityTimerTick(Object^ sender, EventArgs^ 
                         return;
                     }
 
-                    // Вызов экспорта не из формы, т.к. при закрытии формы: Emergency + аварийный.
-                    // Повторный захват монитора; поток вызывающий для аварийного экспорта в том же потоке,
-                    // иначе не блокируем поток из-за экспортного guard.
-                    if (!StartExcelExportThread(true)) {
-                        GlobalLogger::LogMessage("Warning: Не удалось запустить аварийный экспорт; закрытие без сохранения данных.");
-                        return;
+                    if (!dataExportedToExcel) {
+                        if (dataCollectionEndTime == DateTime::MinValue) dataCollectionEndTime = now;
+                        const bool queued = siemensRecordingActive
+                            ? StartExcelExportThread(true, siemensSessionStartRowIndex, true, true)
+                            : StartExcelExportThread(true);
+                        if (!queued) {
+                            GlobalLogger::LogMessage("Warning: Не удалось запустить аварийный экспорт; закрытие без сохранения данных.");
+                            return;
+                        }
+                        dataExportedToExcel = true;
                     }
 
                     inactivityCloseRequested = true;
-                    dataExportedToExcel = true;
                     this->Close();
                     return;
                 }
@@ -1115,14 +1192,18 @@ void ProjectServerW::DataForm::OnInactivityTimerTick(Object^ sender, EventArgs^ 
             "Information: Нет телеметрии {0:F1} мин. Закрытие формы DataForm.",
             idle.TotalMinutes));
 
-        // Повторный захват монитора; поток вызывающий для аварийного экспорта в том же потоке, иначе не блокируем поток из-за экспортного guard.
-        if (!StartExcelExportThread(true)) {
-            GlobalLogger::LogMessage("Warning: Не удалось запустить аварийный экспорт; закрытие без сохранения данных.");
-            return;
+        if (!dataExportedToExcel) {
+            const bool queued = siemensRecordingActive
+                ? StartExcelExportThread(true, siemensSessionStartRowIndex, true, true)
+                : StartExcelExportThread(true);
+            if (!queued) {
+                GlobalLogger::LogMessage("Warning: Не удалось запустить аварийный экспорт; закрытие без сохранения данных.");
+                return;
+            }
+            dataExportedToExcel = true;
         }
 
         inactivityCloseRequested = true;
-        dataExportedToExcel = true;
 
         // Закрываем форму после аварийного экспорта данных в файл.
         this->Close();
@@ -1177,13 +1258,10 @@ bool ProjectServerW::DataForm::ApplyServerGroupsAfterConnect() {
     const int modeOffset = (int)offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm);
     if (!modeSwitchHasSavedSetting) {
         // Старый файл настроек: берём режим контроллера, не меняем его молча.
-        modeSwitchSyncing = true;
-        checkBoxNewWrkAlrAlgorithm->Checked = (savedGroup6Payload[modeOffset] != 0u);
-        UpdateModeSwitchText();
-        modeSwitchSyncing = false;
+        SelectModeRadioButton(savedGroup6Payload[modeOffset] != 0u);
         modeSwitchHasSavedSetting = true;
     }
-    savedGroup6Payload[modeOffset] = checkBoxNewWrkAlrAlgorithm->Checked ? 1u : 0u;
+    savedGroup6Payload[modeOffset] = radioButtonSTM32->Checked ? 1u : 0u;
     pin_ptr<System::Byte> p6 = &savedGroup6Payload[0];
     if (!SetDefrostGroup(6u, p6, DEFROST_GROUP6_PAYLOAD_SIZE)) return false;
 
@@ -1232,14 +1310,10 @@ bool ProjectServerW::DataForm::ExecuteStartupCommandSequence() {
             GlobalLogger::LogMessage("Предупреждение: Не удалось определить режим из группы 6 контроллера");
             return false;
         }
-        modeSwitchSyncing = true;
-        checkBoxNewWrkAlrAlgorithm->Checked =
-            modeGroup[offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm)] != 0u;
-        UpdateModeSwitchText();
-        modeSwitchSyncing = false;
+        SelectModeRadioButton(modeGroup[offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm)] != 0u);
         modeSwitchHasSavedSetting = true;
     }
-    const bool stm32Mode = checkBoxNewWrkAlrAlgorithm->Checked;
+    const bool stm32Mode = radioButtonSTM32->Checked;
 
     // УСТАНОВКА ИНТЕРВАЛА ИЗМЕРЕНИЙ -------------------------------------------------------------
     int intervalSeconds = 10;
@@ -1690,8 +1764,8 @@ void ProjectServerW::DataForm::SaveSettings() {
         // Why: keep settings file portable and stable across locale changes.
         writer->WriteLine("MeasurementIntervalSeconds=" +
             intervalSeconds.ToString(System::Globalization::CultureInfo::InvariantCulture));
-		if (modeSwitchHasSavedSetting && checkBoxNewWrkAlrAlgorithm != nullptr)
-			writer->WriteLine("UseNewWrkAlrAlgorithm=" + (checkBoxNewWrkAlrAlgorithm->Checked ? "1" : "0"));
+		if (modeSwitchHasSavedSetting && radioButtonSTM32 != nullptr)
+			writer->WriteLine("UseNewWrkAlrAlgorithm=" + (radioButtonSTM32->Checked ? "1" : "0"));
 		if (savedGroup5Payload != nullptr && savedGroup5Payload->Length == DEFROST_GROUP5_PAYLOAD_SIZE)
 			writer->WriteLine("DefrostGroup5=" + System::Convert::ToBase64String(savedGroup5Payload));
 		if (savedGroup6Payload != nullptr && savedGroup6Payload->Length == DEFROST_GROUP6_PAYLOAD_SIZE)
@@ -1819,10 +1893,9 @@ void ProjectServerW::DataForm::LoadSettings() {
 					} catch (System::FormatException^) { GlobalLogger::LogMessage("Warning: неверный формат сохранённой группы 6"); }
 				}
             }
-			if (hasModeSetting && checkBoxNewWrkAlrAlgorithm != nullptr) {
+			if (hasModeSetting && radioButtonSTM32 != nullptr) {
 				modeSwitchHasSavedSetting = true;
-				checkBoxNewWrkAlrAlgorithm->Checked = modeSetting;
-				UpdateModeSwitchText();
+				SelectModeRadioButton(modeSetting);
 			}
 
             if (hasAutoStartTime && dateTimePickerAutoStart != nullptr && !dateTimePickerAutoStart->IsDisposed) {
@@ -2032,9 +2105,13 @@ static bool BuildGlobalPayloadFromGrid2(DataGridView^ grid, DefrostLogGlobalPayl
     return modeRowFound;
 }
 
-void ProjectServerW::DataForm::UpdateModeSwitchText() {
-    if (checkBoxNewWrkAlrAlgorithm != nullptr && !checkBoxNewWrkAlrAlgorithm->IsDisposed)
-        checkBoxNewWrkAlrAlgorithm->Text = checkBoxNewWrkAlrAlgorithm->Checked ? L"Режим: STM32" : L"Режим: Siemens";
+void ProjectServerW::DataForm::SelectModeRadioButton(bool stm32Mode) {
+    if (radioButtonSTM32 == nullptr || radioButtonSiemens == nullptr) return;
+    const bool wasSyncing = modeSwitchSyncing;
+    modeSwitchSyncing = true;
+    if (stm32Mode) radioButtonSTM32->Checked = true;
+    else radioButtonSiemens->Checked = true;
+    modeSwitchSyncing = wasSyncing;
 }
 
 void ProjectServerW::DataForm::SyncModeRowFromSwitch() {
@@ -2053,7 +2130,7 @@ void ProjectServerW::DataForm::SyncModeRowFromSwitch() {
     }
     if (!hasRows) return; // одна строка флага не должна превращаться в пакет с нулевыми уставками
     modeSwitchSyncing = true;
-    String^ value = checkBoxNewWrkAlrAlgorithm->Checked ? "1" : "0";
+    String^ value = radioButtonSTM32->Checked ? "1" : "0";
     if (modeRow != nullptr) modeRow->Cells["Value"]->Value = value;
     else dataGridView2->Rows->Add("useNewWrkAlrAlgorithm", "1=STM32, 0=Siemens", value);
     modeSwitchSyncing = false;
@@ -2069,10 +2146,7 @@ void ProjectServerW::DataForm::SyncModeSwitchFromGrid() {
         Object^ valueObj = row->Cells["Value"]->Value;
         String^ value = (valueObj != nullptr) ? valueObj->ToString()->Trim() : "";
         if (value != "0" && value != "1") return; // запись группы 6 отдельно отклонит неверное значение
-        modeSwitchSyncing = true;
-        checkBoxNewWrkAlrAlgorithm->Checked = (value == "1");
-        UpdateModeSwitchText();
-        modeSwitchSyncing = false;
+        SelectModeRadioButton(value == "1");
         modeSwitchHasSavedSetting = true;
         if (savedGroup6Payload != nullptr && savedGroup6Payload->Length == DEFROST_GROUP6_PAYLOAD_SIZE)
             savedGroup6Payload[offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm)] = (value == "1") ? 1u : 0u;
@@ -2081,13 +2155,13 @@ void ProjectServerW::DataForm::SyncModeSwitchFromGrid() {
     }
 }
 
-System::Void ProjectServerW::DataForm::checkBoxNewWrkAlrAlgorithm_CheckedChanged(System::Object^ sender, System::EventArgs^ e) {
-    UpdateModeSwitchText();
-    if (settingsLoading || modeSwitchSyncing) return;
+System::Void ProjectServerW::DataForm::modeRadioButton_CheckedChanged(System::Object^ sender, System::EventArgs^ e) {
+    System::Windows::Forms::RadioButton^ selected = dynamic_cast<System::Windows::Forms::RadioButton^>(sender);
+    if (settingsLoading || modeSwitchSyncing || selected == nullptr || !selected->Checked) return;
     modeSwitchHasSavedSetting = true;
     SyncModeRowFromSwitch();
     if (savedGroup6Payload != nullptr && savedGroup6Payload->Length == DEFROST_GROUP6_PAYLOAD_SIZE)
-        savedGroup6Payload[offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm)] = checkBoxNewWrkAlrAlgorithm->Checked ? 1u : 0u;
+        savedGroup6Payload[offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm)] = radioButtonSTM32->Checked ? 1u : 0u;
     SaveSettings();
     // При установленной связи переключатель применяет режим сразу; при отказе запись повторится после подключения.
     if (ClientSocket != INVALID_SOCKET && startupSequenceCompleted) {
@@ -2098,7 +2172,7 @@ System::Void ProjectServerW::DataForm::checkBoxNewWrkAlrAlgorithm_CheckedChanged
             len == DEFROST_GROUP6_PAYLOAD_SIZE;
         if (readOk) {
             raw[offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm)] =
-                checkBoxNewWrkAlrAlgorithm->Checked ? 1u : 0u;
+                radioButtonSTM32->Checked ? 1u : 0u;
         }
         if (!readOk || !SetDefrostGroup(6u, raw, DEFROST_GROUP6_PAYLOAD_SIZE)) {
             GlobalLogger::LogMessage("Warning: режим не записан в контроллер; не удалось прочитать группу 6 или контроллер отклонил запись");
@@ -2592,7 +2666,7 @@ System::Void ProjectServerW::DataForm::buttonReadParameters_Click(System::Object
                 savedGroup6Payload = gcnew cli::array<System::Byte>(len);
                 for (int i = 0; i < len; ++i) savedGroup6Payload[i] = buffer[i];
                 if (modeSwitchHasSavedSetting)
-                    savedGroup6Payload[offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm)] = checkBoxNewWrkAlrAlgorithm->Checked ? 1u : 0u;
+                    savedGroup6Payload[offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm)] = radioButtonSTM32->Checked ? 1u : 0u;
                 loaded2 = true;
             } else if (ok2) {
                 GlobalLogger::LogMessage(String::Format(
@@ -2671,10 +2745,7 @@ System::Void ProjectServerW::DataForm::buttonLoadDefrostDefaults_Click(System::O
             Label_Commands->ForeColor = System::Drawing::Color::DarkGreen;
         }
         GlobalLogger::LogMessage("Information: LOAD_DEFROST_DEFAULTS выполнена успешно");
-        modeSwitchSyncing = true;
-        checkBoxNewWrkAlrAlgorithm->Checked = true; // заводской параметр контроллера
-        UpdateModeSwitchText();
-        modeSwitchSyncing = false;
+        SelectModeRadioButton(true); // заводской параметр контроллера
         modeSwitchHasSavedSetting = true;
         buttonReadParameters_Click(nullptr, nullptr);
     }
@@ -2821,8 +2892,13 @@ System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ send
                 // Аварийный экспорт при закрытии
                 GlobalLogger::LogMessage("Information: \u042D\u043A\u0441\u043F\u043E\u0440\u0442\u0438\u0440\u0443\u0435\u043C \u0434\u0430\u043D\u043D\u044B\u0435 \u0432 Excel \u043F\u0440\u0438 \u0437\u0430\u043A\u0440\u044B\u0442\u0438\u0438 \u0444\u043E\u0440\u043C\u044B... " + excelFileName);
 
-                // Вызов экспорта в потоке для выполнения в UI-потоке при закрытии формы
-                StartExcelExportThread(true);
+                // В Siemens сохраняем только текущую сессию, включая последнюю принятую строку.
+                if (siemensRecordingActive && dataCollectionEndTime == DateTime::MinValue)
+                    dataCollectionEndTime = DateTime::Now;
+                if (siemensRecordingActive)
+                    StartExcelExportThread(true, siemensSessionStartRowIndex, true, true);
+                else
+                    StartExcelExportThread(true);
                 
                 // При закрытии формы — аварийный экспорт
                 // для сохранения данных перед закрытием
