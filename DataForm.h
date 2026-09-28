@@ -229,6 +229,10 @@ namespace ProjectServerW {
 	DateTime lastAutoStartFired;     // защита от повторного START в ту же минуту (таймер 30 с)
 	DateTime lastAutoRestartFired;   // защита от повторного STOP/START в ту же минуту
 	bool settingsLoading;            // Why: avoid side-effects (timers/log/save) while applying persisted settings.
+	bool modeSwitchSyncing;          // предотвращает рекурсию при синхронизации переключателя и таблицы
+	bool modeSwitchHasSavedSetting;  // без ключа в старом файле сначала принимаем режим контроллера
+	cli::array<System::Byte>^ savedGroup5Payload;
+	cli::array<System::Byte>^ savedGroup6Payload;
 	bool isFormClosingNow;           // true: форма закрывается, сетевые MessageBox нужно подавлять.
 	System::String^ pendingVersion;  // временное хранение версии для обновления UI из другого потока
 	private: System::Windows::Forms::Label^ Label_Data;
@@ -247,6 +251,7 @@ namespace ProjectServerW {
 		
 		// Элементы автозапуска по времени
 		private: System::Windows::Forms::CheckBox^ checkBoxAutoStart;
+		private: System::Windows::Forms::CheckBox^ checkBoxNewWrkAlrAlgorithm;
 		private: System::Windows::Forms::DateTimePicker^ dateTimePickerAutoStart;
 		private: System::Windows::Forms::Label^ labelAutoStart;
 		private: System::Windows::Forms::Timer^ timerAutoStart;
@@ -379,6 +384,10 @@ namespace ProjectServerW {
 	lastAutoStartFired = DateTime::MinValue;
 	lastAutoRestartFired = DateTime::MinValue;
 	settingsLoading = false;
+	modeSwitchSyncing = false;
+	modeSwitchHasSavedSetting = false;
+	savedGroup5Payload = nullptr;
+	savedGroup6Payload = nullptr;
 	isFormClosingNow = false;
 	pendingVersion = nullptr;       // Временная версия для обновления UI
 	// Инициализация порта клиента
@@ -513,6 +522,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->buttonSTOP = (gcnew System::Windows::Forms::Button());
 				this->buttonSTART = (gcnew System::Windows::Forms::Button());
 				this->checkBoxAutoStart = (gcnew System::Windows::Forms::CheckBox());
+				this->checkBoxNewWrkAlrAlgorithm = (gcnew System::Windows::Forms::CheckBox());
 				this->dateTimePickerAutoStart = (gcnew System::Windows::Forms::DateTimePicker());
 				this->labelAutoStart = (gcnew System::Windows::Forms::Label());
 				this->checkBoxAutoRestart = (gcnew System::Windows::Forms::CheckBox());
@@ -782,6 +792,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage2->Controls->Add(this->buttonSTOP);
 				this->tabPage2->Controls->Add(this->buttonSTART);
 				this->tabPage2->Controls->Add(this->checkBoxAutoStart);
+				this->tabPage2->Controls->Add(this->checkBoxNewWrkAlrAlgorithm);
 				this->tabPage2->Controls->Add(this->dateTimePickerAutoStart);
 				this->tabPage2->Controls->Add(this->labelAutoStart);
 				this->tabPage2->Controls->Add(this->checkBoxAutoRestart);
@@ -916,6 +927,17 @@ private: System::ComponentModel::IContainer^ components;
 				this->buttonSTART->UseVisualStyleBackColor = true;
 				this->buttonSTART->Click += gcnew System::EventHandler(this, &DataForm::buttonSTART_Click);
 				// 
+				// checkBoxAutoStart
+				// checkBoxNewWrkAlrAlgorithm
+				this->checkBoxNewWrkAlrAlgorithm->AutoSize = true;
+				this->checkBoxNewWrkAlrAlgorithm->Location = System::Drawing::Point(870, 215);
+				this->checkBoxNewWrkAlrAlgorithm->Name = L"checkBoxNewWrkAlrAlgorithm";
+				this->checkBoxNewWrkAlrAlgorithm->Size = System::Drawing::Size(330, 24);
+				this->checkBoxNewWrkAlrAlgorithm->TabIndex = 17;
+				this->checkBoxNewWrkAlrAlgorithm->Text = L"Режим: STM32";
+				this->checkBoxNewWrkAlrAlgorithm->Checked = true;
+				this->checkBoxNewWrkAlrAlgorithm->UseVisualStyleBackColor = true;
+				this->checkBoxNewWrkAlrAlgorithm->CheckedChanged += gcnew System::EventHandler(this, &DataForm::checkBoxNewWrkAlrAlgorithm_CheckedChanged);
 				// checkBoxAutoStart
 				// 
 				this->checkBoxAutoStart->AutoSize = true;
@@ -1393,6 +1415,10 @@ private: System::ComponentModel::IContainer^ components;
 			System::Void OnHandleCreatedForDeferredStartup(System::Object^ sender, System::EventArgs^ e);
 			void SaveSettings();
 			void LoadSettings();
+			void SyncModeRowFromSwitch();
+			void SyncModeSwitchFromGrid();
+			void UpdateModeSwitchText();
+			bool ApplyServerGroupsAfterConnect();
 			void UpdateDirectoryTextBox(String^ path);
 			void UpdateModeFlagsFromTelemetry(
 				System::DateTime now,
@@ -1476,6 +1502,7 @@ private: System::Void button_CMDINFO_Click(System::Object^ sender, System::Event
 	private: System::Void dataGridView1_CellValueChanged(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e);
 	private: System::Void dataGridView1_RowChanged(System::Object^ sender, System::Windows::Forms::DataGridViewRowEventArgs^ e);
 	private: System::Void dataGridView2_CellValueChanged(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e);
+	private: System::Void checkBoxNewWrkAlrAlgorithm_CheckedChanged(System::Object^ sender, System::EventArgs^ e);
 	private: System::Void dataGridView2_RowChanged(System::Object^ sender, System::Windows::Forms::DataGridViewRowEventArgs^ e);
 	private: System::Void buttonCheckAlarm_Click(System::Object^ sender, System::EventArgs^ e);
 	void LoadDataGridView1Defaults();

@@ -5,6 +5,7 @@
 #include "PacketQueueProcessor.h"   // per-socket Очередь команд (ACK от контроллера vs ответы в UI)
 #include <objbase.h>                // для CoCreateGuid — генерация уникального идентификатора окна
 #include <string>
+#include <cstddef>
 #include <vcclr.h>  // для gcnew
 #include <msclr/marshal_cppstd.h>
 
@@ -54,6 +55,8 @@ typedef struct {
     float supplyMax_C[DEFROST_PHASE_COUNT_SERVER];
     float returnTargetRH_percent[DEFROST_PHASE_COUNT_SERVER];
 } DefrostLogPhasePayload_t;
+static_assert(sizeof(DefrostLogPhasePayload_t) == DEFROST_GROUP5_PAYLOAD_SIZE,
+    "DefrostLogPhasePayload_t size differs from protocol constant");
 
 /* Ответ GET_DEFROST_GROUP(groupId=6): структура совпадает с DefrostLogGlobalPayload_t на контроллере. */
 namespace { constexpr int DEFROST_MAX_SENSOR_COUNT_SERVER = 6; }   /* совпадает с DEFROST_MAX_SENSOR_COUNT на контроллере (датчики 0..5) */
@@ -75,8 +78,13 @@ typedef struct {
     float fishColdTarget_C;          /* целевая мин. Т рыбы °C; при достижении — автоостанов алгоритма */
     uint8_t debugDisableTargetTStop; /* 1 = отладка: отключить автостоп по целевой Т, 0 = автостоп включен */
     uint8_t debugDisableDeviceSwitchCheck; /* 1 = отладка: отключить проверку соответствия входов/выходов, 0 = проверка включена */
+    uint8_t useNewWrkAlrAlgorithm; /* 1 = автоматическое управление, 0 = только старые импульсы по СТАРТ/СТОП */
     uint8_t sensorUseInDefrost[DEFROST_MAX_SENSOR_COUNT_SERVER];
 } DefrostLogGlobalPayload_t;
+static_assert(sizeof(DefrostLogGlobalPayload_t) == DEFROST_GROUP6_PAYLOAD_SIZE,
+    "DefrostLogGlobalPayload_t size differs from protocol constant");
+static_assert(offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm) == 46u,
+    "Group 6 mode flag offset differs from protocol");
 static_assert(sizeof(DefrostLogGlobalPayload_t) + 2 <= (MAX_COMMAND_SIZE - 6),
     "GET_DEFROST_GROUP(group6): response payload+header exceeds CommandResponse::data capacity");
 #pragma pack(pop)
@@ -1156,6 +1164,45 @@ void ProjectServerW::DataForm::OnReconnectSendStartupCommands() {
 }
 
 // Выполнение последовательности команд запуска устройства
+bool ProjectServerW::DataForm::ApplyServerGroupsAfterConnect() {
+    if (ClientSocket == INVALID_SOCKET) return false;
+    uint8_t raw6[DEFROST_GROUP6_PAYLOAD_SIZE] = {};
+    uint8_t len = 0u;
+    if (savedGroup6Payload == nullptr || savedGroup6Payload->Length != DEFROST_GROUP6_PAYLOAD_SIZE) {
+        len = 0u;
+        if (!GetDefrostGroup(6u, 0u, raw6, DEFROST_GROUP6_PAYLOAD_SIZE, &len) || len != DEFROST_GROUP6_PAYLOAD_SIZE) return false;
+        savedGroup6Payload = gcnew cli::array<System::Byte>(len);
+        for (int i = 0; i < len; ++i) savedGroup6Payload[i] = raw6[i];
+    }
+    const int modeOffset = (int)offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm);
+    if (!modeSwitchHasSavedSetting) {
+        // Старый файл настроек: берём режим контроллера, не меняем его молча.
+        modeSwitchSyncing = true;
+        checkBoxNewWrkAlrAlgorithm->Checked = (savedGroup6Payload[modeOffset] != 0u);
+        UpdateModeSwitchText();
+        modeSwitchSyncing = false;
+        modeSwitchHasSavedSetting = true;
+    }
+    savedGroup6Payload[modeOffset] = checkBoxNewWrkAlrAlgorithm->Checked ? 1u : 0u;
+    pin_ptr<System::Byte> p6 = &savedGroup6Payload[0];
+    if (!SetDefrostGroup(6u, p6, DEFROST_GROUP6_PAYLOAD_SIZE)) return false;
+
+    uint8_t raw5[DEFROST_GROUP5_PAYLOAD_SIZE] = {};
+    if (savedGroup5Payload != nullptr && savedGroup5Payload->Length == DEFROST_GROUP5_PAYLOAD_SIZE) {
+        pin_ptr<System::Byte> p5 = &savedGroup5Payload[0];
+        if (!SetDefrostGroup(5u, p5, DEFROST_GROUP5_PAYLOAD_SIZE)) return false;
+    } else {
+        // При первом подключении не подменяем неизвестные уставки заводскими значениями.
+        len = 0u;
+        if (!GetDefrostGroup(5u, 0u, raw5, DEFROST_GROUP5_PAYLOAD_SIZE, &len) || len != DEFROST_GROUP5_PAYLOAD_SIZE) return false;
+        savedGroup5Payload = gcnew cli::array<System::Byte>(len);
+        for (int i = 0; i < len; ++i) savedGroup5Payload[i] = raw5[i];
+        if (!SetDefrostGroup(5u, raw5, DEFROST_GROUP5_PAYLOAD_SIZE)) return false;
+    }
+    SaveSettings();
+    return true;
+}
+
 bool ProjectServerW::DataForm::ExecuteStartupCommandSequence() {
     if (ClientSocket == INVALID_SOCKET) {   // Если сокет невалидный, то последовательность команд запуска не выполняется
         startupSequenceCompleted = false;
@@ -1163,7 +1210,7 @@ bool ProjectServerW::DataForm::ExecuteStartupCommandSequence() {
     }
 
     // ПОЛУЧЕНИЕ ВЕРСИИ УСТРОЙСТВА -------------------------------------------------------------
-    GlobalLogger::LogMessage("Отладка: Последовательность запуска: шаг 1/3 GET_VERSION начат");
+    GlobalLogger::LogMessage("Отладка: Последовательность запуска: шаг 1/4 GET_VERSION начат");
     const bool okVersion = SendVersionRequest();
     if (!okVersion) {
         startupSequenceCompleted = false;
@@ -1171,25 +1218,58 @@ bool ProjectServerW::DataForm::ExecuteStartupCommandSequence() {
         GlobalLogger::LogMessage("Предупреждение: Последовательность запуска прервана на шаге GET_VERSION");
         return false;
     }
-    GlobalLogger::LogMessage("Отладка: Последовательность запуска: шаг 1/3 GET_VERSION выполнен");
+    GlobalLogger::LogMessage("Отладка: Последовательность запуска: шаг 1/4 GET_VERSION выполнен");
+
+    // В старых настройках режим не сохранён: выясняем его по контроллеру до выбора
+    // порядка запуска. Кэшированные группы не считаем источником режима.
+    if (!modeSwitchHasSavedSetting) {
+        uint8_t modeGroup[DEFROST_GROUP6_PAYLOAD_SIZE] = {};
+        uint8_t modeLen = 0u;
+        if (!GetDefrostGroup(6u, 0u, modeGroup, DEFROST_GROUP6_PAYLOAD_SIZE, &modeLen) ||
+            modeLen != DEFROST_GROUP6_PAYLOAD_SIZE) {
+            startupSequenceCompleted = false;
+            if (sendStateTimer != nullptr) sendStateTimer->Stop();
+            GlobalLogger::LogMessage("Предупреждение: Не удалось определить режим из группы 6 контроллера");
+            return false;
+        }
+        modeSwitchSyncing = true;
+        checkBoxNewWrkAlrAlgorithm->Checked =
+            modeGroup[offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm)] != 0u;
+        UpdateModeSwitchText();
+        modeSwitchSyncing = false;
+        modeSwitchHasSavedSetting = true;
+    }
+    const bool stm32Mode = checkBoxNewWrkAlrAlgorithm->Checked;
 
     // УСТАНОВКА ИНТЕРВАЛА ИЗМЕРЕНИЙ -------------------------------------------------------------
     int intervalSeconds = 10;
     if (numericUpDownMeasurementInterval != nullptr && !numericUpDownMeasurementInterval->IsDisposed) {
         intervalSeconds = System::Decimal::ToInt32(numericUpDownMeasurementInterval->Value);
     }
-    GlobalLogger::LogMessage(String::Format("Отладка: Последовательность запуска: шаг 2/3 SET_INTERVAL({0}) начат", intervalSeconds));
-    const bool okInterval = SendSetIntervalCommand(intervalSeconds);
-    if (!okInterval) {
-        startupSequenceCompleted = false;
-        if (sendStateTimer != nullptr) sendStateTimer->Stop();
-        GlobalLogger::LogMessage("Предупреждение: Последовательность запуска прервана на шаге SET_INTERVAL");
-        return false;
+    if (!stm32Mode) {
+        GlobalLogger::LogMessage(String::Format("Отладка: Siemens: SET_INTERVAL({0}) начат", intervalSeconds));
+        if (!SendSetIntervalCommand(intervalSeconds)) {
+            startupSequenceCompleted = false;
+            if (sendStateTimer != nullptr) sendStateTimer->Stop();
+            GlobalLogger::LogMessage("Предупреждение: Последовательность запуска прервана на шаге SET_INTERVAL");
+            return false;
+        }
+        GlobalLogger::LogMessage("Отладка: Siemens: SET_INTERVAL выполнен");
     }
-    GlobalLogger::LogMessage("Отладка: Последовательность запуска: шаг 2/3 SET_INTERVAL выполнен");
+
+    // Siemens: прежняя последовательность — серверные группы 6/5, затем чтение.
+    // STM32: ни одну из групп не записываем, пока не прочтены обе группы EEPROM.
+    bool groupsApplied = true;
+    if (!stm32Mode) {
+        groupsApplied = ApplyServerGroupsAfterConnect();
+        if (!groupsApplied)
+            GlobalLogger::LogMessage("Предупреждение: группы параметров пока не записаны; повторим попытку, телеметрию продолжаем");
+        else
+            GlobalLogger::LogMessage("Отладка: Siemens: SET_DEFROST_GROUP(6,5) выполнен");
+    }
 
     // ПОЛУЧЕНИЕ ГРУППЫ ПАРАМЕТРОВ 5 И 6 -------------------------------------------------------------
-    GlobalLogger::LogMessage("Отладка: Последовательность запуска: шаг 3/3 GET_DEFROST_GROUP(5,6) начат");
+    GlobalLogger::LogMessage("Отладка: Последовательность запуска: шаг 4/4 GET_DEFROST_GROUP(5,6) начат");
     uint8_t buffer[256];   // Буфер для данных
     const uint8_t kPayloadCapacity = 255;   // Максимальная длина данных
     uint8_t len = 0;   // Длина данных
@@ -1199,8 +1279,12 @@ bool ProjectServerW::DataForm::ExecuteStartupCommandSequence() {
     // ПОЛУЧЕНИЕ ДАННЫХ ГРУППЫ 5 -------------------------------------------------------------
     if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {   // Если dataGridView1 не уничтожена и не уничтожается
         const bool ok1 = GetDefrostGroup(5, 0, buffer, kPayloadCapacity, &len);   // Получаем данные группы 5
-        if (ok1 && len >= (uint8_t)sizeof(DefrostLogPhasePayload_t)) {
+        if (ok1 && len == (uint8_t)sizeof(DefrostLogPhasePayload_t)) {
             FillDataGridView1FromGroup5Payload(buffer, len);   // Заполняем dataGridView1 данными группы 5
+            if (stm32Mode) {
+                savedGroup5Payload = gcnew cli::array<System::Byte>(len);
+                for (int i = 0; i < len; ++i) savedGroup5Payload[i] = buffer[i];
+            }
             loaded1 = true;
         }
         else {
@@ -1210,8 +1294,12 @@ bool ProjectServerW::DataForm::ExecuteStartupCommandSequence() {
     // ПОЛУЧЕНИЕ ДАННЫХ ГРУППЫ 6 -------------------------------------------------------------
     if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {   // Если dataGridView2 не уничтожена и не уничтожается
         const bool ok2 = GetDefrostGroup(6, 0, buffer, kPayloadCapacity, &len);   // Получаем данные группы 6
-        if (ok2 && len >= (uint8_t)sizeof(DefrostLogGlobalPayload_t)) {
+        if (ok2 && len == (uint8_t)sizeof(DefrostLogGlobalPayload_t)) {
             FillDataGridView2FromGroup6Payload(buffer, len);   // Заполняем dataGridView2 данными группы 6
+            if (stm32Mode) {
+                savedGroup6Payload = gcnew cli::array<System::Byte>(len);
+                for (int i = 0; i < len; ++i) savedGroup6Payload[i] = buffer[i];
+            }
             loaded2 = true;
         }
         else {
@@ -1220,19 +1308,55 @@ bool ProjectServerW::DataForm::ExecuteStartupCommandSequence() {
     }
 
     // ОПРЕДЕЛЕНИЕ ФЛАГА ВЫПОЛНЕНИЯ ПОСЛЕОСТАНОВОЧНОЙ ПОСЛЕДОВАТЕЛЬНОСТИ -------------------------------------------------------------
-    startupSequenceCompleted = (loaded1 && loaded2);
-    paramsLoadedFromDevice = startupSequenceCompleted;
-    if (!startupSequenceCompleted) {
+    paramsLoadedFromDevice = (loaded1 && loaded2);
+    startupSequenceCompleted = (paramsLoadedFromDevice && groupsApplied);
+    if (!paramsLoadedFromDevice) {
         if (sendStateTimer != nullptr) sendStateTimer->Stop();
         GlobalLogger::LogMessage("Предупреждение: Последовательность запуска прервана на шаге GET_DEFROST_GROUP(5,6)");
         return false;
     }
 
+    if (stm32Mode) {
+        // Меняем только флаг режима, используя только что считанные EEPROM-уставки.
+        // После записи сверяем результат, чтобы не считать запуск завершённым при отказе.
+        const int modeOffset = (int)offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm);
+        if (savedGroup6Payload[modeOffset] != 1u) {
+            uint8_t updatedGroup6[DEFROST_GROUP6_PAYLOAD_SIZE] = {};
+            for (int i = 0; i < DEFROST_GROUP6_PAYLOAD_SIZE; ++i)
+                updatedGroup6[i] = savedGroup6Payload[i];
+            updatedGroup6[modeOffset] = 1u;
+            uint8_t verifiedGroup6[DEFROST_GROUP6_PAYLOAD_SIZE] = {};
+            uint8_t verifiedLen = 0u;
+            if (!SetDefrostGroup(6u, updatedGroup6, DEFROST_GROUP6_PAYLOAD_SIZE) ||
+                !GetDefrostGroup(6u, 0u, verifiedGroup6, DEFROST_GROUP6_PAYLOAD_SIZE, &verifiedLen) ||
+                verifiedLen != DEFROST_GROUP6_PAYLOAD_SIZE || verifiedGroup6[modeOffset] != 1u) {
+                groupsApplied = false;
+                GlobalLogger::LogMessage("Предупреждение: STM32: не удалось подтвердить запись флага режима; повторим после подключения");
+            } else {
+                for (int i = 0; i < DEFROST_GROUP6_PAYLOAD_SIZE; ++i)
+                    savedGroup6Payload[i] = verifiedGroup6[i];
+                FillDataGridView2FromGroup6Payload(verifiedGroup6, verifiedLen);
+            }
+        }
+        SaveSettings();
+        GlobalLogger::LogMessage(String::Format("Отладка: STM32: группы 5/6 считаны из контроллера до записи; SET_INTERVAL({0}) начат", intervalSeconds));
+        if (!SendSetIntervalCommand(intervalSeconds)) {
+            startupSequenceCompleted = false;
+            if (sendStateTimer != nullptr) sendStateTimer->Stop();
+            GlobalLogger::LogMessage("Предупреждение: Последовательность запуска прервана на шаге SET_INTERVAL");
+            return false;
+        }
+    }
+    startupSequenceCompleted = groupsApplied;
+
     // ЗАПУСК ТАЙМЕРА СОСТОЯНИЯ -------------------------------------------------------------   
     if (sendStateTimer != nullptr) {
         sendStateTimer->Start();
     }
-    GlobalLogger::LogMessage("Информация: Последовательность запуска выполнена (GET_VERSION -> SET_INTERVAL -> GET_DEFROST_GROUP[5,6])");
+    if (!groupsApplied) return false; // таймер повторит запись; SEND_STATE уже работает
+    GlobalLogger::LogMessage(stm32Mode
+        ? "Информация: STM32: запуск выполнен (GET_VERSION -> GET_DEFROST_GROUP[5,6] -> SET_INTERVAL; серверные уставки не записаны)"
+        : "Информация: Siemens: запуск выполнен (GET_VERSION -> SET_INTERVAL -> SET_DEFROST_GROUP[6,5] -> GET_DEFROST_GROUP[5,6])");
     return true;
 }
 
@@ -1566,6 +1690,12 @@ void ProjectServerW::DataForm::SaveSettings() {
         // Why: keep settings file portable and stable across locale changes.
         writer->WriteLine("MeasurementIntervalSeconds=" +
             intervalSeconds.ToString(System::Globalization::CultureInfo::InvariantCulture));
+		if (modeSwitchHasSavedSetting && checkBoxNewWrkAlrAlgorithm != nullptr)
+			writer->WriteLine("UseNewWrkAlrAlgorithm=" + (checkBoxNewWrkAlrAlgorithm->Checked ? "1" : "0"));
+		if (savedGroup5Payload != nullptr && savedGroup5Payload->Length == DEFROST_GROUP5_PAYLOAD_SIZE)
+			writer->WriteLine("DefrostGroup5=" + System::Convert::ToBase64String(savedGroup5Payload));
+		if (savedGroup6Payload != nullptr && savedGroup6Payload->Length == DEFROST_GROUP6_PAYLOAD_SIZE)
+			writer->WriteLine("DefrostGroup6=" + System::Convert::ToBase64String(savedGroup6Payload));
 
         // Закрываем файл
         writer->Close();
@@ -1601,6 +1731,8 @@ void ProjectServerW::DataForm::LoadSettings() {
             bool autoRestartEnabled = false;
             bool hasAutoStartTime = false;
             bool hasAutoRestartTime = false;
+			bool hasModeSetting = false;
+			bool modeSetting = true;
             DateTime autoStartTime;
             DateTime autoRestartTime;
 
@@ -1666,7 +1798,32 @@ void ProjectServerW::DataForm::LoadSettings() {
                         }
                     }
                 }
+				else if (key->Equals("UseNewWrkAlrAlgorithm", StringComparison::OrdinalIgnoreCase)) {
+					if (value == "0" || value == "1") {
+						hasModeSetting = true;
+						modeSetting = (value == "1");
+					} else GlobalLogger::LogMessage("Warning: недопустимое UseNewWrkAlrAlgorithm=" + value);
+				}
+				else if (key->Equals("DefrostGroup5", StringComparison::OrdinalIgnoreCase)) {
+					try {
+						cli::array<System::Byte>^ bytes = System::Convert::FromBase64String(value);
+						if (bytes->Length == DEFROST_GROUP5_PAYLOAD_SIZE) savedGroup5Payload = bytes;
+						else GlobalLogger::LogMessage("Warning: размер сохранённой группы 5 неверен");
+					} catch (System::FormatException^) { GlobalLogger::LogMessage("Warning: неверный формат сохранённой группы 5"); }
+				}
+				else if (key->Equals("DefrostGroup6", StringComparison::OrdinalIgnoreCase)) {
+					try {
+						cli::array<System::Byte>^ bytes = System::Convert::FromBase64String(value);
+						if (bytes->Length == DEFROST_GROUP6_PAYLOAD_SIZE) savedGroup6Payload = bytes;
+						else GlobalLogger::LogMessage("Warning: размер сохранённой группы 6 неверен");
+					} catch (System::FormatException^) { GlobalLogger::LogMessage("Warning: неверный формат сохранённой группы 6"); }
+				}
             }
+			if (hasModeSetting && checkBoxNewWrkAlrAlgorithm != nullptr) {
+				modeSwitchHasSavedSetting = true;
+				checkBoxNewWrkAlrAlgorithm->Checked = modeSetting;
+				UpdateModeSwitchText();
+			}
 
             if (hasAutoStartTime && dateTimePickerAutoStart != nullptr && !dateTimePickerAutoStart->IsDisposed) {
                 DateTime baseDate = dateTimePickerAutoStart->Value;
@@ -1743,6 +1900,7 @@ void ProjectServerW::DataForm::LoadDataGridView2Defaults() {
     dataGridView2->Rows->Add("fishColdTarget_C", "Target min fish temp °C (auto-stop when reached)", "6");
     dataGridView2->Rows->Add("debugDisableTargetTStop", "Debug: disable auto-stop by fishColdTarget_C (0/1)", "0");
     dataGridView2->Rows->Add("debugDisableDeviceSwitchCheck", "Debug: disable DO->DI switch check (0/1)", "0");
+    dataGridView2->Rows->Add("useNewWrkAlrAlgorithm", "1=STM32, 0=Siemens", "1");
 }
 
 // Имена параметров группы 5 (LOG_PHASE): порядок полей в DefrostLogPhasePayload_t
@@ -1778,9 +1936,9 @@ static bool BuildPhasePayloadFromGrid1(DataGridView^ grid, DefrostLogPhasePayloa
 void ProjectServerW::DataForm::FillDataGridView1FromGroup5Payload(const uint8_t* payload, uint8_t payloadLen) {
     if (dataGridView1 == nullptr || dataGridView1->IsDisposed || payload == nullptr) return;
     const size_t expectedSize = sizeof(DefrostLogPhasePayload_t);
-    if ((size_t)payloadLen < expectedSize) {
+    if ((size_t)payloadLen != expectedSize) {
         GlobalLogger::LogMessage(String::Format(
-            "Warning: Group5 payload too short: got {0}, expected {1}. Keep previous table values.",
+            "Warning: Group5 payload length mismatch: got {0}, expected exactly {1}. Packet rejected; previous table values kept.",
             (int)payloadLen, (int)expectedSize));
         return;
     }
@@ -1822,13 +1980,15 @@ static const Group6Row kGroup6Rows[] = {
     {"maxRuntime_s", "Air-only: Max process duration (s)"},
     {"fishColdTarget_C", "Target min fish temp °C (auto-stop when reached)"},
     {"debugDisableTargetTStop", "Debug: disable auto-stop by fishColdTarget_C (0/1)"},
-    {"debugDisableDeviceSwitchCheck", "Debug: disable DO->DI switch check (0/1)"}
+    {"debugDisableDeviceSwitchCheck", "Debug: disable DO->DI switch check (0/1)"},
+    {"useNewWrkAlrAlgorithm", "1=STM32, 0=Siemens"}
 };
 
 /** Заполнить payload группы 6 из dataGridView2 по имени параметра (Parameter2). */
 static bool BuildGlobalPayloadFromGrid2(DataGridView^ grid, DefrostLogGlobalPayload_t* outPayload) {
     if (grid == nullptr || grid->IsDisposed || outPayload == nullptr) return false;
     memset(outPayload, 0, sizeof(DefrostLogGlobalPayload_t));
+    bool modeRowFound = false;
     System::Globalization::CultureInfo^ inv = System::Globalization::CultureInfo::InvariantCulture;
     for (int r = 0; r < grid->Rows->Count; r++) {
         DataGridViewRow^ row = grid->Rows[r];
@@ -1855,6 +2015,12 @@ static bool BuildGlobalPayloadFromGrid2(DataGridView^ grid, DefrostLogGlobalPayl
         if (name->Equals("fishColdTarget_C", StringComparison::OrdinalIgnoreCase)) { float f; if (Single::TryParse(valueStr, System::Globalization::NumberStyles::Float, inv, f)) outPayload->fishColdTarget_C = f; continue; }
         if (name->Equals("debugDisableTargetTStop", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->debugDisableTargetTStop = (uint8_t)(u & 0xFF); continue; }
         if (name->Equals("debugDisableDeviceSwitchCheck", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->debugDisableDeviceSwitchCheck = (uint8_t)(u & 0xFF); continue; }
+        if (name->Equals("useNewWrkAlrAlgorithm", StringComparison::OrdinalIgnoreCase)) {
+            if (modeRowFound || (valueStr != "0" && valueStr != "1")) return false;
+            modeRowFound = true;
+            outPayload->useNewWrkAlrAlgorithm = (valueStr == "1") ? 1u : 0u;
+            continue;
+        }
         for (int i = 0; i <= 5; i++) {
             String^ sensorName = System::String::Format("Sensor{0} use in defrost", i);
             if (name->Equals(sensorName, StringComparison::OrdinalIgnoreCase)) {
@@ -1863,18 +2029,101 @@ static bool BuildGlobalPayloadFromGrid2(DataGridView^ grid, DefrostLogGlobalPayl
             }
         }
     }
-    return true;
+    return modeRowFound;
+}
+
+void ProjectServerW::DataForm::UpdateModeSwitchText() {
+    if (checkBoxNewWrkAlrAlgorithm != nullptr && !checkBoxNewWrkAlrAlgorithm->IsDisposed)
+        checkBoxNewWrkAlrAlgorithm->Text = checkBoxNewWrkAlrAlgorithm->Checked ? L"Режим: STM32" : L"Режим: Siemens";
+}
+
+void ProjectServerW::DataForm::SyncModeRowFromSwitch() {
+    if (!modeSwitchHasSavedSetting || dataGridView2 == nullptr || dataGridView2->IsDisposed) return;
+    bool hasRows = false;
+    System::Windows::Forms::DataGridViewRow^ modeRow = nullptr;
+    for (int r = 0; r < dataGridView2->Rows->Count; ++r) {
+        auto row = dataGridView2->Rows[r];
+        if (row->IsNewRow) continue;
+        hasRows = true;
+        Object^ nameObj = row->Cells["Parameter2"]->Value;
+        if (nameObj != nullptr && nameObj->ToString()->Trim()->Equals("useNewWrkAlrAlgorithm", StringComparison::OrdinalIgnoreCase)) {
+            modeRow = row;
+            break;
+        }
+    }
+    if (!hasRows) return; // одна строка флага не должна превращаться в пакет с нулевыми уставками
+    modeSwitchSyncing = true;
+    String^ value = checkBoxNewWrkAlrAlgorithm->Checked ? "1" : "0";
+    if (modeRow != nullptr) modeRow->Cells["Value"]->Value = value;
+    else dataGridView2->Rows->Add("useNewWrkAlrAlgorithm", "1=STM32, 0=Siemens", value);
+    modeSwitchSyncing = false;
+}
+
+void ProjectServerW::DataForm::SyncModeSwitchFromGrid() {
+    if (modeSwitchSyncing || dataGridView2 == nullptr || dataGridView2->IsDisposed) return;
+    for (int r = 0; r < dataGridView2->Rows->Count; ++r) {
+        auto row = dataGridView2->Rows[r];
+        if (row->IsNewRow) continue;
+        Object^ nameObj = row->Cells["Parameter2"]->Value;
+        if (nameObj == nullptr || !nameObj->ToString()->Trim()->Equals("useNewWrkAlrAlgorithm", StringComparison::OrdinalIgnoreCase)) continue;
+        Object^ valueObj = row->Cells["Value"]->Value;
+        String^ value = (valueObj != nullptr) ? valueObj->ToString()->Trim() : "";
+        if (value != "0" && value != "1") return; // запись группы 6 отдельно отклонит неверное значение
+        modeSwitchSyncing = true;
+        checkBoxNewWrkAlrAlgorithm->Checked = (value == "1");
+        UpdateModeSwitchText();
+        modeSwitchSyncing = false;
+        modeSwitchHasSavedSetting = true;
+        if (savedGroup6Payload != nullptr && savedGroup6Payload->Length == DEFROST_GROUP6_PAYLOAD_SIZE)
+            savedGroup6Payload[offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm)] = (value == "1") ? 1u : 0u;
+        if (!settingsLoading) SaveSettings();
+        return;
+    }
+}
+
+System::Void ProjectServerW::DataForm::checkBoxNewWrkAlrAlgorithm_CheckedChanged(System::Object^ sender, System::EventArgs^ e) {
+    UpdateModeSwitchText();
+    if (settingsLoading || modeSwitchSyncing) return;
+    modeSwitchHasSavedSetting = true;
+    SyncModeRowFromSwitch();
+    if (savedGroup6Payload != nullptr && savedGroup6Payload->Length == DEFROST_GROUP6_PAYLOAD_SIZE)
+        savedGroup6Payload[offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm)] = checkBoxNewWrkAlrAlgorithm->Checked ? 1u : 0u;
+    SaveSettings();
+    // При установленной связи переключатель применяет режим сразу; при отказе запись повторится после подключения.
+    if (ClientSocket != INVALID_SOCKET && startupSequenceCompleted) {
+        uint8_t raw[DEFROST_GROUP6_PAYLOAD_SIZE] = {};
+        uint8_t len = 0u;
+        // Переключатель меняет только флаг в актуальной группе контроллера.
+        const bool readOk = GetDefrostGroup(6u, 0u, raw, DEFROST_GROUP6_PAYLOAD_SIZE, &len) &&
+            len == DEFROST_GROUP6_PAYLOAD_SIZE;
+        if (readOk) {
+            raw[offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm)] =
+                checkBoxNewWrkAlrAlgorithm->Checked ? 1u : 0u;
+        }
+        if (!readOk || !SetDefrostGroup(6u, raw, DEFROST_GROUP6_PAYLOAD_SIZE)) {
+            GlobalLogger::LogMessage("Warning: режим не записан в контроллер; не удалось прочитать группу 6 или контроллер отклонил запись");
+            if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
+                Label_Commands->Text = "Режим сохранён на сервере, но не записан в контроллер";
+                Label_Commands->ForeColor = System::Drawing::Color::Orange;
+            }
+        } else {
+            savedGroup6Payload = gcnew cli::array<System::Byte>(len);
+            for (int i = 0; i < len; ++i) savedGroup6Payload[i] = raw[i];
+            SaveSettings();
+        }
+    }
 }
 
 void ProjectServerW::DataForm::FillDataGridView2FromGroup6Payload(const uint8_t* payload, uint8_t payloadLen) {
     if (dataGridView2 == nullptr || dataGridView2->IsDisposed || payload == nullptr) return;
     const size_t expectedSize = sizeof(DefrostLogGlobalPayload_t);
-    if ((size_t)payloadLen < expectedSize) {
+    if ((size_t)payloadLen != expectedSize) {
         GlobalLogger::LogMessage(String::Format(
-            "Warning: Group6 payload too short: got {0}, expected {1}. Keep previous table values.",
+            "Warning: Group6 payload length mismatch: got {0}, expected exactly {1}. Packet rejected; previous table values kept.",
             (int)payloadLen, (int)expectedSize));
         return;
     }
+    modeSwitchSyncing = true;
     dataGridView2->Rows->Clear();
     DefrostLogGlobalPayload_t s;
     memcpy(&s, payload, expectedSize);
@@ -1888,12 +2137,16 @@ void ProjectServerW::DataForm::FillDataGridView2FromGroup6Payload(const uint8_t*
     dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[14].name), gcnew System::String(kGroup6Rows[14].desc), s.fishColdTarget_C.ToString(inv));
     dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[15].name), gcnew System::String(kGroup6Rows[15].desc), System::Convert::ToString((int)s.debugDisableTargetTStop));
     dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[16].name), gcnew System::String(kGroup6Rows[16].desc), System::Convert::ToString((int)s.debugDisableDeviceSwitchCheck));
+    dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[17].name), gcnew System::String(kGroup6Rows[17].desc), System::Convert::ToString((int)s.useNewWrkAlrAlgorithm));
     for (int i = 0; i <= 5; i++) {
         dataGridView2->Rows->Add(
             System::String::Format("Sensor{0} use in defrost", i),
             System::String::Format("Use sensor {0} in algorithm", i),
             System::Convert::ToString((int)s.sensorUseInDefrost[i]));
     }
+    modeSwitchSyncing = false;
+    if (modeSwitchHasSavedSetting) SyncModeRowFromSwitch();
+    else SyncModeSwitchFromGrid();
     dataGridView2Dirty = false;
 }
 
@@ -2110,8 +2363,10 @@ System::Void ProjectServerW::DataForm::dataGridView1_RowChanged(System::Object^ 
 }
 
 System::Void ProjectServerW::DataForm::dataGridView2_CellValueChanged(System::Object^ sender, System::Windows::Forms::DataGridViewCellEventArgs^ e) {
-    if (e->RowIndex >= 0 && dataGridView2 != nullptr && !dataGridView2->IsDisposed && e->RowIndex < dataGridView2->Rows->Count && !dataGridView2->Rows[e->RowIndex]->IsNewRow)
+    if (e->RowIndex >= 0 && dataGridView2 != nullptr && !dataGridView2->IsDisposed && e->RowIndex < dataGridView2->Rows->Count && !dataGridView2->Rows[e->RowIndex]->IsNewRow) {
         dataGridView2Dirty = true;
+        if (!modeSwitchSyncing) SyncModeSwitchFromGrid();
+    }
 }
 
 System::Void ProjectServerW::DataForm::dataGridView2_RowChanged(System::Object^ sender, System::Windows::Forms::DataGridViewRowEventArgs^ e) {
@@ -2282,6 +2537,7 @@ void ProjectServerW::DataForm::LoadParamsFromExcelFile(System::String^ filePath)
         Label_Commands->Text = "Параметры загружены из файла";
         Label_Commands->ForeColor = System::Drawing::Color::DarkGreen;
     }
+    SyncModeRowFromSwitch();
 }
 
 System::Void ProjectServerW::DataForm::buttonSaveToFile_Click(System::Object^ sender, System::EventArgs^ e) {
@@ -2317,24 +2573,30 @@ System::Void ProjectServerW::DataForm::buttonReadParameters_Click(System::Object
         // Запросить лог по группе 5 (параметры по фазам) и загрузить в dataGridView1
         if (dataGridView1 != nullptr && !dataGridView1->IsDisposed) {
             ok1 = GetDefrostGroup(5, 0, buffer, kPayloadCapacity, &len);
-            if (ok1 && len >= (uint8_t)sizeof(DefrostLogPhasePayload_t)) {
+            if (ok1 && len == (uint8_t)sizeof(DefrostLogPhasePayload_t)) {
                 FillDataGridView1FromGroup5Payload(buffer, len);
+                savedGroup5Payload = gcnew cli::array<System::Byte>(len);
+                for (int i = 0; i < len; ++i) savedGroup5Payload[i] = buffer[i];
                 loaded1 = true;
             } else if (ok1) {
                 GlobalLogger::LogMessage(String::Format(
-                    "Warning: Group5 read succeeded but payload too short: {0} bytes (expected >= {1})",
+                    "Warning: Group5 read succeeded but payload length mismatched: {0} bytes (expected exactly {1})",
                     (int)len, (int)sizeof(DefrostLogPhasePayload_t)));
             }
         }
         // Запросить лог по группе 6 (общие параметры) и загрузить в dataGridView2
         if (dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
             ok2 = GetDefrostGroup(6, 0, buffer, kPayloadCapacity, &len);
-            if (ok2 && len >= (uint8_t)sizeof(DefrostLogGlobalPayload_t)) {
+            if (ok2 && len == (uint8_t)sizeof(DefrostLogGlobalPayload_t)) {
                 FillDataGridView2FromGroup6Payload(buffer, len);
+                savedGroup6Payload = gcnew cli::array<System::Byte>(len);
+                for (int i = 0; i < len; ++i) savedGroup6Payload[i] = buffer[i];
+                if (modeSwitchHasSavedSetting)
+                    savedGroup6Payload[offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm)] = checkBoxNewWrkAlrAlgorithm->Checked ? 1u : 0u;
                 loaded2 = true;
             } else if (ok2) {
                 GlobalLogger::LogMessage(String::Format(
-                    "Warning: Group6 read succeeded but payload too short: {0} bytes (expected >= {1})",
+                    "Warning: Group6 read succeeded but payload length mismatched: {0} bytes (expected exactly {1})",
                     (int)len, (int)sizeof(DefrostLogGlobalPayload_t)));
             }
         }
@@ -2356,6 +2618,7 @@ System::Void ProjectServerW::DataForm::buttonReadParameters_Click(System::Object
         // If only one group loaded, keep paramsLoadedFromDevice=false to allow another auto-read
         // on the next entry to the "Параметры" tab (if the remaining table is still empty).
         paramsLoadedFromDevice = (loaded1 && loaded2);
+        if (loaded1 || loaded2) SaveSettings();
         GlobalLogger::LogMessage(String::Format(
             "Information: Read params from defroster: group5 transport={0}, group6 transport={1}, group5 loaded={2}, group6 loaded={3}",
             ok1 ? "OK" : "fail",
@@ -2382,7 +2645,7 @@ System::Void ProjectServerW::DataForm::buttonLoadDefrostDefaults_Click(System::O
         }
         const System::Windows::Forms::DialogResult answer = MessageBox::Show(
             "Загрузить на контроллер заводские параметры дефростации?\n"
-            "Текущие значения в EEPROM будут перезаписаны. Режим работы (ПУСК/СТОП) не изменится.",
+            "Текущие значения в EEPROM будут перезаписаны. Будет выбран режим STM32.",
             "Параметры по умолчанию",
             MessageBoxButtons::YesNo,
             MessageBoxIcon::Question);
@@ -2408,6 +2671,11 @@ System::Void ProjectServerW::DataForm::buttonLoadDefrostDefaults_Click(System::O
             Label_Commands->ForeColor = System::Drawing::Color::DarkGreen;
         }
         GlobalLogger::LogMessage("Information: LOAD_DEFROST_DEFAULTS выполнена успешно");
+        modeSwitchSyncing = true;
+        checkBoxNewWrkAlrAlgorithm->Checked = true; // заводской параметр контроллера
+        UpdateModeSwitchText();
+        modeSwitchSyncing = false;
+        modeSwitchHasSavedSetting = true;
         buttonReadParameters_Click(nullptr, nullptr);
     }
     catch (Exception^ ex) {
@@ -2450,14 +2718,25 @@ System::Void ProjectServerW::DataForm::buttonWriteParameters_Click(System::Objec
         DefrostLogPhasePayload_t payload5;
         if (BuildPhasePayloadFromGrid1(dataGridView1, &payload5)) {
             ok5 = SetDefrostGroup(5, (const uint8_t*)&payload5, (uint8_t)sizeof(DefrostLogPhasePayload_t));
+            if (ok5) {
+                savedGroup5Payload = gcnew cli::array<System::Byte>(DEFROST_GROUP5_PAYLOAD_SIZE);
+                System::Runtime::InteropServices::Marshal::Copy(IntPtr(&payload5), savedGroup5Payload, 0, (int)DEFROST_GROUP5_PAYLOAD_SIZE);
+            }
         }
     }
     if (dataRows2 > 0 && dataGridView2 != nullptr && !dataGridView2->IsDisposed) {
         DefrostLogGlobalPayload_t payload6;
         if (BuildGlobalPayloadFromGrid2(dataGridView2, &payload6)) {
             ok6 = SetDefrostGroup(6, (const uint8_t*)&payload6, (uint8_t)sizeof(DefrostLogGlobalPayload_t));
+            if (ok6) {
+                savedGroup6Payload = gcnew cli::array<System::Byte>(DEFROST_GROUP6_PAYLOAD_SIZE);
+                System::Runtime::InteropServices::Marshal::Copy(IntPtr(&payload6), savedGroup6Payload, 0, (int)DEFROST_GROUP6_PAYLOAD_SIZE);
+            }
+        } else {
+            MessageBox::Show("Для записи группы 6 требуется строка useNewWrkAlrAlgorithm со значением 0 или 1.", "Параметры");
         }
     }
+    if (ok5 || ok6) SaveSettings();
     if (Label_Commands != nullptr && !Label_Commands->IsDisposed) {
         if (ok5 && ok6) {
             Label_Commands->Text = "Запись в устройство: группы 5 и 6 записаны";

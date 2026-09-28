@@ -400,6 +400,15 @@ bool ProjectServerW::DataForm::GetDefrostGroup(uint8_t groupId, uint8_t page, ui
     if (!SendCommandAndWaitResponse(cmd, response, "GET_DEFROST_GROUP") || response.status != CmdStatus::OK) return false;
     if (response.dataLength < 2) return false;
     uint8_t payloadLen = (uint8_t)(response.dataLength - 2);
+    const uint8_t expectedPayloadLen =
+        (groupId == 5u) ? DEFROST_GROUP5_PAYLOAD_SIZE :
+        (groupId == 6u) ? DEFROST_GROUP6_PAYLOAD_SIZE : 0u;
+    if (expectedPayloadLen != 0u && payloadLen != expectedPayloadLen) {
+        GlobalLogger::LogMessage(String::Format(
+            "Warning: GET_DEFROST_GROUP({0}) payload rejected: got {1} bytes, expected exactly {2}",
+            (int)groupId, (int)payloadLen, (int)expectedPayloadLen));
+        return false;
+    }
     if (payloadLen > outCapacity) return false;
     memcpy(outData, &response.data[2], payloadLen);
     *outLength = payloadLen;
