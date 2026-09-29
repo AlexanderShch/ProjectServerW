@@ -1,0 +1,10 @@
+---
+description: Keep Visual Studio project files on Windows CRLF line endings
+alwaysApply: true
+---
+
+# Line endings
+
+- Follow the repository `.editorconfig`: save edited text files with Windows CRLF line endings and a final newline.
+- When editing an existing file, normalize the whole file so Visual Studio does not report mixed line endings.
+- Preserve the file's existing encoding and byte order mark, if any.
