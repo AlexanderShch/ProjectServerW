@@ -3017,6 +3017,11 @@ void ProjectServerW::DataForm::SetProgramStateUi(bool isRunning)
 {
     if (buttonSTART == nullptr || buttonSTOP == nullptr || labelSTART == nullptr || labelSTOP == nullptr)
         return;
+    // В Siemens работа подтверждается входом But_Start. После перехода в 0
+    // состояние сохраняется до 10 подряд принятых нулевых отсчётов и завершения записи.
+    // Ответы на серверные START/STOP не должны переключать кнопки раньше телеметрии.
+    if (radioButtonSiemens != nullptr && radioButtonSiemens->Checked)
+        isRunning = siemensRecordingActive;
     // Не дёргаем Refresh, если состояние кнопок уже соответствует (частые пакеты телеметрии вне записи в таблицу).
     if (isRunning) {
         if (!buttonSTART->Enabled && buttonSTOP->Enabled)
@@ -3438,26 +3443,6 @@ System::Void ProjectServerW::DataForm::RestoreAutoRestartColor(System::Object^ s
     }
     catch (Exception^ ex) {
         GlobalLogger::LogMessage("Error in RestoreAutoRestartColor: " + ex->Message);
-    }
-}
-
-void ProjectServerW::DataForm::ExecuteAutoRestartStart() {
-    try {
-        if (buttonSTART == nullptr || buttonSTART->IsDisposed) {
-            return;
-        }
-        if (!buttonSTART->Enabled) {
-            GlobalLogger::LogMessage(gcnew String(L"Warning: \u0410\u0432\u0442\u043E\u043F\u0435\u0440\u0435\u0437\u0430\u043F\u0443\u0441\u043A: START \u043D\u0435 \u0432\u044B\u043F\u043E\u043B\u043D\u0435\u043D (\u043A\u043D\u043E\u043F\u043A\u0430 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430)"));
-            return;
-        }
-
-        Label_Commands->Text = "[Выполняется] Выполняется команда остановки...";
-        Label_Commands->ForeColor = System::Drawing::Color::Blue;
-        GlobalLogger::LogMessage(Label_Commands->Text);
-        SendStartCommand();
-    }
-    catch (Exception^ ex) {
-        GlobalLogger::LogMessage("Error: Exception in ExecuteAutoRestartStart: " + ex->ToString());
     }
 }
 

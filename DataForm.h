@@ -1482,7 +1482,6 @@ private: System::ComponentModel::IContainer^ components;
 			static void InitializeBitFieldNames(gcroot<cli::array<cli::array<String^>^>^>& namesRef);
 
 			void TriggerExcelExport();
-			void ExecuteAutoRestartStart();
 			bool StartExcelExportThread(bool isEmergency);
 			bool StartExcelExportThread(bool isEmergency, int firstRowIndex, bool includeLastRow, bool allowQueueIfBusy);
 			void OnInactivityTimerTick(Object^ sender, EventArgs^ e);
