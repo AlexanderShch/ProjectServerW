@@ -1401,7 +1401,7 @@ private: System::ComponentModel::IContainer^ components;
 			}
 
 			void EnableButton();
-			void OnExcelExportCompleted(bool enableButtonOnComplete);
+			void OnExcelExportCompleted(bool enableButtonOnComplete, bool exportSucceeded, bool restartAfterExport);
 			bool SendCommand(const ::Command& cmd); // Универсальный метод отправки команды (имя определяется автоматически)
 			bool SendCommand(const ::Command& cmd, System::String^ commandName); // Универсальный метод отправки команды с явным именем
 		void SendStartCommand(); // Метод для отправки команды START клиенту
@@ -1484,6 +1484,8 @@ private: System::ComponentModel::IContainer^ components;
 			void TriggerExcelExport();
 			bool StartExcelExportThread(bool isEmergency);
 			bool StartExcelExportThread(bool isEmergency, int firstRowIndex, bool includeLastRow, bool allowQueueIfBusy);
+			bool StartExcelExportThread(bool isEmergency, int firstRowIndex, bool includeLastRow, bool allowQueueIfBusy, bool restartAfterExport);
+			void CompleteAutoRestartAfterExport();
 			void OnInactivityTimerTick(Object^ sender, EventArgs^ e);
 		private: System::Void textBoxExcelDirectory_TextChanged(System::Object^ sender, System::EventArgs^ e) {
 		}

@@ -20,6 +20,7 @@ namespace ProjectServerW {
 			System::String^ formGuid;
 			System::WeakReference^ formRef;
 			bool enableButtonOnComplete;
+			bool restartAfterExport;
 		};
 
 		static void EnqueueExport(ExcelExportJob^ job);

@@ -445,6 +445,10 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency) {
 }
 
 bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency, int firstRowIndex, bool includeLastRow, bool allowQueueIfBusy) {
+    return StartExcelExportThread(isEmergency, firstRowIndex, includeLastRow, allowQueueIfBusy, false);
+}
+
+bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency, int firstRowIndex, bool includeLastRow, bool allowQueueIfBusy, bool restartAfterExport) {
     try {
         // Замечание: блок не по потоку — захват монитора в контексте этого потока (UI поток захватывает монитор по кнопке).
         System::Threading::Monitor::Enter(excelExportSync);
@@ -521,6 +525,7 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency, int firs
         job->formGuid = this->FormGuid;
         job->formRef = gcnew System::WeakReference(this);
         job->enableButtonOnComplete = !isEmergency;
+        job->restartAfterExport = restartAfterExport;
 
         // Помещаем задачу в очередь экспорта данных в EXCEL
         ProjectServerW::FormExcel::EnqueueExport(job);
@@ -550,7 +555,7 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency, int firs
 }
 
 // Обработка завершения экспорта данных в EXCEL.
-void ProjectServerW::DataForm::OnExcelExportCompleted(bool enableButtonOnComplete) {
+void ProjectServerW::DataForm::OnExcelExportCompleted(bool enableButtonOnComplete, bool exportSucceeded, bool restartAfterExport) {
     // Снимаем per-form guard — иначе после первого Enqueue все следующие StartExcelExportThread блокируются навсегда.
     try {
         System::Threading::Monitor::Enter(excelExportSync);
@@ -567,6 +572,20 @@ void ProjectServerW::DataForm::OnExcelExportCompleted(bool enableButtonOnComplet
         return;
     }
 
+    if (restartAfterExport) {
+        if (exportSucceeded) {
+            try {
+                this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::CompleteAutoRestartAfterExport));
+            }
+            catch (Exception^ ex) {
+                GlobalLogger::LogMessage("Error: Не удалось запланировать START после экспорта Excel: " + ex->Message);
+            }
+        }
+        else {
+            GlobalLogger::LogMessage("Warning: Автоперезапуск: Excel не сохранён, START не отправлен");
+        }
+    }
+
     if (enableButtonOnComplete) {
         try {
             this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::EnableButton));
@@ -578,6 +597,25 @@ void ProjectServerW::DataForm::OnExcelExportCompleted(bool enableButtonOnComplet
             GlobalLogger::LogMessage("Ошибка: не удалось включить кнопку экспорта данных в Excel (неизвестное исключение)");
         }
     }
+}
+
+void ProjectServerW::DataForm::CompleteAutoRestartAfterExport() {
+    if (!autoRestartPending || this->IsDisposed || this->Disposing)
+        return;
+    if (radioButtonSiemens == nullptr || !radioButtonSiemens->Checked ||
+        siemensRecordingActive || buttonSTART == nullptr || !buttonSTART->Enabled ||
+        ClientSocket == INVALID_SOCKET) {
+        GlobalLogger::LogMessage("Warning: Автоперезапуск: START после экспорта отменён (режим или состояние контроллера изменились)");
+        autoRestartPending = false;
+        autoRestartStopIssuedTime = DateTime::MinValue;
+        return;
+    }
+
+    // Снимаем ожидание до отправки: повторный callback не должен послать второй START.
+    autoRestartPending = false;
+    autoRestartStopIssuedTime = DateTime::MinValue;
+    GlobalLogger::LogMessage("Information: Автоперезапуск: Excel сохранён, отправляем START");
+    SendStartCommand();
 }
 
 // Обработка нажатия кнопки Browse.
@@ -1081,7 +1119,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     if (siemensMode) {
         if (finishSiemensRecordingAfterRow) {
             dataCollectionEndTime = now;
-            const bool queued = StartExcelExportThread(true, siemensSessionStartRowIndex, true, true);
+            const bool queued = StartExcelExportThread(true, siemensSessionStartRowIndex, true, true, autoRestartPending);
             if (queued) dataExportedToExcel = true;
             else GlobalLogger::LogMessage("Предупреждение: Siemens: не удалось поставить экспорт телеметрии в очередь");
             siemensRecordingActive = false;

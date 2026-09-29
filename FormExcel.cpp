@@ -136,6 +136,8 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 	}
 	// Симметрия с Decrement в finally: иначе счётчик уходит в минус и WaitForAllExports никогда не получает сигнал.
 	System::Threading::Interlocked::Increment(excelActiveExportJobs);
+	bool exportSucceeded = false;
+	bool exportRequeued = false;
 	try {
 	if (job->tableSnapshot == nullptr) {	// Если таблица не существует, выходим
 		try {
@@ -144,7 +146,7 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 				form = dynamic_cast<DataForm^>(job->formRef->Target);	// Преобразуем ссылку на форму в объект DataForm
 			}
 			if (form != nullptr && !form->IsDisposed && !form->Disposing) {	// Если форма существует и не уничтожена, вызываем метод OnExcelExportCompleted
-				form->OnExcelExportCompleted(job->enableButtonOnComplete);
+				form->OnExcelExportCompleted(job->enableButtonOnComplete, false, job->restartAfterExport);
 			}
 		}
 		catch (...) {}	// Если произошла ошибка, выходим
@@ -163,6 +165,7 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 
 		if (!mutexAcquired) {      // Если мьютекс не занят, добавляем задачу в очередь и выходим
 			// Критично: продолжаем ретраи через очередь — Excel может быть занят во время долгих экспортов.	
+			exportRequeued = true;
 			excelExportQueue->Enqueue(job);	// Добавляем задачу в очередь
 			excelExportQueueEvent->Set();	// Устанавливаем событие очереди
 			Thread::Sleep(1000);	// Ждём 1 секунду
@@ -579,10 +582,15 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 			end.ToString("yyyy-MM-dd_HH-mm-ss"),
 			job->clientPort.ToString());
 
-		excel->SaveAs(dir + finalFileName);
+		const bool saved = excel->SaveAs(dir + finalFileName);
 		excel->Close();
 		delete excel;
 		excel = nullptr;
+		if (!saved) {
+			GlobalLogger::LogMessage("Error: Excel export job failed to save: " + finalFileName);
+			return;
+		}
+		exportSucceeded = true;
 
 		DateTime exportEndTime = DateTime::Now;
 		TimeSpan elapsed = exportEndTime.Subtract(exportStartTime);
@@ -619,8 +627,8 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 				form = dynamic_cast<DataForm^>(job->formRef->Target);
 			}
 
-			if (form != nullptr && !form->IsDisposed && !form->Disposing) {
-				form->OnExcelExportCompleted(job->enableButtonOnComplete);
+			if (!exportRequeued && form != nullptr && !form->IsDisposed && !form->Disposing) {
+				form->OnExcelExportCompleted(job->enableButtonOnComplete, exportSucceeded, job->restartAfterExport);
 			}
 		}
 		catch (...) {}
