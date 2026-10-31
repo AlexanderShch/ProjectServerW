@@ -75,9 +75,9 @@ struct AlarmFlagsPayload {
 
 // Фиксированные размеры бинарных payload групп параметров; должны совпадать с прошивкой контроллера.
 const uint8_t DEFROST_GROUP5_PAYLOAD_SIZE = 72;
-const uint8_t DEFROST_GROUP6_PAYLOAD_SIZE = 58; /* +forbidHumidityReduceWhileRunning +humidityThresholdRH_percent */
+const uint8_t DEFROST_GROUP6_PAYLOAD_SIZE = 60; /* airOnly в мин. +forbidHumidity +thresholdRH +purgeTimeout_s */
 
-// Максимальный размер кадра команды/ответа (буфер приёма). Ответ GET_DEFROST_GROUP(5) = 81 байт (5+74+2), (6) = 67 байт (5+60+2).
+// Максимальный размер кадра команды/ответа (буфер приёма). Ответ GET_DEFROST_GROUP(5) = 81 байт (5+74+2), (6) = 69 байт (5+62+2).
 const size_t MAX_COMMAND_SIZE = 96;
 
 // Структура команды
@@ -239,7 +239,7 @@ struct CommandResponse {
     uint8_t commandCode;           // Код исходной команды
     uint8_t status;                // Статус выполнения команды
     uint8_t dataLength;            // Длина данных ответа
-    uint8_t data[MAX_COMMAND_SIZE - 6]; // Данные ответа (макс. 58 байт)
+    uint8_t data[MAX_COMMAND_SIZE - 6]; // Данные ответа (ёмкость буфера: MAX_COMMAND_SIZE-6)
     uint16_t crc;                  // CRC16 для проверки целостности
 
     CommandResponse() : commandType(0), commandCode(0), status(0), dataLength(0), crc(0) {

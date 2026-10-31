@@ -72,9 +72,9 @@ typedef struct {
     uint16_t outHold_s;
     uint16_t tenMinHold_s;
     uint16_t injMinHold_s;
-    uint16_t airOnlyPhaseWarmUp_s;
-    uint16_t airOnlyPhasePlateau_s;
-    uint16_t maxRuntime_s;
+    uint16_t airOnlyPhaseWarmUp_min;
+    uint16_t airOnlyPhasePlateau_min;
+    uint16_t maxRuntime_min;
     float fishColdTarget_C;          /* целевая мин. Т рыбы °C; при достижении — автоостанов алгоритма */
     uint8_t debugDisableTargetTStop; /* 1 = отладка: отключить автостоп по целевой Т, 0 = автостоп включен */
     uint8_t debugDisableDeviceSwitchCheck; /* 1 = отладка: отключить проверку соответствия входов/выходов, 0 = проверка включена */
@@ -82,6 +82,7 @@ typedef struct {
     uint8_t sensorUseInDefrost[DEFROST_MAX_SENSOR_COUNT_SERVER];
     uint8_t forbidHumidityReduceWhileRunning; /* 1 = запрет снижения влажности вытяжкой во время работы */
     float humidityThresholdRH_percent; /* пороговая RH %: работа и продувка */
+    uint16_t purgeTimeout_s; /* таймаут продувки, с */
 } DefrostLogGlobalPayload_t;
 static_assert(sizeof(DefrostLogGlobalPayload_t) == DEFROST_GROUP6_PAYLOAD_SIZE,
     "DefrostLogGlobalPayload_t size differs from protocol constant");
@@ -91,6 +92,8 @@ static_assert(offsetof(DefrostLogGlobalPayload_t, forbidHumidityReduceWhileRunni
     "Group 6 forbidHumidityReduceWhileRunning offset differs from protocol");
 static_assert(offsetof(DefrostLogGlobalPayload_t, humidityThresholdRH_percent) == 54u,
     "Group 6 humidityThresholdRH_percent offset differs from protocol");
+static_assert(offsetof(DefrostLogGlobalPayload_t, purgeTimeout_s) == 58u,
+    "Group 6 purgeTimeout_s offset differs from protocol");
 static_assert(sizeof(DefrostLogGlobalPayload_t) + 2 <= (MAX_COMMAND_SIZE - 6),
     "GET_DEFROST_GROUP(group6): response payload+header exceeds CommandResponse::data capacity");
 #pragma pack(pop)
@@ -2011,15 +2014,16 @@ void ProjectServerW::DataForm::LoadDataGridView2Defaults() {
     dataGridView2->Rows->Add("tenMinHold_s", L"Мин. время удержания ТЭНа между переключениями", "10");
     dataGridView2->Rows->Add("injMinHold_s", L"Мин. время удержания форсунки между переключениями", "5");
     dataGridView2->Rows->Add("outHold_s", L"Мин.время удержания вентилятора между переключениями", "15");
-    dataGridView2->Rows->Add("airOnlyPhaseWarmUp_s", L"Только воздух: длительность фазы прогрева (с)", "600");
-    dataGridView2->Rows->Add("airOnlyPhasePlateau_s", L"Только воздух: конец плато от старта (с)", "1800");
-    dataGridView2->Rows->Add("maxRuntime_s", L"Только воздух: макс. длительность процесса (с)", "7200");
+    dataGridView2->Rows->Add("airOnlyPhaseWarmUp_min", L"Только воздух: длительность фазы прогрева, мин.", "10");
+    dataGridView2->Rows->Add("airOnlyPhasePlateau_min", L"Только воздух: конец плато от старта, мин.", "30");
+    dataGridView2->Rows->Add("maxRuntime_min", L"Только воздух: макс. длительность процесса, мин.", "120");
     dataGridView2->Rows->Add("fishColdTarget_C", L"Целевая мин. темп. рыбы °C (автостоп при достижении)", "6");
     dataGridView2->Rows->Add("debugDisableTargetTStop", L"Отладка: отключить автостоп по fishColdTarget_C (0/1)", "0");
     dataGridView2->Rows->Add("debugDisableDeviceSwitchCheck", L"Отладка: отключить проверку переключения DO→DI (0/1)", "0");
     dataGridView2->Rows->Add("useNewWrkAlrAlgorithm", "1=STM32, 0=Siemens", "1");
     dataGridView2->Rows->Add("forbidHumidityReduceWhileRunning", L"Запретить снижение влажности во время работы (1=запрещено)", "1");
     dataGridView2->Rows->Add("humidityThresholdRH_percent", L"Пороговая влажность, %", "50");
+    dataGridView2->Rows->Add("purgeTimeout_s", L"Тайм-аут продувки, сек.", "300");
 }
 
 // Имена параметров группы 5 (LOG_PHASE): порядок полей в DefrostLogPhasePayload_t
@@ -2095,15 +2099,16 @@ static const Group6Row kGroup6Rows[] = {
     {"outHold_s", L"Мин.время удержания вентилятора между переключениями"},
     {"tenMinHold_s", L"Мин. время удержания ТЭНа между переключениями"},
     {"injMinHold_s", L"Мин. время удержания форсунки между переключениями"},
-    {"airOnlyPhaseWarmUp_s", L"Только воздух: длительность фазы прогрева (с)"},
-    {"airOnlyPhasePlateau_s", L"Только воздух: конец плато от старта (с)"},
-    {"maxRuntime_s", L"Только воздух: макс. длительность процесса (с)"},
+    {"airOnlyPhaseWarmUp_min", L"Только воздух: длительность фазы прогрева, мин."},
+    {"airOnlyPhasePlateau_min", L"Только воздух: конец плато от старта, мин."},
+    {"maxRuntime_min", L"Только воздух: макс. длительность процесса, мин."},
     {"fishColdTarget_C", L"Целевая мин. темп. рыбы °C (автостоп при достижении)"},
     {"debugDisableTargetTStop", L"Отладка: отключить автостоп по fishColdTarget_C (0/1)"},
     {"debugDisableDeviceSwitchCheck", L"Отладка: отключить проверку переключения DO→DI (0/1)"},
     {"useNewWrkAlrAlgorithm", L"1=STM32, 0=Siemens"},
     {"forbidHumidityReduceWhileRunning", L"Запретить снижение влажности во время работы (1=запрещено)"},
-    {"humidityThresholdRH_percent", L"Пороговая влажность, %"}
+    {"humidityThresholdRH_percent", L"Пороговая влажность, %"},
+    {"purgeTimeout_s", L"Тайм-аут продувки, сек."}
 };
 
 /** Заполнить payload группы 6 из dataGridView2 по имени параметра (Parameter2). */
@@ -2131,9 +2136,9 @@ static bool BuildGlobalPayloadFromGrid2(DataGridView^ grid, DefrostLogGlobalPayl
         if (name->Equals("outHold_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->outHold_s = (uint16_t)(u & 0xFFFF); continue; }
         if (name->Equals("tenMinHold_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->tenMinHold_s = (uint16_t)(u & 0xFFFF); continue; }
         if (name->Equals("injMinHold_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->injMinHold_s = (uint16_t)(u & 0xFFFF); continue; }
-        if (name->Equals("airOnlyPhaseWarmUp_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->airOnlyPhaseWarmUp_s = (uint16_t)(u & 0xFFFF); continue; }
-        if (name->Equals("airOnlyPhasePlateau_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->airOnlyPhasePlateau_s = (uint16_t)(u & 0xFFFF); continue; }
-        if (name->Equals("maxRuntime_s", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->maxRuntime_s = (uint16_t)(u & 0xFFFF); continue; }
+        if (name->Equals("airOnlyPhaseWarmUp_min", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->airOnlyPhaseWarmUp_min = (uint16_t)(u & 0xFFFF); continue; }
+        if (name->Equals("airOnlyPhasePlateau_min", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->airOnlyPhasePlateau_min = (uint16_t)(u & 0xFFFF); continue; }
+        if (name->Equals("maxRuntime_min", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->maxRuntime_min = (uint16_t)(u & 0xFFFF); continue; }
         if (name->Equals("fishColdTarget_C", StringComparison::OrdinalIgnoreCase)) { float f; if (Single::TryParse(valueStr, System::Globalization::NumberStyles::Float, inv, f)) outPayload->fishColdTarget_C = f; continue; }
         if (name->Equals("debugDisableTargetTStop", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->debugDisableTargetTStop = (uint8_t)(u & 0xFF); continue; }
         if (name->Equals("debugDisableDeviceSwitchCheck", StringComparison::OrdinalIgnoreCase)) { unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->debugDisableDeviceSwitchCheck = (uint8_t)(u & 0xFF); continue; }
@@ -2149,6 +2154,10 @@ static bool BuildGlobalPayloadFromGrid2(DataGridView^ grid, DefrostLogGlobalPayl
         }
         if (name->Equals("humidityThresholdRH_percent", StringComparison::OrdinalIgnoreCase)) {
             float f; if (Single::TryParse(valueStr, System::Globalization::NumberStyles::Float, inv, f)) outPayload->humidityThresholdRH_percent = f;
+            continue;
+        }
+        if (name->Equals("purgeTimeout_s", StringComparison::OrdinalIgnoreCase)) {
+            unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->purgeTimeout_s = (uint16_t)(u & 0xFFFF);
             continue;
         }
         for (int i = 0; i <= 5; i++) {
@@ -2260,7 +2269,7 @@ void ProjectServerW::DataForm::FillDataGridView2FromGroup6Payload(const uint8_t*
     memcpy(&s, payload, expectedSize);
     System::Globalization::CultureInfo^ inv = System::Globalization::CultureInfo::InvariantCulture;
     const float* fFields[] = { &s.leftRightTrimGain, &s.leftRightTrimMaxEq, &s.piKp, &s.piKi, &s.wDeadband_kgkg, &s.injGain };
-    const uint16_t* u16Fields[] = { &s.outDamperTimer_s, &s.outFanDelay_s, &s.outHold_s, &s.tenMinHold_s, &s.injMinHold_s, &s.airOnlyPhaseWarmUp_s, &s.airOnlyPhasePlateau_s, &s.maxRuntime_s };
+    const uint16_t* u16Fields[] = { &s.outDamperTimer_s, &s.outFanDelay_s, &s.outHold_s, &s.tenMinHold_s, &s.injMinHold_s, &s.airOnlyPhaseWarmUp_min, &s.airOnlyPhasePlateau_min, &s.maxRuntime_min };
     for (int i = 0; i < 6; i++)
         dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[i].name), gcnew System::String(kGroup6Rows[i].desc), (*fFields[i]).ToString(inv));
     for (int i = 0; i < 8; i++)
@@ -2277,6 +2286,7 @@ void ProjectServerW::DataForm::FillDataGridView2FromGroup6Payload(const uint8_t*
     }
     dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[18].name), gcnew System::String(kGroup6Rows[18].desc), System::Convert::ToString((int)s.forbidHumidityReduceWhileRunning));
     dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[19].name), gcnew System::String(kGroup6Rows[19].desc), s.humidityThresholdRH_percent.ToString(inv));
+    dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[20].name), gcnew System::String(kGroup6Rows[20].desc), System::Convert::ToString((int)s.purgeTimeout_s));
     modeSwitchSyncing = false;
     if (modeSwitchHasSavedSetting) SyncModeRowFromSwitch();
     else SyncModeSwitchFromGrid();
@@ -2531,9 +2541,9 @@ static bool GetDefrostParamId(System::String^ paramName, uint8_t% outGroupId, ui
     if (p->Equals("tenMinHold_s", StringComparison::OrdinalIgnoreCase)) { outGroupId = 4; outParamId = 0; outValueType = DefrostParamType::U16; return true; }
     if (p->Equals("injMinHold_s", StringComparison::OrdinalIgnoreCase)) { outGroupId = 4; outParamId = 1; outValueType = DefrostParamType::U16; return true; }
     if (p->Equals("outHold_s", StringComparison::OrdinalIgnoreCase)) { outGroupId = 4; outParamId = 2; outValueType = DefrostParamType::U16; return true; }
-    if (p->Equals("airOnlyPhaseWarmUp_s", StringComparison::OrdinalIgnoreCase)) { outGroupId = 4; outParamId = 3; outValueType = DefrostParamType::U16; return true; }
-    if (p->Equals("airOnlyPhasePlateau_s", StringComparison::OrdinalIgnoreCase)) { outGroupId = 4; outParamId = 4; outValueType = DefrostParamType::U16; return true; }
-    if (p->Equals("maxRuntime_s", StringComparison::OrdinalIgnoreCase)) { outGroupId = 4; outParamId = 5; outValueType = DefrostParamType::U16; return true; }
+    if (p->Equals("airOnlyPhaseWarmUp_min", StringComparison::OrdinalIgnoreCase)) { outGroupId = 4; outParamId = 3; outValueType = DefrostParamType::U16; return true; }
+    if (p->Equals("airOnlyPhasePlateau_min", StringComparison::OrdinalIgnoreCase)) { outGroupId = 4; outParamId = 4; outValueType = DefrostParamType::U16; return true; }
+    if (p->Equals("maxRuntime_min", StringComparison::OrdinalIgnoreCase)) { outGroupId = 4; outParamId = 5; outValueType = DefrostParamType::U16; return true; }
     return false;
 }
 
