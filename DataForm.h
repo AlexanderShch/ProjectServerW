@@ -1112,7 +1112,7 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// buttonLoadFromFile
 				// 
-				this->buttonLoadFromFile->Location = System::Drawing::Point(856, 8);
+				this->buttonLoadFromFile->Location = System::Drawing::Point(957, 8);
 				this->buttonLoadFromFile->Name = L"buttonLoadFromFile";
 				this->buttonLoadFromFile->Size = System::Drawing::Size(117, 36);
 				this->buttonLoadFromFile->TabIndex = 7;
@@ -1123,7 +1123,7 @@ private: System::ComponentModel::IContainer^ components;
 				// label2
 				// 
 				this->label2->AutoSize = true;
-				this->label2->Location = System::Drawing::Point(701, 16);
+				this->label2->Location = System::Drawing::Point(802, 16);
 				this->label2->Name = L"label2";
 				this->label2->Size = System::Drawing::Size(149, 20);
 				this->label2->TabIndex = 6;
@@ -1132,7 +1132,7 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// buttonLoadDefrostDefaults
 				// 
-				this->buttonLoadDefrostDefaults->Location = System::Drawing::Point(1164, 60);
+				this->buttonLoadDefrostDefaults->Location = System::Drawing::Point(1265, 60);
 				this->buttonLoadDefrostDefaults->Name = L"buttonLoadDefrostDefaults";
 				this->buttonLoadDefrostDefaults->Size = System::Drawing::Size(117, 36);
 				this->buttonLoadDefrostDefaults->TabIndex = 8;
@@ -1142,7 +1142,7 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// buttonWriteParameters
 				// 
-				this->buttonWriteParameters->Location = System::Drawing::Point(1010, 60);
+				this->buttonWriteParameters->Location = System::Drawing::Point(1111, 60);
 				this->buttonWriteParameters->Name = L"buttonWriteParameters";
 				this->buttonWriteParameters->Size = System::Drawing::Size(117, 36);
 				this->buttonWriteParameters->TabIndex = 5;
@@ -1152,7 +1152,7 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// buttonReadParameters
 				// 
-				this->buttonReadParameters->Location = System::Drawing::Point(856, 60);
+				this->buttonReadParameters->Location = System::Drawing::Point(957, 60);
 				this->buttonReadParameters->Name = L"buttonReadParameters";
 				this->buttonReadParameters->Size = System::Drawing::Size(117, 36);
 				this->buttonReadParameters->TabIndex = 4;
@@ -1163,15 +1163,16 @@ private: System::ComponentModel::IContainer^ components;
 				// label1
 				// 
 				this->label1->AutoSize = true;
-				this->label1->Location = System::Drawing::Point(748, 68);
+				this->label1->Location = System::Drawing::Point(849, 68);
 				this->label1->Name = L"label1";
 				this->label1->Size = System::Drawing::Size(102, 20);
 				this->label1->TabIndex = 3;
 				this->label1->Text = L"Дефростер:";
 				// 
 				// dataGridView2
-				// 
-				this->dataGridView2->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::Fill;
+				// Важно: Fill на уровне грида растягивает все колонки и игнорирует Width —
+				// фиксируем ширину через AutoSizeColumnsMode::None + AutoSizeMode у колонок.
+				this->dataGridView2->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::None;
 				this->dataGridView2->ColumnHeadersHeightSizeMode = System::Windows::Forms::DataGridViewColumnHeadersHeightSizeMode::AutoSize;
 				this->dataGridView2->Columns->AddRange(gcnew cli::array< System::Windows::Forms::DataGridViewColumn^  >(3) {
 					this->Parameter2,
@@ -1181,29 +1182,44 @@ private: System::ComponentModel::IContainer^ components;
 				this->dataGridView2->Name = L"dataGridView2";
 				this->dataGridView2->RowHeadersWidth = 24;
 				this->dataGridView2->RowTemplate->Height = 16;
-				this->dataGridView2->Size = System::Drawing::Size(564, 465);
+				this->dataGridView2->Size = System::Drawing::Size(773, 465);
 				this->dataGridView2->TabIndex = 1;
 				this->dataGridView2->CellValueChanged += gcnew System::Windows::Forms::DataGridViewCellEventHandler(this, &DataForm::dataGridView2_CellValueChanged);
 				this->dataGridView2->UserAddedRow += gcnew System::Windows::Forms::DataGridViewRowEventHandler(this, &DataForm::dataGridView2_RowChanged);
 				this->dataGridView2->UserDeletedRow += gcnew System::Windows::Forms::DataGridViewRowEventHandler(this, &DataForm::dataGridView2_RowChanged);
 				// 
-				// Parameter2
+				// Parameter2 — фиксированная ширина 8 символов
 				// 
 				this->Parameter2->HeaderText = L"Параметр";
-				this->Parameter2->MinimumWidth = 60;
 				this->Parameter2->Name = L"Parameter2";
+				this->Parameter2->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::None;
+				this->Parameter2->Resizable = System::Windows::Forms::DataGridViewTriState::False;
+				{
+					System::Drawing::Size w8 = System::Windows::Forms::TextRenderer::MeasureText(
+						L"00000000", this->dataGridView2->Font);
+					this->Parameter2->Width = w8.Width;
+					this->Parameter2->MinimumWidth = w8.Width;
+				}
 				// 
-				// Description
+				// Description — занимает оставшуюся ширину
 				// 
 				this->Description->HeaderText = L"Описание параметра";
 				this->Description->MinimumWidth = 80;
 				this->Description->Name = L"Description";
+				this->Description->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::Fill;
 				// 
-				// Value
+				// Value — фиксированная ширина 7 символов
 				// 
 				this->Value->HeaderText = L"Величина";
-				this->Value->MinimumWidth = 50;
 				this->Value->Name = L"Value";
+				this->Value->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::None;
+				this->Value->Resizable = System::Windows::Forms::DataGridViewTriState::False;
+				{
+					System::Drawing::Size w7 = System::Windows::Forms::TextRenderer::MeasureText(
+						L"0000000", this->dataGridView2->Font);
+					this->Value->Width = w7.Width;
+					this->Value->MinimumWidth = w7.Width;
+				}
 				// 
 				// dataGridView1
 				// 
@@ -1213,11 +1229,11 @@ private: System::ComponentModel::IContainer^ components;
 					this->Parameter,
 						this->WarmUP, this->Plateau, this->Finish
 				});
-				this->dataGridView1->Location = System::Drawing::Point(593, 115);
+				this->dataGridView1->Location = System::Drawing::Point(806, 115);
 				this->dataGridView1->Name = L"dataGridView1";
 				this->dataGridView1->RowHeadersWidth = 24;
 				this->dataGridView1->RowTemplate->Height = 16;
-				this->dataGridView1->Size = System::Drawing::Size(691, 358);
+				this->dataGridView1->Size = System::Drawing::Size(579, 358);
 				this->dataGridView1->TabIndex = 0;
 				this->dataGridView1->CellValueChanged += gcnew System::Windows::Forms::DataGridViewCellEventHandler(this, &DataForm::dataGridView1_CellValueChanged);
 				this->dataGridView1->UserAddedRow += gcnew System::Windows::Forms::DataGridViewRowEventHandler(this, &DataForm::dataGridView1_RowChanged);
