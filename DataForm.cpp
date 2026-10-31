@@ -80,11 +80,17 @@ typedef struct {
     uint8_t debugDisableDeviceSwitchCheck; /* 1 = отладка: отключить проверку соответствия входов/выходов, 0 = проверка включена */
     uint8_t useNewWrkAlrAlgorithm; /* 1 = автоматическое управление, 0 = только старые импульсы по СТАРТ/СТОП */
     uint8_t sensorUseInDefrost[DEFROST_MAX_SENSOR_COUNT_SERVER];
+    uint8_t forbidHumidityReduceWhileRunning; /* 1 = запрет снижения влажности вытяжкой во время работы */
+    float humidityThresholdRH_percent; /* пороговая RH %: работа и продувка */
 } DefrostLogGlobalPayload_t;
 static_assert(sizeof(DefrostLogGlobalPayload_t) == DEFROST_GROUP6_PAYLOAD_SIZE,
     "DefrostLogGlobalPayload_t size differs from protocol constant");
 static_assert(offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm) == 46u,
     "Group 6 mode flag offset differs from protocol");
+static_assert(offsetof(DefrostLogGlobalPayload_t, forbidHumidityReduceWhileRunning) == 53u,
+    "Group 6 forbidHumidityReduceWhileRunning offset differs from protocol");
+static_assert(offsetof(DefrostLogGlobalPayload_t, humidityThresholdRH_percent) == 54u,
+    "Group 6 humidityThresholdRH_percent offset differs from protocol");
 static_assert(sizeof(DefrostLogGlobalPayload_t) + 2 <= (MAX_COMMAND_SIZE - 6),
     "GET_DEFROST_GROUP(group6): response payload+header exceeds CommandResponse::data capacity");
 #pragma pack(pop)
@@ -1988,30 +1994,32 @@ void ProjectServerW::DataForm::LoadDataGridView1Defaults() {
 void ProjectServerW::DataForm::LoadDataGridView2Defaults() {
     if (dataGridView2 == nullptr || dataGridView2->IsDisposed) return;
     dataGridView2->Rows->Clear();
-    dataGridView2->Rows->Add("Sensor0 use in defrost", "Use sensor 0 in algorithm", "1");
-    dataGridView2->Rows->Add("Sensor1 use in defrost", "Use sensor 1 in algorithm", "1");
-    dataGridView2->Rows->Add("Sensor2 use in defrost", "Use sensor 2 in algorithm", "1");
-    dataGridView2->Rows->Add("Sensor3 use in defrost", "Use sensor 3 in algorithm", "1");
-    dataGridView2->Rows->Add("Sensor4 use in defrost", "Use sensor 4 in algorithm", "1");
-    dataGridView2->Rows->Add("Sensor5 use in defrost", "Use sensor 5 in algorithm", "1");
-    dataGridView2->Rows->Add("leftRightTrimGain", "Heater trim per degC difference", "0.08");
-    dataGridView2->Rows->Add("leftRightTrimMaxEq", "Max trim heater equivalent", "0.6");
-    dataGridView2->Rows->Add("piKp", "PI proportional gain (supply temp)", "0.18");
-    dataGridView2->Rows->Add("piKi", "PI integral gain (supply temp)", "0.02");
-    dataGridView2->Rows->Add("wDeadband_kgkg", "Humidity deadband", "0.0008");
-    dataGridView2->Rows->Add("injGain", "Injection gain (duty per kg/kg humidity error)", "900");
-    dataGridView2->Rows->Add("outDamperTimer_s", "Damper open time", "10");
-    dataGridView2->Rows->Add("outFanDelay_s", "Fan delay after damper open", "5");
-    dataGridView2->Rows->Add("tenMinHold_s", "Heater min hold between switches", "10");
-    dataGridView2->Rows->Add("injMinHold_s", "Injector min hold between switches", "5");
-    dataGridView2->Rows->Add("outHold_s", "Damper and exhaust fan min hold", "15");
-    dataGridView2->Rows->Add("airOnlyPhaseWarmUp_s", "Air-only: WarmUp phase duration (s)", "600");
-    dataGridView2->Rows->Add("airOnlyPhasePlateau_s", "Air-only: Plateau end time from start (s)", "1800");
-    dataGridView2->Rows->Add("maxRuntime_s", "Air-only: Max process duration (s)", "7200");
-    dataGridView2->Rows->Add("fishColdTarget_C", "Target min fish temp °C (auto-stop when reached)", "6");
-    dataGridView2->Rows->Add("debugDisableTargetTStop", "Debug: disable auto-stop by fishColdTarget_C (0/1)", "0");
-    dataGridView2->Rows->Add("debugDisableDeviceSwitchCheck", "Debug: disable DO->DI switch check (0/1)", "0");
+    dataGridView2->Rows->Add("Sensor0 use in defrost", L"Использовать датчик 0 в алгоритме", "1");
+    dataGridView2->Rows->Add("Sensor1 use in defrost", L"Использовать датчик 1 в алгоритме", "1");
+    dataGridView2->Rows->Add("Sensor2 use in defrost", L"Использовать датчик 2 в алгоритме", "1");
+    dataGridView2->Rows->Add("Sensor3 use in defrost", L"Использовать датчик 3 в алгоритме", "1");
+    dataGridView2->Rows->Add("Sensor4 use in defrost", L"Использовать датчик 4 в алгоритме", "1");
+    dataGridView2->Rows->Add("Sensor5 use in defrost", L"Использовать датчик 5 в алгоритме", "1");
+    dataGridView2->Rows->Add("leftRightTrimGain", L"Подстройка нагрева на 1 °C разницы", "0.08");
+    dataGridView2->Rows->Add("leftRightTrimMaxEq", L"Макс. эквивалент подстройки нагрева", "0.6");
+    dataGridView2->Rows->Add("piKp", L"ПИ: пропорциональный коэфф. (темп. подачи)", "0.18");
+    dataGridView2->Rows->Add("piKi", L"ПИ: интегральный коэфф. (темп. подачи)", "0.02");
+    dataGridView2->Rows->Add("wDeadband_kgkg", L"Зона нечувствительности по влажности", "0.0008");
+    dataGridView2->Rows->Add("injGain", L"Коэфф. впрыска (скважность = Квпр. * ошибка Н)", "900");
+    dataGridView2->Rows->Add("outDamperTimer_s", L"Время движения заслонки", "10");
+    dataGridView2->Rows->Add("outFanDelay_s", L"Задержка на срабатывание концевика заслонки", "5");
+    dataGridView2->Rows->Add("tenMinHold_s", L"Мин. время удержания ТЭНа между переключениями", "10");
+    dataGridView2->Rows->Add("injMinHold_s", L"Мин. время удержания форсунки между переключениями", "5");
+    dataGridView2->Rows->Add("outHold_s", L"Мин.время удержания вентилятора между переключениями", "15");
+    dataGridView2->Rows->Add("airOnlyPhaseWarmUp_s", L"Только воздух: длительность фазы прогрева (с)", "600");
+    dataGridView2->Rows->Add("airOnlyPhasePlateau_s", L"Только воздух: конец плато от старта (с)", "1800");
+    dataGridView2->Rows->Add("maxRuntime_s", L"Только воздух: макс. длительность процесса (с)", "7200");
+    dataGridView2->Rows->Add("fishColdTarget_C", L"Целевая мин. темп. рыбы °C (автостоп при достижении)", "6");
+    dataGridView2->Rows->Add("debugDisableTargetTStop", L"Отладка: отключить автостоп по fishColdTarget_C (0/1)", "0");
+    dataGridView2->Rows->Add("debugDisableDeviceSwitchCheck", L"Отладка: отключить проверку переключения DO→DI (0/1)", "0");
     dataGridView2->Rows->Add("useNewWrkAlrAlgorithm", "1=STM32, 0=Siemens", "1");
+    dataGridView2->Rows->Add("forbidHumidityReduceWhileRunning", L"Запретить снижение влажности во время работы (1=запрещено)", "1");
+    dataGridView2->Rows->Add("humidityThresholdRH_percent", L"Пороговая влажность, %", "50");
 }
 
 // Имена параметров группы 5 (LOG_PHASE): порядок полей в DefrostLogPhasePayload_t
@@ -2073,26 +2081,29 @@ void ProjectServerW::DataForm::FillDataGridView1FromGroup5Payload(const uint8_t*
 }
 
 // Имена и описания для группы 6 (LOG_GLOBAL): порядок полей в DefrostLogGlobalPayload_t
-struct Group6Row { const char* name; const char* desc; };
+// desc — wide-строки: при /utf-8 узкий const char* в System::String даёт кракозябры на CP1251.
+struct Group6Row { const char* name; const wchar_t* desc; };
 static const Group6Row kGroup6Rows[] = {
-    {"leftRightTrimGain", "Heater trim per degC difference"},
-    {"leftRightTrimMaxEq", "Max trim heater equivalent"},
-    {"piKp", "PI proportional gain (supply temp)"},
-    {"piKi", "PI integral gain (supply temp)"},
-    {"wDeadband_kgkg", "Humidity deadband"},
-    {"injGain", "Injection gain (duty per kg/kg humidity error)"},
-    {"outDamperTimer_s", "Damper open time"},
-    {"outFanDelay_s", "Fan delay after damper open"},
-    {"outHold_s", "Damper and exhaust fan min hold"},
-    {"tenMinHold_s", "Heater min hold between switches"},
-    {"injMinHold_s", "Injector min hold between switches"},
-    {"airOnlyPhaseWarmUp_s", "Air-only: WarmUp phase duration (s)"},
-    {"airOnlyPhasePlateau_s", "Air-only: Plateau end time from start (s)"},
-    {"maxRuntime_s", "Air-only: Max process duration (s)"},
-    {"fishColdTarget_C", "Target min fish temp °C (auto-stop when reached)"},
-    {"debugDisableTargetTStop", "Debug: disable auto-stop by fishColdTarget_C (0/1)"},
-    {"debugDisableDeviceSwitchCheck", "Debug: disable DO->DI switch check (0/1)"},
-    {"useNewWrkAlrAlgorithm", "1=STM32, 0=Siemens"}
+    {"leftRightTrimGain", L"Подстройка нагрева на 1 °C разницы"},
+    {"leftRightTrimMaxEq", L"Макс. эквивалент подстройки нагрева"},
+    {"piKp", L"ПИ: пропорциональный коэфф. (темп. подачи)"},
+    {"piKi", L"ПИ: интегральный коэфф. (темп. подачи)"},
+    {"wDeadband_kgkg", L"Зона нечувствительности по влажности"},
+    {"injGain", L"Коэфф. впрыска (скважность = Квпр. * ошибка Н)"},
+    {"outDamperTimer_s", L"Время движения заслонки"},
+    {"outFanDelay_s", L"Задержка на срабатывание концевика заслонки"},
+    {"outHold_s", L"Мин.время удержания вентилятора между переключениями"},
+    {"tenMinHold_s", L"Мин. время удержания ТЭНа между переключениями"},
+    {"injMinHold_s", L"Мин. время удержания форсунки между переключениями"},
+    {"airOnlyPhaseWarmUp_s", L"Только воздух: длительность фазы прогрева (с)"},
+    {"airOnlyPhasePlateau_s", L"Только воздух: конец плато от старта (с)"},
+    {"maxRuntime_s", L"Только воздух: макс. длительность процесса (с)"},
+    {"fishColdTarget_C", L"Целевая мин. темп. рыбы °C (автостоп при достижении)"},
+    {"debugDisableTargetTStop", L"Отладка: отключить автостоп по fishColdTarget_C (0/1)"},
+    {"debugDisableDeviceSwitchCheck", L"Отладка: отключить проверку переключения DO→DI (0/1)"},
+    {"useNewWrkAlrAlgorithm", L"1=STM32, 0=Siemens"},
+    {"forbidHumidityReduceWhileRunning", L"Запретить снижение влажности во время работы (1=запрещено)"},
+    {"humidityThresholdRH_percent", L"Пороговая влажность, %"}
 };
 
 /** Заполнить payload группы 6 из dataGridView2 по имени параметра (Parameter2). */
@@ -2130,6 +2141,14 @@ static bool BuildGlobalPayloadFromGrid2(DataGridView^ grid, DefrostLogGlobalPayl
             if (modeRowFound || (valueStr != "0" && valueStr != "1")) return false;
             modeRowFound = true;
             outPayload->useNewWrkAlrAlgorithm = (valueStr == "1") ? 1u : 0u;
+            continue;
+        }
+        if (name->Equals("forbidHumidityReduceWhileRunning", StringComparison::OrdinalIgnoreCase)) {
+            unsigned int u; if (UInt32::TryParse(valueStr, u)) outPayload->forbidHumidityReduceWhileRunning = (uint8_t)((u != 0u) ? 1u : 0u);
+            continue;
+        }
+        if (name->Equals("humidityThresholdRH_percent", StringComparison::OrdinalIgnoreCase)) {
+            float f; if (Single::TryParse(valueStr, System::Globalization::NumberStyles::Float, inv, f)) outPayload->humidityThresholdRH_percent = f;
             continue;
         }
         for (int i = 0; i <= 5; i++) {
@@ -2253,9 +2272,11 @@ void ProjectServerW::DataForm::FillDataGridView2FromGroup6Payload(const uint8_t*
     for (int i = 0; i <= 5; i++) {
         dataGridView2->Rows->Add(
             System::String::Format("Sensor{0} use in defrost", i),
-            System::String::Format("Use sensor {0} in algorithm", i),
+            System::String::Format(L"Использовать датчик {0} в алгоритме", i),
             System::Convert::ToString((int)s.sensorUseInDefrost[i]));
     }
+    dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[18].name), gcnew System::String(kGroup6Rows[18].desc), System::Convert::ToString((int)s.forbidHumidityReduceWhileRunning));
+    dataGridView2->Rows->Add(gcnew System::String(kGroup6Rows[19].name), gcnew System::String(kGroup6Rows[19].desc), s.humidityThresholdRH_percent.ToString(inv));
     modeSwitchSyncing = false;
     if (modeSwitchHasSavedSetting) SyncModeRowFromSwitch();
     else SyncModeSwitchFromGrid();

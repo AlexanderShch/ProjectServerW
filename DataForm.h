@@ -1231,19 +1231,19 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// WarmUP
 				// 
-				this->WarmUP->HeaderText = L"WarmUp";
+				this->WarmUP->HeaderText = L"Прогрев";
 				this->WarmUP->MinimumWidth = 50;
 				this->WarmUP->Name = L"WarmUP";
 				// 
 				// Plateau
 				// 
-				this->Plateau->HeaderText = L"Plateau";
+				this->Plateau->HeaderText = L"Плато";
 				this->Plateau->MinimumWidth = 50;
 				this->Plateau->Name = L"Plateau";
 				// 
 				// Finish
 				// 
-				this->Finish->HeaderText = L"Finish";
+				this->Finish->HeaderText = L"Финиш";
 				this->Finish->MinimumWidth = 50;
 				this->Finish->Name = L"Finish";
 				// 

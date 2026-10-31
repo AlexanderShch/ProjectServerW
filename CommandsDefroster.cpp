@@ -456,12 +456,12 @@ void ProjectServerW::DataForm::PopulateEquipmentAlarmGrid(uint16_t deviceFlags, 
     }
 
     // Специальные биты аварии ворот в Device_AlarmFlags.
-    // bit9  - программная авария ворот (нет сигнала концевика в течение 10 секунд движения),
+    // bit9  - программная авария ворот (нет сигнала концевика в течение 15 секунд движения),
     // bit10 - аппаратная авария ворот (активен вход Gate_Alarm модуля IO).
     if ((deviceFlags & (1u << 9)) != 0) {
         dataGridEquipmentAlarm->Rows->Add(
             "Ворота",
-            "Программная авария: нет сигнала концевика за 10 секунд движения.");
+            "Программная авария: нет сигнала концевика за 15 секунд движения.");
     }
     if ((deviceFlags & (1u << 10)) != 0) {
         dataGridEquipmentAlarm->Rows->Add(
