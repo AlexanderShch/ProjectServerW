@@ -59,6 +59,7 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::TabPage^ tabPage3;
 	private: System::Windows::Forms::DataGridView^ dataGridView1;
 	private: System::Windows::Forms::DataGridViewTextBoxColumn^ Parameter;
+	private: System::Windows::Forms::DataGridViewTextBoxColumn^ Description1;
 	private: System::Windows::Forms::DataGridViewTextBoxColumn^ WarmUP;
 	private: System::Windows::Forms::DataGridViewTextBoxColumn^ Plateau;
 	private: System::Windows::Forms::DataGridViewTextBoxColumn^ Finish;
@@ -557,6 +558,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->Value = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
 				this->dataGridView1 = (gcnew System::Windows::Forms::DataGridView());
 				this->Parameter = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
+				this->Description1 = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
 				this->WarmUP = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
 				this->Plateau = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
 				this->Finish = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
@@ -1223,10 +1225,11 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// dataGridView1
 				// 
-				this->dataGridView1->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::Fill;
+				// Как у dataGridView2: Fill на уровне грида игнорирует Width — фиксируем ширину по колонкам.
+				this->dataGridView1->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::None;
 				this->dataGridView1->ColumnHeadersHeightSizeMode = System::Windows::Forms::DataGridViewColumnHeadersHeightSizeMode::AutoSize;
-				this->dataGridView1->Columns->AddRange(gcnew cli::array< System::Windows::Forms::DataGridViewColumn^  >(4) {
-					this->Parameter,
+				this->dataGridView1->Columns->AddRange(gcnew cli::array< System::Windows::Forms::DataGridViewColumn^  >(5) {
+					this->Parameter, this->Description1,
 						this->WarmUP, this->Plateau, this->Finish
 				});
 				this->dataGridView1->Location = System::Drawing::Point(806, 115);
@@ -1239,29 +1242,46 @@ private: System::ComponentModel::IContainer^ components;
 				this->dataGridView1->UserAddedRow += gcnew System::Windows::Forms::DataGridViewRowEventHandler(this, &DataForm::dataGridView1_RowChanged);
 				this->dataGridView1->UserDeletedRow += gcnew System::Windows::Forms::DataGridViewRowEventHandler(this, &DataForm::dataGridView1_RowChanged);
 				// 
-				// Parameter
+				// Parameter — фиксированная ширина 6 символов
 				// 
 				this->Parameter->HeaderText = L"Параметр";
-				this->Parameter->MinimumWidth = 80;
 				this->Parameter->Name = L"Parameter";
+				this->Parameter->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::None;
+				this->Parameter->Resizable = System::Windows::Forms::DataGridViewTriState::False;
+				{
+					System::Drawing::Size w6 = System::Windows::Forms::TextRenderer::MeasureText(
+						L"000000", this->dataGridView1->Font);
+					this->Parameter->Width = w6.Width;
+					this->Parameter->MinimumWidth = w6.Width;
+				}
 				// 
-				// WarmUP
+				// Description1 — занимает оставшуюся ширину
+				// 
+				this->Description1->HeaderText = L"Описание параметра";
+				this->Description1->MinimumWidth = 80;
+				this->Description1->Name = L"Description";
+				this->Description1->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::Fill;
+				// 
+				// WarmUP, Plateau, Finish — фиксированная ширина 4 символа
 				// 
 				this->WarmUP->HeaderText = L"Прогрев";
-				this->WarmUP->MinimumWidth = 50;
 				this->WarmUP->Name = L"WarmUP";
-				// 
-				// Plateau
-				// 
 				this->Plateau->HeaderText = L"Плато";
-				this->Plateau->MinimumWidth = 50;
 				this->Plateau->Name = L"Plateau";
-				// 
-				// Finish
-				// 
 				this->Finish->HeaderText = L"Финиш";
-				this->Finish->MinimumWidth = 50;
 				this->Finish->Name = L"Finish";
+				{
+					System::Drawing::Size w4 = System::Windows::Forms::TextRenderer::MeasureText(
+						L"0000", this->dataGridView1->Font);
+					cli::array<System::Windows::Forms::DataGridViewTextBoxColumn^>^ phaseCols =
+						gcnew cli::array<System::Windows::Forms::DataGridViewTextBoxColumn^>(3) { this->WarmUP, this->Plateau, this->Finish };
+					for each (System::Windows::Forms::DataGridViewTextBoxColumn ^ col in phaseCols) {
+						col->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::None;
+						col->Resizable = System::Windows::Forms::DataGridViewTriState::False;
+						col->Width = w4.Width;
+						col->MinimumWidth = w4.Width;
+					}
+				}
 				// 
 				// tabPage4
 				// 

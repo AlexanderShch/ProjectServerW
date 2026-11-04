@@ -1981,17 +1981,59 @@ void ProjectServerW::DataForm::UpdateDirectoryTextBox(String^ path) {
     }
 }
 
+// Описания строк dataGridView1 (параметры по фазам). wide-строки: см. комментарий к kGroup6Rows.
+struct PhaseRowDesc { const char* name; const wchar_t* desc; };
+static const PhaseRowDesc kPhaseRowDescs[] = {
+    {"fishHotMax_C", L"Макс. темп. самой тёплой точки рыбы, °C (нагрев снижается за 0.6 °C до предела и отключается на нём)"},
+    {"fishHotRateMax_Cpm", L"Макс. скорость нагрева самой тёплой точки рыбы, °C/мин (при превышении 3 раза подряд мощность снижается)"},
+    {"fishDeltaMax_C", L"Макс. разница темп. тёплой и холодной точек рыбы, °C (при превышении нагрев отключается)"},
+    {"supplySet_C", L"Уставка темп. воздуха подачи, °C (поддерживается ПИ-регулятором)"},
+    {"supplyMax_C", L"Макс. темп. воздуха подачи, °C (при превышении на любом датчике нагрев отключается)"},
+    {"returnTargetRH_percent", L"Целевая влажность воздуха, % RH (по ней включается форсунка)"},
+};
+
+static String^ PhaseRowDescription(String^ name) {
+    if (name == nullptr) return "";
+    String^ p = name->Trim();
+    for (int i = 0; i < (int)(sizeof(kPhaseRowDescs) / sizeof(kPhaseRowDescs[0])); i++) {
+        if (p->Equals(gcnew String(kPhaseRowDescs[i].name), StringComparison::OrdinalIgnoreCase))
+            return gcnew String(kPhaseRowDescs[i].desc);
+    }
+    return "";
+}
+
+/** Строка dataGridView1: Parameter, Description (по имени), WarmUP, Plateau, Finish. */
+static void AddPhaseGridRow(DataGridView^ grid, String^ name, String^ warm, String^ plat, String^ fin) {
+    cli::array<Object^>^ row = gcnew cli::array<Object^>(5);
+    row[0] = name;
+    row[1] = PhaseRowDescription(name);
+    row[2] = warm;
+    row[3] = plat;
+    row[4] = fin;
+    grid->Rows->Add(row);
+}
+
+/** Описания по имени параметра — после загрузки старых файлов без столбца описания и после переименования строк. */
+static void RefreshPhaseGridDescriptions(DataGridView^ grid) {
+    if (grid == nullptr || grid->IsDisposed) return;
+    for (int r = 0; r < grid->Rows->Count; r++) {
+        DataGridViewRow^ row = grid->Rows[r];
+        if (row->IsNewRow) continue;
+        Object^ nameObj = row->Cells["Parameter"]->Value;
+        row->Cells["Description"]->Value = PhaseRowDescription(nameObj != nullptr ? nameObj->ToString() : nullptr);
+    }
+}
+
 // Default table: Parameter -> (WarmUp, Plateau, Finish) from attached spec. Each Default goes into column matching Phase.
 void ProjectServerW::DataForm::LoadDataGridView1Defaults() {
     if (dataGridView1 == nullptr || dataGridView1->IsDisposed) return;
     dataGridView1->Rows->Clear();
-    cli::array<Object^>^ row = gcnew cli::array<Object^>(4);
-    row[0] = "fishHotMax_C";         row[1] = "20";   row[2] = "20";   row[3] = "20";   dataGridView1->Rows->Add(row);
-    row[0] = "supplySet_C";          row[1] = "30";   row[2] = "26";   row[3] = "22";   dataGridView1->Rows->Add(row);
-    row[0] = "supplyMax_C";          row[1] = "35";   row[2] = "30";   row[3] = "26";   dataGridView1->Rows->Add(row);
-    row[0] = "fishDeltaMax_C";       row[1] = "6";    row[2] = "5";    row[3] = "4";    dataGridView1->Rows->Add(row);
-    row[0] = "fishHotRateMax_Cpm";  row[1] = "1.2";  row[2] = "0.9";  row[3] = "0.6";  dataGridView1->Rows->Add(row);
-    row[0] = "returnTargetRH_percent"; row[1] = "85"; row[2] = "92"; row[3] = "85"; dataGridView1->Rows->Add(row);
+    AddPhaseGridRow(dataGridView1, "fishHotMax_C", "20", "20", "20");
+    AddPhaseGridRow(dataGridView1, "supplySet_C", "30", "26", "22");
+    AddPhaseGridRow(dataGridView1, "supplyMax_C", "35", "30", "26");
+    AddPhaseGridRow(dataGridView1, "fishDeltaMax_C", "6", "5", "4");
+    AddPhaseGridRow(dataGridView1, "fishHotRateMax_Cpm", "1.2", "0.9", "0.6");
+    AddPhaseGridRow(dataGridView1, "returnTargetRH_percent", "85", "92", "85");
 }
 
 // Default table: Parameter2, Description, Value from attached config parameters.
@@ -2134,12 +2176,10 @@ void ProjectServerW::DataForm::FillDataGridView1FromGroup5Payload(const uint8_t*
     for (int row = 0; row < 6; row++) {
         // Лимит скорости приходит в °C/с, в таблице показываем °C/мин.
         const float scale = (row == 1) ? kSecondsPerMinute : 1.0f;
-        cli::array<Object^>^ rowData = gcnew cli::array<Object^>(4);
-        rowData[0] = gcnew System::String(kGroup5ParamNames[row]);
-        rowData[1] = (phaseRows[row][0] * scale).ToString(inv);
-        rowData[2] = (phaseRows[row][1] * scale).ToString(inv);
-        rowData[3] = (phaseRows[row][2] * scale).ToString(inv);
-        dataGridView1->Rows->Add(rowData);
+        AddPhaseGridRow(dataGridView1, gcnew System::String(kGroup5ParamNames[row]),
+            (phaseRows[row][0] * scale).ToString(inv),
+            (phaseRows[row][1] * scale).ToString(inv),
+            (phaseRows[row][2] * scale).ToString(inv));
     }
     dataGridView1Dirty = false;
 }
@@ -2448,8 +2488,12 @@ void ProjectServerW::DataForm::LoadDataGridView1FromFile() {
                 if (line->StartsWith("[")) break;
                 if (String::IsNullOrEmpty(line)) continue;
                 cli::array<String^>^ parts = line->Split('\t');
-                if (parts->Length >= 4) {
-                    dataGridView1->Rows->Add(parts[0]->Trim(), parts[1]->Trim(), parts[2]->Trim(), parts[3]->Trim());
+                // Старый формат: имя и 3 фазы; описание подставляется по имени.
+                if (parts->Length >= 5) {
+                    AddPhaseGridRow(dataGridView1, parts[0]->Trim(), parts[2]->Trim(), parts[3]->Trim(), parts[4]->Trim());
+                }
+                else if (parts->Length >= 4) {
+                    AddPhaseGridRow(dataGridView1, parts[0]->Trim(), parts[1]->Trim(), parts[2]->Trim(), parts[3]->Trim());
                 }
             }
         }
@@ -2460,7 +2504,10 @@ void ProjectServerW::DataForm::LoadDataGridView1FromFile() {
             if (!dataGridView1->Rows[r]->IsNewRow) { hasNonNewRows = true; break; }
         }
         if (!hasNonNewRows) LoadDataGridView1Defaults();
-        else ConvertLegacyRateRowsToPerMinute(dataGridView1);
+        else {
+            ConvertLegacyRateRowsToPerMinute(dataGridView1);
+            RefreshPhaseGridDescriptions(dataGridView1);
+        }
     }
     catch (Exception^) {
         LoadDataGridView1Defaults();
@@ -2477,6 +2524,7 @@ void ProjectServerW::DataForm::SaveDataGridView1ToFile() {
 System::Data::DataTable^ ProjectServerW::DataForm::BuildPhaseParamsDataTableForExcel() {
     System::Data::DataTable^ t = gcnew System::Data::DataTable("PhaseParams");
     t->Columns->Add("Parameter", System::String::typeid);
+    t->Columns->Add("Description", System::String::typeid);
     t->Columns->Add("WarmUP", System::String::typeid);
     t->Columns->Add("Plateau", System::String::typeid);
     t->Columns->Add("Finish", System::String::typeid);
@@ -2486,9 +2534,10 @@ System::Data::DataTable^ ProjectServerW::DataForm::BuildPhaseParamsDataTableForE
             if (row->IsNewRow) continue;
             System::Data::DataRow^ dr = t->NewRow();
             dr[0] = row->Cells["Parameter"]->Value;
-            dr[1] = row->Cells["WarmUP"]->Value;
-            dr[2] = row->Cells["Plateau"]->Value;
-            dr[3] = row->Cells["Finish"]->Value;
+            dr[1] = row->Cells["Description"]->Value;
+            dr[2] = row->Cells["WarmUP"]->Value;
+            dr[3] = row->Cells["Plateau"]->Value;
+            dr[4] = row->Cells["Finish"]->Value;
             t->Rows->Add(dr);
         }
     }
@@ -2704,19 +2753,29 @@ void ProjectServerW::DataForm::LoadParamsFromExcelFile(System::String^ filePath)
                     dataGridView1->Rows->Clear();
                     Microsoft::Office::Interop::Excel::Range^ used = sh->UsedRange;
                     int lastRow = used->Rows->Count;
+                    // Старые файлы: Parameter, WarmUP, Plateau, Finish; новые — со столбцом Description вторым.
+                    bool hasDescCol = false;
+                    try {
+                        System::Object^ h2 = safe_cast<Microsoft::Office::Interop::Excel::Range^>(sh->Cells[1, 2])->Value2;
+                        hasDescCol = (h2 != nullptr) && h2->ToString()->Trim()->Equals("Description", System::StringComparison::OrdinalIgnoreCase);
+                    }
+                    catch (...) { hasDescCol = false; }
+                    const int colCount = hasDescCol ? 5 : 4;
                     for (int r = 2; r <= lastRow; r++) {
-                        cli::array<Object^>^ rowData = gcnew cli::array<Object^>(4);
-                        for (int c = 1; c <= 4; c++) {
+                        cli::array<String^>^ cells = gcnew cli::array<String^>(colCount);
+                        for (int c = 1; c <= colCount; c++) {
                             try {
                                 Microsoft::Office::Interop::Excel::Range^ cell = safe_cast<Microsoft::Office::Interop::Excel::Range^>(sh->Cells[r, c]);
                                 System::Object^ val = cell->Value2;
-                                rowData[c - 1] = (val != nullptr) ? val->ToString() : "";
+                                cells[c - 1] = (val != nullptr) ? val->ToString() : "";
                             }
-                            catch (...) { rowData[c - 1] = ""; }
+                            catch (...) { cells[c - 1] = ""; }
                         }
-                        dataGridView1->Rows->Add(rowData);
+                        const int v0 = hasDescCol ? 2 : 1;
+                        AddPhaseGridRow(dataGridView1, cells[0], cells[v0], cells[v0 + 1], cells[v0 + 2]);
                     }
                     ConvertLegacyRateRowsToPerMinute(dataGridView1);
+                    RefreshPhaseGridDescriptions(dataGridView1);
                     dataGridView1Dirty = false;
                 }
                 else if (name != nullptr && name->Equals("Параметры общие", System::StringComparison::OrdinalIgnoreCase) &&
