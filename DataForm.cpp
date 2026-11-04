@@ -1990,7 +1990,7 @@ void ProjectServerW::DataForm::LoadDataGridView1Defaults() {
     row[0] = "supplySet_C";          row[1] = "30";   row[2] = "26";   row[3] = "22";   dataGridView1->Rows->Add(row);
     row[0] = "supplyMax_C";          row[1] = "35";   row[2] = "30";   row[3] = "26";   dataGridView1->Rows->Add(row);
     row[0] = "fishDeltaMax_C";       row[1] = "6";    row[2] = "5";    row[3] = "4";    dataGridView1->Rows->Add(row);
-    row[0] = "fishHotRateMax_Cps";  row[1] = "0.02"; row[2] = "0.015"; row[3] = "0.01"; dataGridView1->Rows->Add(row);
+    row[0] = "fishHotRateMax_Cpm";  row[1] = "1.2";  row[2] = "0.9";  row[3] = "0.6";  dataGridView1->Rows->Add(row);
     row[0] = "returnTargetRH_percent"; row[1] = "85"; row[2] = "92"; row[3] = "85"; dataGridView1->Rows->Add(row);
 }
 
@@ -2023,8 +2023,8 @@ void ProjectServerW::DataForm::LoadDataGridView2Defaults() {
     dataGridView2->Rows->Add("outHold_s", L"Мин. время удержания вентилятора между переключениями, сек.", "15");
     /* Только воздух */
     dataGridView2->Rows->Add("airOnlyPhaseWarmUp_min", L"Только воздух: длительность фазы прогрева, мин.", "10");
-    dataGridView2->Rows->Add("airOnlyPhasePlateau_min", L"Только воздух: конец плато от старта, мин.", "30");
-    dataGridView2->Rows->Add("maxRuntime_min", L"Только воздух: макс. длительность процесса, мин.", "120");
+    dataGridView2->Rows->Add("airOnlyPhasePlateau_min", L"Только воздух: конец плато от старта, мин. Если не больше прогрева — длительность плато.", "30");
+    dataGridView2->Rows->Add("maxRuntime_min", L"Только воздух: конец процесса от старта, мин. Если не больше прогрева — длительность финиша.", "120");
     /* Цель / отладка / режим */
     dataGridView2->Rows->Add("fishColdTarget_C", L"Целевая мин. темп. рыбы °C (автостоп при достижении)", "6");
     dataGridView2->Rows->Add("debugDisableTargetTStop", L"Отладка: отключить автостоп по fishColdTarget_C (0/1)", "0");
@@ -2032,31 +2032,83 @@ void ProjectServerW::DataForm::LoadDataGridView2Defaults() {
     dataGridView2->Rows->Add("useNewWrkAlrAlgorithm", "1=STM32, 0=Siemens", "1");
 }
 
-// Имена параметров группы 5 (LOG_PHASE): порядок полей в DefrostLogPhasePayload_t
+// Имена параметров группы 5 (LOG_PHASE): порядок полей в DefrostLogPhasePayload_t.
+// Лимит скорости в таблице — °C/мин; контроллер хранит и принимает °C/с.
 static const char* const kGroup5ParamNames[] = {
-    "fishHotMax_C", "fishHotRateMax_Cps", "fishDeltaMax_C", "supplySet_C", "supplyMax_C", "returnTargetRH_percent"
+    "fishHotMax_C", "fishHotRateMax_Cpm", "fishDeltaMax_C", "supplySet_C", "supplyMax_C", "returnTargetRH_percent"
 };
+static const float kSecondsPerMinute = 60.0f;
 
-/** Заполнить payload группы 5 из dataGridView1 (порядок строк 0..5 = fishHotMax_C, fishHotRateMax_Cps, ...). */
+/** Индекс поля группы 5 по имени строки таблицы; -1 — неизвестное имя.
+ *  outPerSecond = true для старого имени fishHotRateMax_Cps (значения уже в °C/с). */
+static int Group5FieldIndexByName(String^ name, bool% outPerSecond) {
+    outPerSecond = false;
+    if (name == nullptr) return -1;
+    String^ p = name->Trim();
+    if (p->Equals("fishHotRateMax_Cps", StringComparison::OrdinalIgnoreCase)) {
+        outPerSecond = true;
+        return 1;
+    }
+    for (int i = 0; i < 6; i++) {
+        if (p->Equals(gcnew String(kGroup5ParamNames[i]), StringComparison::OrdinalIgnoreCase)) return i;
+    }
+    return -1;
+}
+
+/** Старое имя fishHotRateMax_Cps (°C/с) в таблице заменить на fishHotRateMax_Cpm (°C/мин). */
+static void ConvertLegacyRateRowsToPerMinute(DataGridView^ grid) {
+    if (grid == nullptr || grid->IsDisposed) return;
+    System::Globalization::CultureInfo^ inv = System::Globalization::CultureInfo::InvariantCulture;
+    for (int r = 0; r < grid->Rows->Count; r++) {
+        DataGridViewRow^ row = grid->Rows[r];
+        if (row->IsNewRow) continue;
+        Object^ nameObj = row->Cells["Parameter"]->Value;
+        if (nameObj == nullptr || !nameObj->ToString()->Trim()->Equals("fishHotRateMax_Cps", StringComparison::OrdinalIgnoreCase)) continue;
+        row->Cells["Parameter"]->Value = gcnew String(kGroup5ParamNames[1]);
+        for (int ph = 0; ph < 3; ph++) {
+            String^ colName = (ph == 0) ? "WarmUP" : (ph == 1) ? "Plateau" : "Finish";
+            Object^ v = row->Cells[colName]->Value;
+            String^ s = v != nullptr ? v->ToString()->Trim()->Replace(",", ".") : "";
+            float f = 0.0f;
+            if (Single::TryParse(s, System::Globalization::NumberStyles::Float, inv, f))
+                row->Cells[colName]->Value = (f * kSecondsPerMinute).ToString(inv);
+        }
+    }
+}
+
+/** Заполнить payload группы 5 из dataGridView1. Строки ищутся по имени параметра, а не по номеру:
+ *  порядок строк в таблице по умолчанию, в Excel и в файле настроек не совпадает с порядком полей. */
 static bool BuildPhasePayloadFromGrid1(DataGridView^ grid, DefrostLogPhasePayload_t* outPayload) {
     if (grid == nullptr || grid->IsDisposed || outPayload == nullptr) return false;
     memset(outPayload, 0, sizeof(DefrostLogPhasePayload_t));
     System::Globalization::CultureInfo^ inv = System::Globalization::CultureInfo::InvariantCulture;
-    for (int r = 0; r < 6 && r < grid->Rows->Count; r++) {
+    bool found[6] = { false, false, false, false, false, false };
+    for (int r = 0; r < grid->Rows->Count; r++) {
         DataGridViewRow^ row = grid->Rows[r];
         if (row->IsNewRow) continue;
+        bool perSecond = false;
+        const int field = Group5FieldIndexByName(row->Cells["Parameter"]->Value != nullptr
+            ? row->Cells["Parameter"]->Value->ToString() : nullptr, perSecond);
+        if (field < 0) continue;
+        found[field] = true;
         for (int ph = 0; ph < 3; ph++) {
             String^ colName = (ph == 0) ? "WarmUP" : (ph == 1) ? "Plateau" : "Finish";
             Object^ v = row->Cells[colName]->Value;
             String^ s = v != nullptr ? v->ToString()->Trim()->Replace(",", ".") : "";
             float f = 0.0f;
             Single::TryParse(s, System::Globalization::NumberStyles::Float, inv, f);
-            if (r == 0) outPayload->fishHotMax_C[ph] = f;
-            else if (r == 1) outPayload->fishHotRateMax_Cps[ph] = f;
-            else if (r == 2) outPayload->fishDeltaMax_C[ph] = f;
-            else if (r == 3) outPayload->supplySet_C[ph] = f;
-            else if (r == 4) outPayload->supplyMax_C[ph] = f;
-            else if (r == 5) outPayload->returnTargetRH_percent[ph] = f;
+            if (field == 0) outPayload->fishHotMax_C[ph] = f;
+            else if (field == 1) outPayload->fishHotRateMax_Cps[ph] = perSecond ? f : (f / kSecondsPerMinute);
+            else if (field == 2) outPayload->fishDeltaMax_C[ph] = f;
+            else if (field == 3) outPayload->supplySet_C[ph] = f;
+            else if (field == 4) outPayload->supplyMax_C[ph] = f;
+            else if (field == 5) outPayload->returnTargetRH_percent[ph] = f;
+        }
+    }
+    for (int i = 0; i < 6; i++) {
+        if (!found[i]) {
+            GlobalLogger::LogMessage("Warning: Group5: в таблице нет строки " + gcnew String(kGroup5ParamNames[i]) + ", запись отменена.");
+            return false;
         }
     }
     return true;
@@ -2080,11 +2132,13 @@ void ProjectServerW::DataForm::FillDataGridView1FromGroup5Payload(const uint8_t*
     };
     System::Globalization::CultureInfo^ inv = System::Globalization::CultureInfo::InvariantCulture;
     for (int row = 0; row < 6; row++) {
+        // Лимит скорости приходит в °C/с, в таблице показываем °C/мин.
+        const float scale = (row == 1) ? kSecondsPerMinute : 1.0f;
         cli::array<Object^>^ rowData = gcnew cli::array<Object^>(4);
         rowData[0] = gcnew System::String(kGroup5ParamNames[row]);
-        rowData[1] = phaseRows[row][0].ToString(inv);
-        rowData[2] = phaseRows[row][1].ToString(inv);
-        rowData[3] = phaseRows[row][2].ToString(inv);
+        rowData[1] = (phaseRows[row][0] * scale).ToString(inv);
+        rowData[2] = (phaseRows[row][1] * scale).ToString(inv);
+        rowData[3] = (phaseRows[row][2] * scale).ToString(inv);
         dataGridView1->Rows->Add(rowData);
     }
     dataGridView1Dirty = false;
@@ -2112,8 +2166,8 @@ static const Group6Row kGroup6Rows[] = {
     {"outHold_s", L"Мин. время удержания вентилятора между переключениями, сек."},
     /* Только воздух */
     {"airOnlyPhaseWarmUp_min", L"Только воздух: длительность фазы прогрева, мин."},
-    {"airOnlyPhasePlateau_min", L"Только воздух: конец плато от старта, мин."},
-    {"maxRuntime_min", L"Только воздух: макс. длительность процесса, мин."},
+    {"airOnlyPhasePlateau_min", L"Только воздух: конец плато от старта, мин. Если не больше прогрева — длительность плато."},
+    {"maxRuntime_min", L"Только воздух: конец процесса от старта, мин. Если не больше прогрева — длительность финиша."},
     /* Цель / отладка / режим */
     {"fishColdTarget_C", L"Целевая мин. темп. рыбы °C (автостоп при достижении)"},
     {"debugDisableTargetTStop", L"Отладка: отключить автостоп по fishColdTarget_C (0/1)"},
@@ -2406,6 +2460,7 @@ void ProjectServerW::DataForm::LoadDataGridView1FromFile() {
             if (!dataGridView1->Rows[r]->IsNewRow) { hasNonNewRows = true; break; }
         }
         if (!hasNonNewRows) LoadDataGridView1Defaults();
+        else ConvertLegacyRateRowsToPerMinute(dataGridView1);
     }
     catch (Exception^) {
         LoadDataGridView1Defaults();
@@ -2661,6 +2716,7 @@ void ProjectServerW::DataForm::LoadParamsFromExcelFile(System::String^ filePath)
                         }
                         dataGridView1->Rows->Add(rowData);
                     }
+                    ConvertLegacyRateRowsToPerMinute(dataGridView1);
                     dataGridView1Dirty = false;
                 }
                 else if (name != nullptr && name->Equals("Параметры общие", System::StringComparison::OrdinalIgnoreCase) &&

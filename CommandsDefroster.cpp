@@ -471,7 +471,7 @@ void ProjectServerW::DataForm::PopulateEquipmentAlarmGrid(uint16_t deviceFlags, 
     if ((deviceFlags & (1u << 11)) != 0) {
         dataGridEquipmentAlarm->Rows->Add(
             "Заслонка вытяжки",
-            "Нет подтверждения конечного положения Air_Open/Air_Close за 180 секунд.");
+            "Нет подтверждения конечного положения Air_Close за 180 секунд.");
     }
 
     // Device_AlarmFlags бит 13/14: T-переход вверх — выпадение датчика продукта из изделия.
