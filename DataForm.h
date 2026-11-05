@@ -170,6 +170,9 @@ namespace ProjectServerW {
 			bool inactivityCloseRequested;
 			DateTime lastCmdInfoProbeTime; // Why: rate-limit automatic GET_CMD_INFO probes.
 			bool cmdInfoProbeInProgress;  // Why: avoid recursive probing when GET_CMD_INFO itself times out.
+			DateTime lastSensorDiagTime;     // время последнего запроса GET_SENSOR_DIAG
+			bool sensorDiagInProgress;       // запрос GET_SENSOR_DIAG уже поставлен или выполняется
+			bool sensorDiagUnsupported;      // прошивка ответила INVALID_CODE — до переподключения не запрашиваем
 			SOCKET lastTelemetrySocket;        // Why: detect reconnects (new TCP socket) and log data collection resume once per reconnect.
 			bool reconnectFixationLogPending;  // Why: log "start of data collection after reconnect" on the first valid telemetry packet.
 			System::Windows::Forms::Timer^ inactivityTimer;
@@ -330,6 +333,9 @@ namespace ProjectServerW {
 				lastTelemetryDeviceSeconds = 0;
 				lastCmdInfoProbeTime = DateTime::MinValue;
 				cmdInfoProbeInProgress = false;
+				lastSensorDiagTime = DateTime::MinValue;
+				sensorDiagInProgress = false;
+				sensorDiagUnsupported = false;
 				lastTelemetrySocket = INVALID_SOCKET;
 				reconnectFixationLogPending = false;
 				disconnectedSinceTicks = 0;
@@ -1182,6 +1188,7 @@ private: System::ComponentModel::IContainer^ components;
 				});
 				this->dataGridView2->Location = System::Drawing::Point(23, 8);
 				this->dataGridView2->Name = L"dataGridView2";
+				this->dataGridView2->RowHeadersVisible = false;
 				this->dataGridView2->RowHeadersWidth = 24;
 				this->dataGridView2->RowTemplate->Height = 16;
 				this->dataGridView2->Size = System::Drawing::Size(773, 465);
@@ -1234,6 +1241,7 @@ private: System::ComponentModel::IContainer^ components;
 				});
 				this->dataGridView1->Location = System::Drawing::Point(806, 115);
 				this->dataGridView1->Name = L"dataGridView1";
+				this->dataGridView1->RowHeadersVisible = false;
 				this->dataGridView1->RowHeadersWidth = 24;
 				this->dataGridView1->RowTemplate->Height = 16;
 				this->dataGridView1->Size = System::Drawing::Size(579, 358);
@@ -1457,6 +1465,9 @@ private: System::ComponentModel::IContainer^ components;
 		void EnsureEquipmentAlarmGridColumns();
 		void PopulateEquipmentAlarmGrid(uint16_t deviceFlags, uint16_t sensorFlags);
 		void RefreshAlarmFlagsFromController();
+		void ScheduleSensorDiagPoll();   // раз в минуту после телеметрии ставит PollSensorDiag в очередь UI
+		void PollSensorDiag();           // запрос GET_SENSOR_DIAG и запись причин ошибок приёма в лог
+		void LogSensorDiag(const uint8_t* data, int length);
 		void UpdateVersionLabelInternal(); // Вспомогательный метод для обновления label_Version из UI потока
 		
 		// Методы для обработки ответов от контроллера

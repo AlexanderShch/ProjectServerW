@@ -80,8 +80,12 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
         }
         else if (bytesSent == commandLength) {
             // Команда успешно отправлена
-            Label_Commands->Text = "Команда " + commandName + " отправлена клиенту";
-            GlobalLogger::LogMessage("Information: Команда " + commandName + " отправлена клиенту");
+            const bool backgroundPoll =
+                (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_SENSOR_DIAG);
+            if (!backgroundPoll) {
+                Label_Commands->Text = "Команда " + commandName + " отправлена клиенту";
+                GlobalLogger::LogMessage("Information: Команда " + commandName + " отправлена клиенту");
+            }
             return true;
         }
         else {
@@ -421,6 +425,101 @@ bool ProjectServerW::DataForm::GetAlarmFlags(AlarmFlagsPayload* outFlags) {
     CommandResponse response;
     if (!SendCommandAndWaitResponse(cmd, response, "GET_ALARM_FLAGS") || response.status != CmdStatus::OK) return false;
     return ParseAlarmFlagsResponse(response, outFlags);
+}
+
+void ProjectServerW::DataForm::ScheduleSensorDiagPoll() {
+    if (sensorDiagUnsupported || sensorDiagInProgress || !startupSequenceCompleted) return;
+    if (clientSocket == INVALID_SOCKET) return;
+    DateTime now = DateTime::Now;
+    if (lastSensorDiagTime == DateTime::MinValue) {
+        lastSensorDiagTime = now;
+        return;
+    }
+    if (now.Subtract(lastSensorDiagTime).TotalSeconds < 60.0) return;
+    sensorDiagInProgress = true;
+    try {
+        // Вызов приходит из Invoke потока приёма: синхронное ожидание ответа здесь заблокировало бы сам приём.
+        this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::PollSensorDiag));
+    }
+    catch (Exception^ ex) {
+        sensorDiagInProgress = false;
+        GlobalLogger::LogMessage("Warning: ScheduleSensorDiagPoll failed: " + ex->Message);
+    }
+}
+
+void ProjectServerW::DataForm::PollSensorDiag() {
+    try {
+        lastSensorDiagTime = DateTime::Now;
+        if (clientSocket == INVALID_SOCKET || sensorDiagUnsupported) return;
+        Command cmd = CreateRequestCommandGetSensorDiag();
+        CommandResponse response;
+        if (SendCommandAndWaitResponse(cmd, response, "GET_SENSOR_DIAG")) {
+            LogSensorDiag(response.data, response.dataLength);
+        }
+        else if (response.status == CmdStatus::INVALID_CODE) {
+            sensorDiagUnsupported = true;
+            GlobalLogger::LogMessage("Информация: прошивка контроллера не поддерживает GET_SENSOR_DIAG; "
+                "диагностика ошибок приёма датчиков отключена до переподключения");
+        }
+    }
+    catch (Exception^ ex) {
+        GlobalLogger::LogMessage("Warning: PollSensorDiag failed: " + ex->Message);
+    }
+    finally {
+        sensorDiagInProgress = false;
+    }
+}
+
+void ProjectServerW::DataForm::LogSensorDiag(const uint8_t* data, int length) {
+    if (data == nullptr || length != SENSOR_DIAG_PAYLOAD_SIZE) {
+        GlobalLogger::LogMessage(String::Format(
+            "Warning: GET_SENSOR_DIAG: длина ответа {0}, ожидалось {1}", length, (int)SENSOR_DIAG_PAYLOAD_SIZE));
+        return;
+    }
+    static const wchar_t* const kCatNames[SENSOR_DIAG_CAT_COUNT] = {
+        L"нет ответа", L"поздний ответ", L"оборван кадр", L"ошибка UART",
+        L"короткий кадр", L"CRC", L"чужой адрес/код", L"сбой передачи"
+    };
+    uint16_t periodSec = 0;
+    memcpy(&periodSec, data, 2);
+    const uint8_t* dev = data + 2;
+    const uint8_t* snap = dev + SENSOR_DIAG_DEVICE_COUNT * (SENSOR_DIAG_CAT_COUNT + 2);
+
+    System::Text::StringBuilder^ sb = gcnew System::Text::StringBuilder();
+    bool anyFail = false;
+    for (int i = 0; i < SENSOR_DIAG_DEVICE_COUNT; ++i) {
+        const uint8_t* d = dev + i * (SENSOR_DIAG_CAT_COUNT + 2);
+        const uint8_t ok = d[SENSOR_DIAG_CAT_COUNT];
+        const uint8_t maxLatOk = d[SENSOR_DIAG_CAT_COUNT + 1];
+        String^ name = (i == SENSOR_DIAG_DEVICE_COUNT - 1) ? "IO" : ("T" + i.ToString());
+        System::Text::StringBuilder^ fails = gcnew System::Text::StringBuilder();
+        for (int c = 0; c < SENSOR_DIAG_CAT_COUNT; ++c) {
+            if (d[c] == 0) continue;
+            if (fails->Length > 0) fails->Append(", ");
+            fails->Append(gcnew String(kCatNames[c]))->Append(" ")->Append(d[c]);
+        }
+        if (fails->Length > 0) anyFail = true;
+        sb->AppendFormat("\n  {0}: ok {1}, макс. задержка {2} мс{3}", name, ok, maxLatOk,
+            (fails->Length > 0) ? ("; сбои: " + fails->ToString()) : "");
+    }
+    if (!anyFail) return;
+
+    const uint8_t snapIndex = snap[0];
+    if (snapIndex < SENSOR_DIAG_DEVICE_COUNT) {
+        const uint8_t snapCat = snap[1];
+        const uint8_t snapLen = snap[2];
+        String^ name = (snapIndex == SENSOR_DIAG_DEVICE_COUNT - 1) ? "IO" : ("T" + ((int)snapIndex).ToString());
+        String^ catName = (snapCat < SENSOR_DIAG_CAT_COUNT) ? gcnew String(kCatNames[snapCat]) : snapCat.ToString();
+        const int shown = System::Math::Min((int)snapLen, (int)SENSOR_DIAG_SNAPSHOT_BYTES);
+        System::Text::StringBuilder^ hex = gcnew System::Text::StringBuilder();
+        for (int b = 0; b < shown; ++b) {
+            if (b != 0) hex->Append(" ");
+            hex->Append(snap[5 + b].ToString("X2"));
+        }
+        sb->AppendFormat("\n  Последний сбой: {0}, {1}, принято {2} байт, UART ErrorCode 0x{3:X2}, задержка {4} мс, кадр: {5}",
+            name, catName, snapLen, snap[3], snap[4], (shown > 0) ? hex->ToString() : "-");
+    }
+    GlobalLogger::LogMessage(String::Format("Диагностика приёма датчиков за {0} с:", periodSec) + sb->ToString());
 }
 
 void ProjectServerW::DataForm::EnsureEquipmentAlarmGridColumns() {
@@ -933,9 +1032,12 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
             const bool isLoadDefrostDefaults =
                 (cmd.commandType == CmdType::CONFIGURATION && cmd.commandCode == CmdConfig::LOAD_DEFROST_DEFAULTS);
             const bool isProgControl = (cmd.commandType == CmdType::PROG_CONTROL);
+            // Фоновый ежеминутный запрос: разбирает и логирует вызывающий, общий ProcessResponse не нужен.
+            const bool isSensorDiag =
+                (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_SENSOR_DIAG);
             // GET_ALARM_FLAGS по RS-485/полудуплексу и при загрузке контроллера часто не укладывается в 100 мс.
             const int totalTimeoutMs =
-                (isGetDefrostGroup || isGetAlarmFlags || isSetDefrostGroup || isLoadDefrostDefaults) ? 1000 :
+                (isGetDefrostGroup || isGetAlarmFlags || isSetDefrostGroup || isLoadDefrostDefaults || isSensorDiag) ? 1000 :
                 (isProgControl ? 300 : defaultTimeoutMs);
             DateTime deadline = DateTime::Now.AddMilliseconds(totalTimeoutMs);
             while (true) {
@@ -978,7 +1080,8 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
             }
 
             // Обрабатываем полученный ответ
-            ProcessResponse(response);
+            if (!isSensorDiag)
+                ProcessResponse(response);
             return (response.status == CmdStatus::OK);
         }
         finally {

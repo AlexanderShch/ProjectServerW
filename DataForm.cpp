@@ -1335,6 +1335,10 @@ bool ProjectServerW::DataForm::ExecuteStartupCommandSequence() {
         return false;
     }
 
+    // Прошивка могла смениться при переподключении: поддержку GET_SENSOR_DIAG проверяем заново.
+    sensorDiagUnsupported = false;
+    lastSensorDiagTime = DateTime::MinValue;
+
     // ПОЛУЧЕНИЕ ВЕРСИИ УСТРОЙСТВА -------------------------------------------------------------
     GlobalLogger::LogMessage("Отладка: Последовательность запуска: шаг 1/4 GET_VERSION начат");
     const bool okVersion = SendVersionRequest();
@@ -1677,6 +1681,7 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
         finally {
             dataGridView->ResumeLayout(false);   // Возобновляем обновление таблицы
         }
+        ScheduleSensorDiagPoll();
     }
     catch (Exception^ ex) {
         GlobalLogger::LogMessage("Ошибка: Исключение в AddDataToTableThreadSafe: " + ex->ToString());

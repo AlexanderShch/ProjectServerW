@@ -44,7 +44,17 @@ struct CmdRequest {
     static const uint8_t GET_DEFROST_GROUP = 0x07;  // Запросить пачку параметров группы (payload: groupId, page)
     static const uint8_t SEND_STATE = 0x08;       // Отправить состояние (телеметрия + при авторежиме лог)
     static const uint8_t GET_ALARM_FLAGS = 0x09;  // Запросить регистры аварий: устройства и датчики
+    static const uint8_t GET_SENSOR_DIAG = 0x0A;  // Запросить причины ошибок приёма от датчиков (счётчики обнуляются при чтении)
 };
+
+// Ответ GET_SENSOR_DIAG; размеры и порядок должны совпадать с MB_SensorDiag_Fill в прошивке.
+// [0..1] период, с; для каждого из 7 устройств: счётчики по причинам [SENSOR_DIAG_CAT_COUNT], ok, макс. задержка ok, мс;
+// снимок последнего сбоя: индекс (0xFF — не было), причина, длина кадра, ErrorCode UART, задержка, мс, первые байты кадра.
+const uint8_t SENSOR_DIAG_DEVICE_COUNT = 7;
+const uint8_t SENSOR_DIAG_CAT_COUNT = 8;
+const uint8_t SENSOR_DIAG_SNAPSHOT_BYTES = 8;
+const uint8_t SENSOR_DIAG_PAYLOAD_SIZE =
+    2 + SENSOR_DIAG_DEVICE_COUNT * (SENSOR_DIAG_CAT_COUNT + 2) + 5 + SENSOR_DIAG_SNAPSHOT_BYTES;
 
 // Типы значения параметра дефроста (совместимо с DefrostControl.h)
 struct DefrostParamType {
@@ -207,6 +217,10 @@ inline Command CreateRequestCommandDefrostGetGroup(uint8_t groupId, uint8_t page
 
 inline Command CreateRequestCommandGetAlarmFlags() {
     return CreateRequestCommand(CmdRequest::GET_ALARM_FLAGS);
+}
+
+inline Command CreateRequestCommandGetSensorDiag() {
+    return CreateRequestCommand(CmdRequest::GET_SENSOR_DIAG);
 }
 
 /** Создать команду «Отправить состояние» (телеметрия + при авторежиме лог). */
