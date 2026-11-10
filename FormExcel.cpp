@@ -25,7 +25,7 @@ static System::String^ MapTemperatureColumnNameForExcel(System::String^ columnNa
 	return columnName;
 }
 
-static int GetTemperatureSeriesColorOle(System::String^ tColumnName)
+static int GetExcelSeriesColorOle(System::String^ tColumnName)
 {
 	// Почему: Excel Interop ожидает OLE_COLOR. Используем ColorTranslator, чтобы не зависеть от порядка RGB/BGR.
 	if (String::IsNullOrEmpty(tColumnName)) {
@@ -39,7 +39,75 @@ static int GetTemperatureSeriesColorOle(System::String^ tColumnName)
 	if (tColumnName->Equals("T4")) return ColorTranslator::ToOle(Color::FromArgb(128, 0, 128));     // фиолетовый
 	if (tColumnName->Equals("T5")) return ColorTranslator::ToOle(Color::FromArgb(165, 42, 42));     // коричневый
 
+	if (tColumnName->Equals("_H0")) return ColorTranslator::ToOle(Color::FromArgb(255, 255, 153)); // light yellow
+	if (tColumnName->Equals("_H1")) return ColorTranslator::ToOle(Color::FromArgb(210, 180, 140)); // light brown
+	if (tColumnName->Equals("_H2")) return ColorTranslator::ToOle(Color::FromArgb(255, 255, 0));   // yellow
+	if (tColumnName->Equals("_H3")) return ColorTranslator::ToOle(Color::FromArgb(165, 42, 42));   // brown
+	if (tColumnName->Equals("H2")) return ColorTranslator::ToOle(Color::FromArgb(0, 0, 255));     // blue
+	if (tColumnName->Equals("_Inj")) return ColorTranslator::ToOle(Color::FromArgb(0, 191, 255));  // sky blue
+	if (tColumnName->Equals("T_filt_4")) return ColorTranslator::ToOle(Color::FromArgb(255, 182, 193)); // light pink
 	return ColorTranslator::ToOle(Color::Black);
+}
+
+// Scaling belongs to the Excel export: raw telemetry, DI/DO flags and duty values stay unchanged.
+static int GetDigitalOnLevelForExcel(String^ columnName)
+{
+	if (columnName->Equals("_H0") || columnName->Equals("Ten1_Left")) return 4;
+	if (columnName->Equals("_H1") || columnName->Equals("Ten2_Left")) return 5;
+	if (columnName->Equals("_H2") || columnName->Equals("Ten1_Right")) return 7;
+	if (columnName->Equals("_H3") || columnName->Equals("Ten2_Right")) return 8;
+	if (columnName->Equals("_Inj")) return 35;
+	return 0;
+}
+
+static Object^ MapCellValueForExcel(String^ columnName, Object^ value)
+{
+	const int onLevel = GetDigitalOnLevelForExcel(columnName);
+	if (onLevel == 0 || value == nullptr || Convert::IsDBNull(value)) return value;
+	return Convert::ToDouble(value, System::Globalization::CultureInfo::InvariantCulture) == 1.0
+		? safe_cast<Object^>(onLevel) : value;
+}
+
+static String^ GetExcelChartSeriesName(String^ columnName)
+{
+	if (columnName->Equals("_H0")) return "Нагреватель 1 левый (_H0)";
+	if (columnName->Equals("_H1")) return "Нагреватель 2 левый (_H1)";
+	if (columnName->Equals("_H2")) return "Нагреватель 1 правый (_H2)";
+	if (columnName->Equals("_H3")) return "Нагреватель 2 правый (_H3)";
+	if (columnName->Equals("H2")) return "Влажность центр (H2), %";
+	if (columnName->Equals("_Inj")) return "Впрыск воды (_Inj)";
+	if (columnName->Equals("T_filt_4")) return "T прод.Правый фильтр. (T_filt_4)";
+	return MapTemperatureColumnNameForExcel(columnName);
+}
+
+static void AddExcelChartSeries(Microsoft::Office::Interop::Excel::SeriesCollection^ seriesCollection,
+	Microsoft::Office::Interop::Excel::Worksheet^ ws, System::Data::DataTable^ table,
+	Microsoft::Office::Interop::Excel::Range^ xRange, int lastRow, String^ columnName)
+{
+	const int columnIndex = table->Columns->IndexOf(columnName);
+	if (columnIndex < 0) return; // Older sessions may not contain filtered temperatures.
+	Microsoft::Office::Interop::Excel::Range^ yRange = nullptr;
+	Microsoft::Office::Interop::Excel::Series^ series = nullptr;
+	try {
+		yRange = ws->Range[ws->Cells[2, columnIndex + 1], ws->Cells[lastRow, columnIndex + 1]];
+		series = seriesCollection->NewSeries();
+		series->XValues = xRange;
+		series->Values = yRange;
+		series->Name = GetExcelChartSeriesName(columnName);
+		series->AxisGroup = columnName->Equals("H2")
+			? Microsoft::Office::Interop::Excel::XlAxisGroup::xlSecondary
+			: Microsoft::Office::Interop::Excel::XlAxisGroup::xlPrimary;
+		const int oleColor = GetExcelSeriesColorOle(columnName);
+		try { series->Border->Color = oleColor; } catch (...) {}
+		try {
+			series->Format->Line->ForeColor->RGB = oleColor;
+			series->Format->Line->Weight = 2.0;
+		} catch (...) {}
+	}
+	finally {
+		if (series != nullptr) Marshal::ReleaseComObject(series);
+		if (yRange != nullptr) Marshal::ReleaseComObject(yRange);
+	}
 }
 
 FormExcel::FormExcel() {
@@ -231,7 +299,7 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 				for (int r = 0; r < rowCount; r++) {
 					System::Data::DataRow^ dr = job->tableSnapshot->Rows[r];
 					for (int c = 0; c < colCount; c++) {
-						dataArray[r, c] = dr[c];
+						dataArray[r, c] = MapCellValueForExcel(job->tableSnapshot->Columns[c]->ColumnName, dr[c]);
 					}
 				}
 
@@ -288,48 +356,19 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 							safe_cast<Microsoft::Office::Interop::Excel::SeriesCollection^>(chart->SeriesCollection(missing));
 
 						for (uint8_t i = 0; i < (SQ - 1); i++) {
-							int seriesCol = -1;
-							String^ tColName = nullptr;
-							try {
-								tColName = "T" + Convert::ToString(i);
-								int tIdx = job->tableSnapshot->Columns->IndexOf(tColName);
-								if (tIdx >= 0) seriesCol = tIdx + 1;
-							}
-							catch (...) {}
-							if (seriesCol < 1) {
-								continue;
-							}
-
-							Microsoft::Office::Interop::Excel::Range^ yRange = nullptr;
-							try {
-								yRange = ws->Range[ws->Cells[2, seriesCol], ws->Cells[lastRow, seriesCol]];
-								Microsoft::Office::Interop::Excel::Series^ s = seriesCollection->NewSeries();
-								s->XValues = xRange;
-								s->Values = yRange;
-								if (tColName != nullptr) {
-									s->Name = MapTemperatureColumnNameForExcel(tColName);
-
-									const int oleColor = GetTemperatureSeriesColorOle(tColName);
-									try {
-										// Для line chart чаще всего хватает Border->Color.
-										s->Border->Color = oleColor;
-									}
-									catch (...) {}
-									try {
-										// На некоторых версиях Interop доступен более “новый” API Format->Line.
-										s->Format->Line->ForeColor->RGB = oleColor;
-										s->Format->Line->Weight = 2.0;
-									}
-									catch (...) {}
-								}
-							}
-							finally {
-								if (yRange != nullptr) Marshal::ReleaseComObject(yRange);
-							}
+							AddExcelChartSeries(seriesCollection, ws, job->tableSnapshot, xRange, lastRow,
+								"T" + Convert::ToString(i));
 						}
+						cli::array<String^>^ extraColumns = gcnew cli::array<String^> {
+							"_H0", "_H1", "_H2", "_H3", "H2", "_Inj", "T_filt_4"
+						};
+						for each (String^ columnName in extraColumns) {
+							AddExcelChartSeries(seriesCollection, ws, job->tableSnapshot, xRange, lastRow, columnName);
+						}
+						Marshal::ReleaseComObject(seriesCollection);
 
 						chart->HasTitle = true;
-						chart->ChartTitle->Text = "Температуры";
+						chart->ChartTitle->Text = "Температуры, влажность и оборудование";
 
 						Microsoft::Office::Interop::Excel::Axis^ categoryAxis = safe_cast<Microsoft::Office::Interop::Excel::Axis^>(
 							chart->Axes(Microsoft::Office::Interop::Excel::XlAxisType::xlCategory, Microsoft::Office::Interop::Excel::XlAxisGroup::xlPrimary));
@@ -339,7 +378,17 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 						Microsoft::Office::Interop::Excel::Axis^ valueAxis = safe_cast<Microsoft::Office::Interop::Excel::Axis^>(
 							chart->Axes(Microsoft::Office::Interop::Excel::XlAxisType::xlValue, Microsoft::Office::Interop::Excel::XlAxisGroup::xlPrimary));
 						valueAxis->HasTitle = true;
-						valueAxis->AxisTitle->Text = "T, °C";
+						valueAxis->AxisTitle->Text = "T, °C / уровни оборудования";
+						if (job->tableSnapshot->Columns->Contains("H2")) {
+							Microsoft::Office::Interop::Excel::Axis^ humidityAxis = safe_cast<Microsoft::Office::Interop::Excel::Axis^>(
+								chart->Axes(Microsoft::Office::Interop::Excel::XlAxisType::xlValue,
+									Microsoft::Office::Interop::Excel::XlAxisGroup::xlSecondary));
+							humidityAxis->HasTitle = true;
+							humidityAxis->AxisTitle->Text = "Влажность, %";
+							humidityAxis->MinimumScale = 0.0;
+							humidityAxis->MaximumScale = 100.0;
+							Marshal::ReleaseComObject(humidityAxis);
+						}
 
 						if (xRange != nullptr) Marshal::ReleaseComObject(xRange);
 					}
