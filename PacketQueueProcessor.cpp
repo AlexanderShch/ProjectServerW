@@ -341,6 +341,19 @@ namespace ProjectServerW {
 		}
 
 		// Критично: метод должен быть строго O(1), потому что вызывается из recv()-цикла.
+        // Ответ GET_SENSOR_DIAG не относится к синхронной очереди обычных команд.
+        // Передаём массив в UI через BeginInvoke без ожидания: сетевой поток продолжит
+        // разбирать телеметрию, а её запись не будет заблокирована ожиданием диагностики.
+        // Полную проверку кадра выполняет HandleSensorDiagResponse. Минимум 6 байт —
+        // заголовок ответа и CRC; тип и код здесь нужны только для маршрутизации.
+        if (response->Length >= 6 && response[0] == CmdType::REQUEST &&
+            response[1] == CmdRequest::GET_SENSOR_DIAG) {
+            if (!IsDisposed && !Disposing && IsHandleCreated)
+                BeginInvoke(gcnew Action<cli::array<System::Byte>^>(this, &DataForm::HandleSensorDiagResponse), response);
+            // Не выдаём семафор responseAvailable: иначе ожидающая обычная команда
+            // получит диагностический ответ вместо собственного и отбросит его.
+            return;
+        }
 		responseQueue->Enqueue(response);	// Добавляем ответ в очередь.
 		responseAvailable->Release();	// Увеличиваем счётчик семафора, чтобы один из ожидающих WaitOne() прошёл.
 	}

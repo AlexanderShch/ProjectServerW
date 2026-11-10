@@ -1466,7 +1466,8 @@ private: System::ComponentModel::IContainer^ components;
 		void PopulateEquipmentAlarmGrid(uint16_t deviceFlags, uint16_t sensorFlags);
 		void RefreshAlarmFlagsFromController();
 		void ScheduleSensorDiagPoll();   // раз в минуту после телеметрии ставит PollSensorDiag в очередь UI
-		void PollSensorDiag();           // запрос GET_SENSOR_DIAG и запись причин ошибок приёма в лог
+		void PollSensorDiag();           // отправка GET_SENSOR_DIAG без ожидания ответа в UI
+		void HandleSensorDiagResponse(cli::array<System::Byte>^ packet); // разбор отдельного ответа диагностики в UI
 		void LogSensorDiag(const uint8_t* data, int length);
 		void UpdateVersionLabelInternal(); // Вспомогательный метод для обновления label_Version из UI потока
 		

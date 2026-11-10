@@ -447,26 +447,56 @@ void ProjectServerW::DataForm::ScheduleSensorDiagPoll() {
     }
 }
 
+/*
+ * Отправляет GET_SENSOR_DIAG из UI-потока без ожидания ответа; параметров и результата нет.
+ * commandPipelineGate согласует отправку с обычными командами. Если он занят другим
+ * потоком, запрос пропускается: фоновая диагностика не должна задерживать телеметрию.
+ * Пришедший ответ отдельно маршрутизируется в HandleSensorDiagResponse.
+ */
 void ProjectServerW::DataForm::PollSensorDiag() {
     try {
-        lastSensorDiagTime = DateTime::Now;
         if (clientSocket == INVALID_SOCKET || sensorDiagUnsupported) return;
-        Command cmd = CreateRequestCommandGetSensorDiag();
-        CommandResponse response;
-        if (SendCommandAndWaitResponse(cmd, response, "GET_SENSOR_DIAG")) {
-            LogSensorDiag(response.data, response.dataLength);
+        // UI также добавляет строки телеметрии и выполняет таймер SEND_STATE.
+        // Поэтому здесь нельзя синхронно ждать диагностический ответ.
+        if (!System::Threading::Monitor::TryEnter(commandPipelineGate)) return;
+        try {
+            // Отсчитываем минуту до следующей попытки, в том числе при ошибке отправки,
+            // чтобы недоступный контроллер не вызывал непрерывный поток запросов.
+            lastSensorDiagTime = DateTime::Now;
+            Command cmd = CreateRequestCommandGetSensorDiag();
+            SendCommand(cmd, "GET_SENSOR_DIAG");
         }
-        else if (response.status == CmdStatus::INVALID_CODE) {
-            sensorDiagUnsupported = true;
-            GlobalLogger::LogMessage("Информация: прошивка контроллера не поддерживает GET_SENSOR_DIAG; "
-                "диагностика ошибок приёма датчиков отключена до переподключения");
-        }
+        finally { System::Threading::Monitor::Exit(commandPipelineGate); }
     }
     catch (Exception^ ex) {
         GlobalLogger::LogMessage("Warning: PollSensorDiag failed: " + ex->Message);
     }
-    finally {
-        sensorDiagInProgress = false;
+    // Флаг защищает только постановку/отправку запроса, а не ожидание ответа.
+    // Сбрасываем его и при раннем выходе или исключении, разрешая будущие попытки.
+    finally { sensorDiagInProgress = false; }
+}
+
+/*
+ * Обрабатывает диагностический ответ в UI-потоке через BeginInvoke.
+ * packet — внутренний кадр ответа без префикса AA 55, включая заголовок и CRC.
+ * Метод ничего не возвращает: корректный ответ передаёт журналированию, которое
+ * записывает только интервалы со сбоями. INVALID_CODE отключает дальнейший опрос
+ * до сброса состояния при переподключении. Некорректный кадр не используется.
+ */
+void ProjectServerW::DataForm::HandleSensorDiagResponse(cli::array<System::Byte>^ packet) {
+    if (IsDisposed || Disposing || packet == nullptr || packet->Length == 0) return;
+    // На время разбора фиксируем управляемый массив: сборщик мусора не должен
+    // перемещать его, пока ParseResponseBuffer читает данные через обычный указатель.
+    pin_ptr<System::Byte> pinned = &packet[0];
+    CommandResponse response{};
+    if (!ParseResponseBuffer(reinterpret_cast<const uint8_t*>(pinned),
+                             static_cast<size_t>(packet->Length), response)) return;
+    if (response.status == CmdStatus::OK) {
+        LogSensorDiag(response.data, response.dataLength);
+    }
+    else if (response.status == CmdStatus::INVALID_CODE) {
+        sensorDiagUnsupported = true;
+        GlobalLogger::LogMessage("Warning: GET_SENSOR_DIAG is unsupported by controller");
     }
 }
 

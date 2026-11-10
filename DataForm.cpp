@@ -2060,7 +2060,7 @@ void ProjectServerW::DataForm::LoadDataGridView2Defaults() {
     dataGridView2->Rows->Add("tenMinHold_s", L"Мин. время удержания ТЭНа между переключениями, сек.", "10");
     /* Влажность: форсунка, вытяжка, продувка */
     dataGridView2->Rows->Add("injHysteresisRH_percent", L"Гистерезис включения форсунок, контроль влажности, +/- %", "3");
-    dataGridView2->Rows->Add("injMinHold_s", L"Мин. время удержания форсунки между переключениями, сек.", "5");
+    dataGridView2->Rows->Add("injMinHold_s", L"Длительность импульса впрыска (после импульса пауза 90 с), сек.", "10");
     dataGridView2->Rows->Add("wDeadband_kgkg", L"Зона нечувствительности по влажности (вытяжка), кг/кг", "0.0008");
     dataGridView2->Rows->Add("forbidHumidityReduceWhileRunning", L"Запретить снижение влажности во время работы (1=запрещено)", "1");
     dataGridView2->Rows->Add("humidityThresholdRH_percent", L"Порог RH %: вытяжка (снижение влажности) и конец продувки", "50");
@@ -2201,7 +2201,7 @@ static const Group6Row kGroup6Rows[] = {
     {"tenMinHold_s", L"Мин. время удержания ТЭНа между переключениями, сек."},
     /* Влажность: форсунка, вытяжка, продувка */
     {"injHysteresisRH_percent", L"Гистерезис включения форсунок, контроль влажности, +/- %"},
-    {"injMinHold_s", L"Мин. время удержания форсунки между переключениями, сек."},
+    {"injMinHold_s", L"Длительность импульса впрыска (после импульса пауза 90 с), сек."},
     {"wDeadband_kgkg", L"Зона нечувствительности по влажности (вытяжка), кг/кг"},
     {"forbidHumidityReduceWhileRunning", L"Запретить снижение влажности во время работы (1=запрещено)"},
     {"humidityThresholdRH_percent", L"Порог RH %: вытяжка (снижение влажности) и конец продувки"},
