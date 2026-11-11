@@ -171,7 +171,9 @@ namespace ProjectServerW {
 			DateTime lastCmdInfoProbeTime; // Why: rate-limit automatic GET_CMD_INFO probes.
 			bool cmdInfoProbeInProgress;  // Why: avoid recursive probing when GET_CMD_INFO itself times out.
 			DateTime lastSensorDiagTime;     // время последнего запроса GET_SENSOR_DIAG
-			bool sensorDiagInProgress;       // запрос GET_SENSOR_DIAG уже поставлен или выполняется
+			bool sensorDiagInProgress;       // диагностика ожидает лог, поставлена в UI или отправляется
+			bool sensorDiagLogTimedOut;      // разрешает отправку после ограниченного ожидания лога
+			System::Windows::Forms::Timer^ sensorDiagLogTimer; // одноразовое ожидание лога перед диагностикой
 			bool sensorDiagUnsupported;      // прошивка ответила INVALID_CODE — до переподключения не запрашиваем
 			SOCKET lastTelemetrySocket;        // Why: detect reconnects (new TCP socket) and log data collection resume once per reconnect.
 			bool reconnectFixationLogPending;  // Why: log "start of data collection after reconnect" on the first valid telemetry packet.
@@ -335,6 +337,12 @@ namespace ProjectServerW {
 				cmdInfoProbeInProgress = false;
 				lastSensorDiagTime = DateTime::MinValue;
 				sensorDiagInProgress = false;
+				sensorDiagLogTimedOut = false;
+				sensorDiagLogTimer = gcnew System::Windows::Forms::Timer();
+				// Кадр лога занимает около 51 мс при 19200 бод; даём 1 с с запасом на TCP-мост.
+				// Таймер UI не блокирует приём; SEND_STATE на время ожидания приостанавливается.
+				sensorDiagLogTimer->Interval = 1000;
+				sensorDiagLogTimer->Tick += gcnew EventHandler(this, &DataForm::OnSensorDiagLogTimeout);
 				sensorDiagUnsupported = false;
 				lastTelemetrySocket = INVALID_SOCKET;
 				reconnectFixationLogPending = false;
@@ -1465,7 +1473,9 @@ private: System::ComponentModel::IContainer^ components;
 		void EnsureEquipmentAlarmGridColumns();
 		void PopulateEquipmentAlarmGrid(uint16_t deviceFlags, uint16_t sensorFlags);
 		void RefreshAlarmFlagsFromController();
-		void ScheduleSensorDiagPoll();   // раз в минуту после телеметрии ставит PollSensorDiag в очередь UI
+		void ScheduleSensorDiagPoll();   // раз в минуту планирует диагностику после пары телеметрия + лог
+		void OnSensorDiagLogTimeout(System::Object^ sender, System::EventArgs^ e);
+		void CancelSensorDiagPoll();     // отмена ожидания при разрыве связи, запуске и закрытии
 		void PollSensorDiag();           // отправка GET_SENSOR_DIAG без ожидания ответа в UI
 		void HandleSensorDiagResponse(cli::array<System::Byte>^ packet); // разбор отдельного ответа диагностики в UI
 		void LogSensorDiag(const uint8_t* data, int length);

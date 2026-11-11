@@ -437,8 +437,9 @@ void ProjectServerW::DataForm::ScheduleSensorDiagPoll() {
     }
     if (now.Subtract(lastSensorDiagTime).TotalSeconds < 60.0) return;
     sensorDiagInProgress = true;
+    sensorDiagLogTimedOut = false;
     try {
-        // Вызов приходит из Invoke потока приёма: синхронное ожидание ответа здесь заблокировало бы сам приём.
+        // Продолжаем в UI без ожидания ответа; PollSensorDiag сначала дождётся лога алгоритма.
         this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::PollSensorDiag));
     }
     catch (Exception^ ex) {
@@ -448,14 +449,49 @@ void ProjectServerW::DataForm::ScheduleSensorDiagPoll() {
 }
 
 /*
+ * Отменяет запланированную диагностику и одноразовый таймер в UI-потоке.
+ * Параметров и результата нет. Уже поставленный BeginInvoke станет пустой операцией.
+ * Вызывается перед запуском нового соединения, при потере связи и закрытии формы.
+ */
+void ProjectServerW::DataForm::CancelSensorDiagPoll() {
+    if (sensorDiagLogTimer != nullptr) sensorDiagLogTimer->Stop();
+    sensorDiagInProgress = false;
+    sensorDiagLogTimedOut = false;
+}
+
+/*
+ * Завершает ожидание потерянного лога через 1 с. sender/e — стандартные параметры Timer.Tick.
+ * Таймер одноразовый: останавливаем до отправки. Флаг таймаута разрешает диагностику,
+ * даже если pendingRow ещё не дополнена логом; её данные остаются без подстановок.
+ */
+void ProjectServerW::DataForm::OnSensorDiagLogTimeout(System::Object^ sender, System::EventArgs^ e) {
+    sensorDiagLogTimer->Stop();
+    if (!sensorDiagInProgress) return;
+    sensorDiagLogTimedOut = true;
+    PollSensorDiag();
+}
+
+/*
  * Отправляет GET_SENSOR_DIAG из UI-потока без ожидания ответа; параметров и результата нет.
  * commandPipelineGate согласует отправку с обычными командами. Если он занят другим
  * потоком, запрос пропускается: фоновая диагностика не должна задерживать телеметрию.
  * Пришедший ответ отдельно маршрутизируется в HandleSensorDiagResponse.
  */
 void ProjectServerW::DataForm::PollSensorDiag() {
+    // Все входы выполняются в UI: продолжение после телеметрии, приём лога и Timer.Tick.
+    // До DATA_OK контроллер ещё не отправлял лог. Поэтому очередь TCP/sendGate сама по себе
+    // не защищает RS-485: не занимаем линию диагностикой, пока строка ждёт этот лог.
+    if (!sensorDiagInProgress) return; // отложенный вызов отменён при смене соединения
+    if (isFormClosingNow || IsDisposed || Disposing || !startupSequenceCompleted ||
+        clientSocket == INVALID_SOCKET || sensorDiagUnsupported) {
+        CancelSensorDiagPoll();
+        return;
+    }
+    if (pendingRowWrkBit && !sensorDiagLogTimedOut) {
+        if (!sensorDiagLogTimer->Enabled) sensorDiagLogTimer->Start();
+        return; // флаг занятости сохраняем до получения лога либо одноразового таймаута
+    }
     try {
-        if (clientSocket == INVALID_SOCKET || sensorDiagUnsupported) return;
         // UI также добавляет строки телеметрии и выполняет таймер SEND_STATE.
         // Поэтому здесь нельзя синхронно ждать диагностический ответ.
         if (!System::Threading::Monitor::TryEnter(commandPipelineGate)) return;
@@ -471,9 +507,9 @@ void ProjectServerW::DataForm::PollSensorDiag() {
     catch (Exception^ ex) {
         GlobalLogger::LogMessage("Warning: PollSensorDiag failed: " + ex->Message);
     }
-    // Флаг защищает только постановку/отправку запроса, а не ожидание ответа.
-    // Сбрасываем его и при раннем выходе или исключении, разрешая будущие попытки.
-    finally { sensorDiagInProgress = false; }
+    // Ответ диагностики по-прежнему приходит асинхронно; блокирующего ожидания нет.
+    // При занятом commandPipelineGate следующая телеметрия повторит планирование.
+    finally { CancelSensorDiagPoll(); }
 }
 
 /*

@@ -380,6 +380,8 @@ void ProjectServerW::DataForm::ResetProgramStateAfterLinkLoss()
     if (this == nullptr || this->IsDisposed || this->Disposing)
         return;
 
+    // Ожидание лога старого соединения не должно отправить диагностику в новый сокет.
+    CancelSensorDiagPoll();
     const bool hadAutoSession = controllerAutoModeActive;
 
     controllerAutoModeActive = false;
@@ -1336,6 +1338,7 @@ bool ProjectServerW::DataForm::ExecuteStartupCommandSequence() {
     }
 
     // Прошивка могла смениться при переподключении: поддержку GET_SENSOR_DIAG проверяем заново.
+    CancelSensorDiagPoll();
     sensorDiagUnsupported = false;
     lastSensorDiagTime = DateTime::MinValue;
 
@@ -1786,6 +1789,12 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
     }
     finally {
         System::Threading::Monitor::Exit(dataTableSync);   // Выходим из синхронизатора таблицы
+    }
+    // Кадр лога уже полностью принят и разобран. Освобождаем ожидание и отправляем
+    // минутную диагностику только теперь; вызов остаётся в UI и не ждёт её ответа.
+    if (sensorDiagInProgress && sensorDiagLogTimer->Enabled) {
+        sensorDiagLogTimer->Stop();
+        PollSensorDiag();
     }
 }
 
@@ -3088,6 +3097,7 @@ void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::ar
 System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ sender, System::Windows::Forms::FormClosingEventArgs^ e) {
     try {
         isFormClosingNow = true;
+        CancelSensorDiagPoll();
         // На случай, если последнее изменение чек-бокса/времени не успели записать в файл.
         SaveSettings();
         // Проверяем, есть ли данные в таблице и не были ли они уже экспортированы
@@ -3214,6 +3224,12 @@ System::Void DataForm::DataForm_HandleDestroyed(Object^ sender, EventArgs^ e)
         catch (...) {}
         inactivityTimer = nullptr;
     }
+    if (sensorDiagLogTimer != nullptr) {
+        CancelSensorDiagPoll();
+        sensorDiagLogTimer->Tick -= gcnew EventHandler(this, &DataForm::OnSensorDiagLogTimeout);
+        delete sensorDiagLogTimer;
+        sensorDiagLogTimer = nullptr;
+    }
     if (controlLogAbsenceTimer != nullptr) {
         try {
             controlLogAbsenceTimer->Stop();
@@ -3322,6 +3338,10 @@ void ProjectServerW::DataForm::OnControlLogAbsenceTimerTick(System::Object^ send
 void ProjectServerW::DataForm::OnSendStateTimerTick(System::Object^ sender, System::EventArgs^ e)
 {
     try {
+        // Не начинаем новый цикл телеметрии между DATA_OK и ожидаемым логом:
+        // иначе очередной pendingRow заменит строку, ради которой ждём диагностику.
+        // Потеря лога задержит опрос максимум на одноразовый таймаут 1 с.
+        if (sensorDiagInProgress) return;
         if (ClientSocket == INVALID_SOCKET)
             return;
         if (!startupSequenceCompleted)
