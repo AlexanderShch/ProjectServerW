@@ -1,6 +1,7 @@
 #include "PacketQueueProcessor.h"
 
 #include "Commands.h"
+#include "SocketSend.h"
 
 #include <msclr/marshal_cppstd.h>
 
@@ -111,8 +112,16 @@ namespace ProjectServerW {
 			Object^ sendGate = GetOrCreateSendGate(socketKey);
 			Monitor::Enter(sendGate);
 			try {
-				const int bytesSent = send(socket, reinterpret_cast<const char*>(ackBuffer), static_cast<int>(ackSize), 0);
-				return bytesSent != SOCKET_ERROR;
+                const bool sent = SocketTransport::SendAll(socket, reinterpret_cast<const char*>(ackBuffer), static_cast<int>(ackSize));
+                if (!sent) {
+                    const int error = WSAGetLastError();
+                    GlobalLogger::LogMessage(String::Format(
+                        L"Error: ACK телеметрии 0x{0:X2} не отправлен полностью (socket={1}, WSA={2}); обмен не завершён, соединение сбрасывается",
+                        code, static_cast<UInt64>(socket), error));
+                    // Do not leave the TCP peer waiting on a truncated frame.
+                    shutdown(socket, SD_BOTH);
+                }
+                return sent;
 			}
 			finally {
 				Monitor::Exit(sendGate);

@@ -2,6 +2,7 @@
 #include "Chart.h"
 #include "FormExcel.h"
 #include "Commands.h"               // Command, DefrostParam и обмен с контроллером
+#include "SocketSend.h"
 #include "PacketQueueProcessor.h"   // per-socket Очередь команд (ACK от контроллера vs ответы в UI)
 #include <objbase.h>                // для CoCreateGuid — генерация уникального идентификатора окна
 #include <string>
@@ -131,6 +132,7 @@ void ProjectServerW::DataForm::UpdateModeFlagsFromTelemetry(
     // Если флаг _Wrk установлен, сбрасываем счётчик нулевых последовательных отсчётов
     // И устанавливаем флаг автомата
     if (wrkBit) {
+        if (!wasAuto) PrepareNewLogSession(now);
         wrkZeroConsecutiveCounts = 0;
         controllerAutoModeActive = true;   // Устанавливаем флаг автомата
     }
@@ -330,11 +332,132 @@ void ProjectServerW::DataForm::UpdateShutdownExportFlags(
             if (dataCollectionEndTime == DateTime::MinValue) {   // Если время окончания сбора данных не установлено
                 dataCollectionEndTime = now;   // Устанавливаем время окончания сбора данных
             }
-            StartExcelExportThread(true);   // Запускаем экспорт данных в Excel
+            if (!QueueCompletedCycle(now, -1, autoRestartPending)) return;
             stopExportPending = false;   // Сбрасываем флаг экспорта данных в Excel
             shdWrkZeroStableCounts = 0;   // Сбрасываем счётчик стабильных отсчётов _Shd=0 && _Wrk=0
         }
     }
+}
+
+bool ProjectServerW::DataForm::QueueCompletedCycle(DateTime now, int firstRowIndex, bool restartAfterExport) {
+    if (endDataCaptureActive || endDataCapturePending) return false;
+    FlushPendingLogRow();
+    dataCollectionEndTime = now;
+    exportingCompletedCycle = true;
+    bool queued = false;
+    try { queued = StartExcelExportThread(true, firstRowIndex, true, true, restartAfterExport); }
+    finally { exportingCompletedCycle = false; }
+    if (queued) {
+        completedCycleRowCount = dataTable->Rows->Count;
+        completedCycleId = logSessionId;
+        completedCycleEnd = now;
+        endDataDeadline = now.AddHours(2);
+        endDataCapturePending = true;
+        timerEndData->Start();
+    }
+    return queued;
+}
+
+void ProjectServerW::DataForm::OnCompletedCycleSaved(Guid sessionId, bool succeeded) {
+    if (InvokeRequired) {
+        BeginInvoke(gcnew System::Action<Guid, bool>(this, &DataForm::OnCompletedCycleSaved), sessionId, succeeded);
+        return;
+    }
+    if (!endDataCapturePending || completedCycleId != sessionId || logSessionId != sessionId) return;
+    if (succeeded) BeginEndDataCapture(completedCycleEnd);
+    else GlobalLogger::LogMessage(L"Error: WorkData не сохранён. Таблица сохранена в памяти; сбор послеостановочных данных продолжается.");
+}
+
+// WorkData owns a snapshot; retain incoming tail rows while waiting for SaveAs.
+void ProjectServerW::DataForm::BeginEndDataCapture(DateTime now) {
+    System::Threading::Monitor::Enter(dataTableSync);
+    try {
+        FlushPendingLogRow();
+        for (int i = 0; i < completedCycleRowCount && dataTable->Rows->Count > 0; ++i)
+            dataTable->Rows->RemoveAt(0);
+        endDataCapturePending = false;
+        siemensSessionStartRowIndex = 0;
+        dataCollectionStartTime = now;
+        dataCollectionEndTime = DateTime::MinValue;
+        endDataDeadline = now.AddHours(2);
+        endDataCaptureActive = true;
+        dataExportedToExcel = false;
+        timerEndData->Start();
+    }
+    finally { System::Threading::Monitor::Exit(dataTableSync); }
+    GlobalLogger::LogMessage(L"Information: Начат сбор EndData на 2 часа после завершения цикла");
+}
+
+bool ProjectServerW::DataForm::FinishEndDataCapture(DateTime now) {
+    if (endDataCapturePending) BeginEndDataCapture(completedCycleEnd);
+    if (!endDataCaptureActive) return true;
+    FlushPendingLogRow();
+    dataCollectionEndTime = now < endDataDeadline ? now : endDataDeadline;
+    if (dataTable->Rows->Count > 0 && !StartExcelExportThread(true, -1, true, true))
+        return false;
+    endDataCaptureActive = false;
+    timerEndData->Stop();
+    pendingRow = nullptr;
+    pendingRowWrkBit = false;
+    dataTable->Rows->Clear();
+    siemensSessionStartRowIndex = 0;
+    dataExportedToExcel = true;
+    return true;
+}
+
+void ProjectServerW::DataForm::PrepareNewLogSession(DateTime now) {
+    if (InvokeRequired) {
+        Invoke(gcnew System::Action<DateTime>(this, &DataForm::PrepareNewLogSession), now);
+        return;
+    }
+    // A new START can arrive before shutdown confirmation has queued WorkData.
+    if (!endDataCaptureActive && !endDataCapturePending &&
+        (pendingRow != nullptr || dataTable->Rows->Count > 0)) {
+        if (!QueueCompletedCycle(now, siemensRecordingActive ? siemensSessionStartRowIndex : -1, false))
+            throw gcnew System::InvalidOperationException(L"Не удалось поставить предыдущий WorkData в очередь");
+    }
+    if (!FinishEndDataCapture(now))
+        throw gcnew System::InvalidOperationException(L"Не удалось поставить EndData в очередь экспорта");
+    logSessionId = Guid::NewGuid();
+    stopExportPending = false;
+    shdWrkZeroStableCounts = 0;
+    postStopCaptureActive = false;
+    dataCollectionStartTime = now;
+    dataCollectionEndTime = DateTime::MinValue;
+    dataExportedToExcel = false;
+}
+
+void ProjectServerW::DataForm::FlushPendingLogRow() {
+    System::Threading::Monitor::Enter(dataTableSync);
+    try {
+        if (pendingRow != nullptr && pendingRow->RowState == System::Data::DataRowState::Detached) {
+            dataTable->Rows->Add(pendingRow);
+            dataExportedToExcel = false;
+        }
+        pendingRow = nullptr;
+        pendingRowWrkBit = false;
+    }
+    finally { System::Threading::Monitor::Exit(dataTableSync); }
+}
+
+void ProjectServerW::DataForm::ApplyConfirmedStart() {
+    if (InvokeRequired) {
+        Invoke(gcnew MethodInvoker(this, &DataForm::ApplyConfirmedStart));
+        return;
+    }
+    // Siemens recording is controlled by But_Start telemetry, not the command ACK.
+    if (radioButtonSiemens != nullptr && radioButtonSiemens->Checked) return;
+    if (!controllerAutoModeActive) PrepareNewLogSession(DateTime::Now);
+    controllerAutoModeActive = true;
+    lastStartSuccessTime = DateTime::Now;
+    lastControlLogTime = DateTime::Now;
+    wrkZeroConsecutiveCounts = 0;
+    SetProgramStateUi(true);
+}
+
+System::Void ProjectServerW::DataForm::timerEndData_Tick(System::Object^ sender, System::EventArgs^ e) {
+    if ((endDataCaptureActive || endDataCapturePending) && DateTime::Now >= endDataDeadline)
+        FinishEndDataCapture(endDataDeadline);
 }
 
 void ProjectServerW::DataForm::ApplyStopLikeSessionStateReset()
@@ -367,7 +490,7 @@ void ProjectServerW::DataForm::ApplyStopLikeSessionStateReset()
             dataCollectionEndTime = now;   // Устанавливаем время окончания сбора данных
         }
         try {
-            StartExcelExportThread(true);   // Запускаем экспорт данных в Excel
+            QueueCompletedCycle(now, -1, autoRestartPending);
         }
         catch (Exception^ ex) {
             GlobalLogger::LogMessage("Ошибка: экспорт в Excel при STOP/RESET (ожидался по stopExportPending): " + ex->ToString());   // Логируем ошибку
@@ -461,15 +584,17 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency, int firs
 }
 
 bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency, int firstRowIndex, bool includeLastRow, bool allowQueueIfBusy, bool restartAfterExport) {
+    bool registeredExport = false;
     try {
         // Замечание: блок не по потоку — захват монитора в контексте этого потока (UI поток захватывает монитор по кнопке).
         System::Threading::Monitor::Enter(excelExportSync);
         try {
             if (excelExportInProgress != 0 && !allowQueueIfBusy) {
                 GlobalLogger::LogMessage("Information: Excel export already pending/in progress (per-form guard)");
-                return true;
+                return false;
             }
-            excelExportInProgress = 1;
+            ++excelExportInProgress;
+            registeredExport = true;
         }
         finally {
             System::Threading::Monitor::Exit(excelExportSync);
@@ -485,6 +610,18 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency, int firs
             catch (...) {}
         }
 
+        // A pending WorkData SaveAs keeps its prefix in the UI table. Other exports
+        // must select only the tail, with EndData metadata, even before its callback.
+        const bool exportEndData = endDataCaptureActive || (endDataCapturePending && !exportingCompletedCycle);
+        const DateTime exportStart = endDataCapturePending && exportEndData ? completedCycleEnd : dataCollectionStartTime;
+        const DateTime exportEnd = exportEndData
+            ? (dataCollectionEndTime == DateTime::MinValue || endDataCapturePending
+                ? (DateTime::Now < endDataDeadline ? DateTime::Now : endDataDeadline)
+                : dataCollectionEndTime)
+            : dataCollectionEndTime;
+        const Guid exportSessionId = logSessionId;
+        if (endDataCapturePending && exportEndData)
+            firstRowIndex = Math::Max(firstRowIndex, completedCycleRowCount);
         System::Data::DataTable^ snapshot = nullptr;
         System::Threading::Monitor::Enter(dataTableSync);
         try {
@@ -500,7 +637,7 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency, int firs
         }
 
         // Siemens: текущая сессия уже выделена в snapshot; её последнюю строку сохраняем.
-        if (!includeLastRow && snapshot != nullptr && snapshot->Rows->Count > 0) {
+        if (!includeLastRow && !exportEndData && snapshot != nullptr && snapshot->Rows->Count > 0) {
             snapshot->Rows->RemoveAt(snapshot->Rows->Count - 1);
         }
 
@@ -524,20 +661,23 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency, int firs
         // Создаём задачу экспорта данных в EXCEL
         ProjectServerW::FormExcel::ExcelExportJob^ job = gcnew ProjectServerW::FormExcel::ExcelExportJob();
         job->tableSnapshot = snapshot;
+        job->filePrefix = exportEndData ? "EndData" : "WorkData";
 
         // Снимок параметров для листа «Параметры»
         job->paramsPhase = BuildPhaseParamsDataTableForExcel();
         job->paramsGlobal = BuildGlobalParamsDataTableForExcel();
         job->equipmentAlarms = BuildEquipmentAlarmDataTableForExcel();
         job->saveDirectory = excelSavePath;
-        job->sessionStart = dataCollectionStartTime;
-        job->sessionEnd = dataCollectionEndTime;
+        job->sessionStart = exportStart;
+        job->sessionEnd = exportEnd;
         job->clientPort = clientPort;
         job->clientIP = this->ClientIP;
         job->formGuid = this->FormGuid;
         job->formRef = gcnew System::WeakReference(this);
         job->enableButtonOnComplete = !isEmergency;
         job->restartAfterExport = restartAfterExport;
+        job->completesCycle = exportingCompletedCycle;
+        job->sessionId = exportSessionId;
 
         // Помещаем задачу в очередь экспорта данных в EXCEL
         ProjectServerW::FormExcel::EnqueueExport(job);
@@ -557,7 +697,7 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency, int firs
         GlobalLogger::LogMessage("Ошибка: не удалось запустить поток экспорта данных в Excel: " + ex->ToString());
         System::Threading::Monitor::Enter(excelExportSync);
         try {
-            excelExportInProgress = 0;
+            if (registeredExport && excelExportInProgress > 0) --excelExportInProgress;
         }
         finally {
             System::Threading::Monitor::Exit(excelExportSync);
@@ -567,12 +707,14 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency, int firs
 }
 
 // Обработка завершения экспорта данных в EXCEL.
-void ProjectServerW::DataForm::OnExcelExportCompleted(bool enableButtonOnComplete, bool exportSucceeded, bool restartAfterExport) {
-    // Снимаем per-form guard — иначе после первого Enqueue все следующие StartExcelExportThread блокируются навсегда.
+void ProjectServerW::DataForm::OnExcelExportCompleted(Guid sessionId, bool enableButtonOnComplete, bool exportSucceeded, bool restartAfterExport) {
+    // Each queued snapshot has its own completion, even if a newer cycle is running.
+    bool allExportsCompleted = false;
     try {
         System::Threading::Monitor::Enter(excelExportSync);
         try {
-            excelExportInProgress = 0;
+            if (excelExportInProgress > 0) --excelExportInProgress;
+            allExportsCompleted = (excelExportInProgress == 0);
         }
         finally {
             System::Threading::Monitor::Exit(excelExportSync);
@@ -584,10 +726,10 @@ void ProjectServerW::DataForm::OnExcelExportCompleted(bool enableButtonOnComplet
         return;
     }
 
-    if (restartAfterExport) {
+    if (restartAfterExport && sessionId == logSessionId) {
         if (exportSucceeded) {
             try {
-                this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::CompleteAutoRestartAfterExport));
+                this->BeginInvoke(gcnew System::Action<Guid>(this, &DataForm::CompleteAutoRestartAfterExport), sessionId);
             }
             catch (Exception^ ex) {
                 GlobalLogger::LogMessage("Error: Не удалось запланировать START после экспорта Excel: " + ex->Message);
@@ -598,7 +740,7 @@ void ProjectServerW::DataForm::OnExcelExportCompleted(bool enableButtonOnComplet
         }
     }
 
-    if (enableButtonOnComplete) {
+    if (allExportsCompleted) {
         try {
             this->BeginInvoke(gcnew MethodInvoker(this, &DataForm::EnableButton));
         }
@@ -611,7 +753,8 @@ void ProjectServerW::DataForm::OnExcelExportCompleted(bool enableButtonOnComplet
     }
 }
 
-void ProjectServerW::DataForm::CompleteAutoRestartAfterExport() {
+void ProjectServerW::DataForm::CompleteAutoRestartAfterExport(Guid sessionId) {
+    if (sessionId != logSessionId) return;
     if (!autoRestartPending || this->IsDisposed || this->Disposing)
         return;
     if (radioButtonSiemens == nullptr || !radioButtonSiemens->Checked ||
@@ -1011,6 +1154,8 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     // поэтому маркер отсутствия данных здесь не используем: проверяем тип и Active.
     const bool butStartValid = (data.SensorType[SQ - 1] == 4u && data.Active[SQ - 1] != 0u);
     const bool butStartBit = (data.T[SQ - 1] & (1u << 14)) != 0u;
+    if ((endDataCaptureActive || endDataCapturePending) && now >= endDataDeadline)
+        FinishEndDataCapture(endDataDeadline);
     bool finishSiemensRecordingAfterRow = false;
     bool wrkBit = false;   // Флаг режима работы
     bool shdBit = false;   // Флаг режима shutdown
@@ -1030,6 +1175,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         shdWrkZeroStableCounts = 0;
         if (butStartValid && butStartBit) {
             if (!siemensRecordingActive) {
+                PrepareNewLogSession(now);
                 siemensRecordingActive = true;
                 siemensSessionStartRowIndex = table->Rows->Count;
                 dataCollectionStartTime = now;
@@ -1051,8 +1197,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     else {
         if (siemensRecordingActive) {
             dataCollectionEndTime = now;
-            if (StartExcelExportThread(true, siemensSessionStartRowIndex, true, true))
-                dataExportedToExcel = true;
+            QueueCompletedCycle(now, siemensSessionStartRowIndex, false);
             siemensRecordingActive = false;
             siemensButStartZeroCount = 0;
             GlobalLogger::LogMessage("Информация: Siemens: запись завершена при переключении в STM32");
@@ -1083,7 +1228,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     else if ((siemensMode && siemensRecordingActive) ||
              (!siemensMode && controllerAutoModeActive && !wrkBit) ||
              postStopCaptureActive ||
-             (stopExportPending && !wrkBit && !shdBit)) {   // Если в режиме STOP или послеостановочном хвосте, или в режиме STOP_EXPORT
+             (stopExportPending && !wrkBit && !shdBit) || endDataCaptureActive || endDataCapturePending) {   // Если в режиме STOP или послеостановочном хвосте, или в режиме STOP_EXPORT
         rowTakenForTableOrPending = true;
         System::Threading::Monitor::Enter(dataTableSync);   // Захватываем мьютекс для синхронизации доступа к таблице данных
         try {
@@ -1131,8 +1276,8 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     if (siemensMode) {
         if (finishSiemensRecordingAfterRow) {
             dataCollectionEndTime = now;
-            const bool queued = StartExcelExportThread(true, siemensSessionStartRowIndex, true, true, autoRestartPending);
-            if (queued) dataExportedToExcel = true;
+            const bool queued = QueueCompletedCycle(now, siemensSessionStartRowIndex, autoRestartPending);
+            if (queued) dataExportedToExcel = false;
             else GlobalLogger::LogMessage("Предупреждение: Siemens: не удалось поставить экспорт телеметрии в очередь");
             siemensRecordingActive = false;
             siemensButStartZeroCount = 0;
@@ -1170,7 +1315,9 @@ void DataForm::EnableButton()
         if (buttonExcel == nullptr || buttonExcel->IsDisposed) {
             return;
         }
-        buttonExcel->Enabled = true;
+        System::Threading::Monitor::Enter(excelExportSync);
+        try { buttonExcel->Enabled = (excelExportInProgress == 0); }
+        finally { System::Threading::Monitor::Exit(excelExportSync); }
     }
     catch (...) {}
 }
@@ -3097,6 +3244,8 @@ void ProjectServerW::DataForm::InitializeBitFieldNames(gcroot<cli::array<cli::ar
 System::Void ProjectServerW::DataForm::DataForm_FormClosing(System::Object^ sender, System::Windows::Forms::FormClosingEventArgs^ e) {
     try {
         isFormClosingNow = true;
+        timerEndData->Stop();
+        if (endDataCaptureActive || endDataCapturePending) FinishEndDataCapture(DateTime::Now);
         CancelSensorDiagPoll();
         // На случай, если последнее изменение чек-бокса/времени не успели записать в файл.
         SaveSettings();
@@ -3375,9 +3524,9 @@ void ProjectServerW::DataForm::OnSendStateTimerTick(System::Object^ sender, Syst
             System::Object^ sendGate = PacketQueueProcessor::GetSendGate(ClientSocket);
             System::Threading::Monitor::Enter(sendGate);
             try {
-                int bytesSent = send(ClientSocket, reinterpret_cast<const char*>(buffer),
-                    static_cast<int>(commandLength), 0);
-                if (bytesSent == SOCKET_ERROR)
+                const bool sent = SocketTransport::SendAll(ClientSocket, reinterpret_cast<const char*>(buffer),
+                    static_cast<int>(commandLength));
+                if (!sent)
                     GlobalLogger::LogMessage("Warning: SEND_STATE send failed");
             }
             finally {

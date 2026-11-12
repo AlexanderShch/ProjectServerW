@@ -1,6 +1,7 @@
 #include "DataForm.h"
 #include "Commands.h"
 #include "PacketQueueProcessor.h"
+#include "SocketSend.h"
 
 using namespace System;
 using namespace System::Windows::Forms;
@@ -58,8 +59,8 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
             System::Object^ sendGate = PacketQueueProcessor::GetSendGate(clientSocket);
             System::Threading::Monitor::Enter(sendGate);
             try {
-                bytesSent = send(clientSocket, reinterpret_cast<const char*>(buffer),
-                    static_cast<int>(commandLength), 0);
+                bytesSent = SocketTransport::SendAll(clientSocket, reinterpret_cast<const char*>(buffer),
+                    static_cast<int>(commandLength)) ? static_cast<int>(commandLength) : SOCKET_ERROR;
             }
             finally {
                 System::Threading::Monitor::Exit(sendGate);
@@ -127,6 +128,12 @@ void ProjectServerW::DataForm::SendStartCommand() {
         }
         // Синхронизируем состояние "авторежим активен" сразу после подтверждения START,
         // чтобы детект останова по _Wrk/таймауту не зависел только от следующего пакета телеметрии.
+        if ((radioButtonSiemens == nullptr || !radioButtonSiemens->Checked) && !controllerAutoModeActive) {
+            if (InvokeRequired)
+                Invoke(gcnew System::Action<DateTime>(this, &DataForm::PrepareNewLogSession), DateTime::Now);
+            else
+                PrepareNewLogSession(DateTime::Now);
+        }
         controllerAutoModeActive = true;
         lastStartSuccessTime = DateTime::Now;
         lastControlLogTime = DateTime::Now;
@@ -855,6 +862,8 @@ void ProjectServerW::DataForm::ProcessResponse(const CommandResponse& response) 
         String^ message;
 
         if (response.status == CmdStatus::OK) {
+            if (response.commandType == CmdType::PROG_CONTROL && response.commandCode == CmdProgControl::START)
+                ApplyConfirmedStart();
             message = String::Format(
                 "[OK] Команда Type=0x{0:X2} ({1}), Code=0x{2:X2} ({3}) успешно выполнена"
                 "\nСтатус: 0x{4:X2} ({5}) - {6}",
@@ -1145,14 +1154,16 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
                 break;
             }
 
-            // Обрабатываем полученный ответ
-            if (!isSensorDiag)
-                ProcessResponse(response);
-            return (response.status == CmdStatus::OK);
         }
         finally {
             System::Threading::Monitor::Exit(commandPipelineGate);
         }
+        // UI callbacks can Invoke onto a thread which itself needs this gate.
+        // The network transaction is complete before touching UI/session state.
+        const bool isSensorDiagResponse =
+            (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_SENSOR_DIAG);
+        if (!isSensorDiagResponse) ProcessResponse(response);
+        return (response.status == CmdStatus::OK);
 
     }
     catch (Exception^ ex) {

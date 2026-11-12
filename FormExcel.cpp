@@ -113,6 +113,7 @@ static void AddExcelChartSeries(Microsoft::Office::Interop::Excel::SeriesCollect
 FormExcel::FormExcel() {
 	excelGlobalMutex = gcnew Mutex(false, "Global\\ProjectServerW_Excel_Mutex");
 	excelExportQueue = gcnew System::Collections::Concurrent::ConcurrentQueue<ExcelExportJob^>();
+	failedExportJobs = gcnew System::Collections::Concurrent::ConcurrentQueue<ExcelExportJob^>();
 	excelExportQueueEvent = gcnew AutoResetEvent(false);
 	excelExportWorkerSync = gcnew Object();
 	excelExportWorkerThread = nullptr;
@@ -166,6 +167,10 @@ void FormExcel::EnqueueExport(ExcelExportJob^ job) {
 	}
 	EnsureExcelExportWorker();
 	try { excelAllExportsCompletedEvent->Reset(); } catch (...) {}
+    // Failed immutable snapshots survive table clearing and are retried with the next export.
+    ExcelExportJob^ failedJob = nullptr;
+    while (failedExportJobs->TryDequeue(failedJob))
+        excelExportQueue->Enqueue(failedJob);
 	excelExportQueue->Enqueue(job);
 	excelExportQueueEvent->Set();
 }
@@ -214,7 +219,9 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 				form = dynamic_cast<DataForm^>(job->formRef->Target);	// Преобразуем ссылку на форму в объект DataForm
 			}
 			if (form != nullptr && !form->IsDisposed && !form->Disposing) {	// Если форма существует и не уничтожена, вызываем метод OnExcelExportCompleted
-				form->OnExcelExportCompleted(job->enableButtonOnComplete, false, job->restartAfterExport);
+				if (job->completesCycle)
+                    form->OnCompletedCycleSaved(job->sessionId, exportSucceeded);
+                form->OnExcelExportCompleted(job->sessionId, job->enableButtonOnComplete, false, job->restartAfterExport);
 			}
 		}
 		catch (...) {}	// Если произошла ошибка, выходим
@@ -626,11 +633,16 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 		DateTime start = (job->sessionStart == DateTime::MinValue) ? DateTime::Now : job->sessionStart;
 		DateTime end = (job->sessionEnd == DateTime::MinValue) ? DateTime::Now : job->sessionEnd;
 		System::String^ finalFileName = String::Format(
-			"WorkData_Start_{0}_End_{1}_Port{2}.xlsx",
+			"{3}_Start_{0}_End_{1}_Port{2}.xlsx",
 			start.ToString("yyyy-MM-dd_HH-mm-ss"),
 			end.ToString("yyyy-MM-dd_HH-mm-ss"),
-			job->clientPort.ToString());
+			job->clientPort.ToString(),
+            String::IsNullOrEmpty(job->filePrefix) ? "WorkData" : job->filePrefix);
 
+        if (System::IO::File::Exists(dir + finalFileName)) {
+            finalFileName = System::IO::Path::GetFileNameWithoutExtension(finalFileName) +
+                "_" + job->sessionId.ToString("N") + ".xlsx";
+        }
 		const bool saved = excel->SaveAs(dir + finalFileName);
 		excel->Close();
 		delete excel;
@@ -677,10 +689,22 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 			}
 
 			if (!exportRequeued && form != nullptr && !form->IsDisposed && !form->Disposing) {
-				form->OnExcelExportCompleted(job->enableButtonOnComplete, exportSucceeded, job->restartAfterExport);
+				if (job->completesCycle)
+                    form->OnCompletedCycleSaved(job->sessionId, exportSucceeded);
+                form->OnExcelExportCompleted(job->sessionId, job->enableButtonOnComplete, exportSucceeded, job->restartAfterExport);
 			}
 		}
 		catch (...) {}
+        if (!exportSucceeded && !exportRequeued && job->tableSnapshot != nullptr) {
+            // Completion has already accounted for the original job. Retries are detached
+            // from UI state so they cannot decrement a newer job or trigger an old START.
+            job->formRef = nullptr;
+            job->completesCycle = false;
+            job->restartAfterExport = false;
+            job->enableButtonOnComplete = false;
+            failedExportJobs->Enqueue(job);
+            GlobalLogger::LogMessage(L"Error: Снимок Excel сохранён в памяти для повторной записи при следующем экспорте");
+        }
 	}
 	}
 	finally {

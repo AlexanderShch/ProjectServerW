@@ -337,6 +337,14 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 
 	// Установка тайм-аута для операций чтения (recv)
 	setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+    // send() is blocking too: a stalled bridge must not hold send/receive gates forever.
+    const int sendTimeoutMs = 1000;
+    if (setsockopt(clientSocket, SOL_SOCKET, SO_SNDTIMEO,
+        reinterpret_cast<const char*>(&sendTimeoutMs), sizeof(sendTimeoutMs)) == SOCKET_ERROR) {
+        GlobalLogger::LogMessage("Error: Cannot set socket send timeout; closing connection");
+        shutdown(clientSocket, SD_BOTH);
+        // The receive loop below owns socket/form cleanup, including this failure.
+    }
 
 	// Буфер для накопления данных (для обработки нескольких пакетов)
 	char accumulatedBuffer[1024] = {};  // Буфер для накопления данных

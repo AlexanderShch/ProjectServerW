@@ -13,6 +13,7 @@ namespace ProjectServerW {
 			System::Data::DataTable^ paramsGlobal;
 			System::Data::DataTable^ equipmentAlarms;
 			System::String^ saveDirectory;
+            System::String^ filePrefix;
 			System::DateTime sessionStart;
 			System::DateTime sessionEnd;
 			int clientPort;
@@ -21,6 +22,8 @@ namespace ProjectServerW {
 			System::WeakReference^ formRef;
 			bool enableButtonOnComplete;
 			bool restartAfterExport;
+            bool completesCycle;
+            System::Guid sessionId;
 		};
 
 		static void EnqueueExport(ExcelExportJob^ job);
@@ -30,7 +33,8 @@ namespace ProjectServerW {
 	private:
 		static System::Threading::Mutex^ excelGlobalMutex;
 		static System::Collections::Concurrent::ConcurrentQueue<ExcelExportJob^>^ excelExportQueue;
-		static System::Threading::AutoResetEvent^ excelExportQueueEvent;
+		static System::Collections::Concurrent::ConcurrentQueue<ExcelExportJob^>^ failedExportJobs;
+        static System::Threading::AutoResetEvent^ excelExportQueueEvent;
 		static System::Threading::Thread^ excelExportWorkerThread;
 		static System::Object^ excelExportWorkerSync;
 		static bool excelExportWorkerStarted;

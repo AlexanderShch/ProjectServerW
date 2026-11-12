@@ -225,7 +225,23 @@ namespace ProjectServerW {
 	bool postStopCaptureActive;      // true: продолжаем запись после STOP (вентиляция/подъём ворот/хвост 10 с)
 	bool postStopGateOpenSeen;       // true: в after-stop режиме зафиксирован верхний концевик ворот
 	DateTime postStopCaptureGraceUntil; // до какого времени писать после Gate_Open (+10 с)
-	bool stopExportPending;          // true: STOP подтверждён по _Wrk, ждём окончания _Shd/хвоста перед экспортом
+	bool endDataCaptureActive;
+    bool endDataCapturePending;
+    bool exportingCompletedCycle;
+    int completedCycleRowCount;
+    System::DateTime completedCycleEnd;
+    System::Guid logSessionId;
+    System::Guid completedCycleId;
+    void FlushPendingLogRow();
+    void ApplyConfirmedStart();
+    bool QueueCompletedCycle(System::DateTime now, int firstRowIndex, bool restartAfterExport);
+    System::DateTime endDataDeadline;
+    System::Windows::Forms::Timer^ timerEndData;
+    void BeginEndDataCapture(System::DateTime now);
+    bool FinishEndDataCapture(System::DateTime now);
+    void PrepareNewLogSession(System::DateTime now);
+    System::Void timerEndData_Tick(System::Object^ sender, System::EventArgs^ e);
+    bool stopExportPending;          // true: STOP подтверждён по _Wrk, ждём окончания _Shd/хвоста перед экспортом
 	int shdWrkZeroStableCounts;      // стабильные отсчёты времени устройства с _Shd=0 и _Wrk=0 перед автоэкспортом
 	DateTime lastControlLogTime;     // Время последней телеметрии с _Wrk=1; сброс флага при отсутствии такой телеметрии
 	int controlLogAbsenceStrikeCount; // Счётчик подряд идущих "пропусков" _Wrk=1 для защиты от ложных срабатываний
@@ -320,6 +336,14 @@ namespace ProjectServerW {
 				excelExportSync = gcnew System::Object();
 				commandPipelineGate = gcnew System::Object();
 				excelExportInProgress = 0;
+                endDataCaptureActive = false;
+                endDataCapturePending = false;
+                exportingCompletedCycle = false;
+                logSessionId = System::Guid::NewGuid();
+                endDataDeadline = DateTime::MinValue;
+                timerEndData = gcnew System::Windows::Forms::Timer(this->components);
+                timerEndData->Interval = 1000;
+                timerEndData->Tick += gcnew System::EventHandler(this, &DataForm::timerEndData_Tick);
 				formGuid = nullptr;
 				tabControl1PrevTab = nullptr;
 				dataGridView1Dirty = false;
@@ -1453,7 +1477,8 @@ private: System::ComponentModel::IContainer^ components;
 			}
 
 			void EnableButton();
-			void OnExcelExportCompleted(bool enableButtonOnComplete, bool exportSucceeded, bool restartAfterExport);
+			void OnCompletedCycleSaved(System::Guid sessionId, bool succeeded);
+            void OnExcelExportCompleted(System::Guid sessionId, bool enableButtonOnComplete, bool exportSucceeded, bool restartAfterExport);
 			bool SendCommand(const ::Command& cmd); // Универсальный метод отправки команды (имя определяется автоматически)
 			bool SendCommand(const ::Command& cmd, System::String^ commandName); // Универсальный метод отправки команды с явным именем
 		void SendStartCommand(); // Метод для отправки команды START клиенту
@@ -1543,7 +1568,7 @@ private: System::ComponentModel::IContainer^ components;
 			bool StartExcelExportThread(bool isEmergency);
 			bool StartExcelExportThread(bool isEmergency, int firstRowIndex, bool includeLastRow, bool allowQueueIfBusy);
 			bool StartExcelExportThread(bool isEmergency, int firstRowIndex, bool includeLastRow, bool allowQueueIfBusy, bool restartAfterExport);
-			void CompleteAutoRestartAfterExport();
+			void CompleteAutoRestartAfterExport(System::Guid sessionId);
 			void OnInactivityTimerTick(Object^ sender, EventArgs^ e);
 		private: System::Void textBoxExcelDirectory_TextChanged(System::Object^ sender, System::EventArgs^ e) {
 		}
