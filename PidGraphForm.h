@@ -14,9 +14,10 @@ using namespace System::Collections::Generic;
 ref class PidPlotSeries {
 public:
  int panel;String^ name;Color color;bool step;
+ double offset,plotMin,plotMax;
  List<double>^ x;List<double>^ y;
  PidPlotSeries(int p,String^ n,Color c,bool s) {
-  panel=p;name=n;color=c;step=s;x=gcnew List<double>();y=gcnew List<double>();
+  panel=p;name=n;color=c;step=s;offset=0;plotMin=0;plotMax=0;x=gcnew List<double>();y=gcnew List<double>();
  }
  void Add(DateTime at,double value) {x->Add(at.ToOADate());y->Add(value);}
 };
@@ -78,9 +79,10 @@ public ref class PidGraphForm : public Form {
   String^ filterColumn=String::Format("T_filt_{0}",channel);
   String^ activeColumn=String::Format("Act{0}",channel);
   auto raw=AddSeries(0,L"Сырая T",Color::DarkGray,false);
-  auto avg8=AddSeries(0,L"Среднее 8 с*",Color::SeaGreen,false);
   auto filt=AddSeries(0,L"Фильтр 32",Color::Firebrick,false);
   auto target=AddSeries(0,L"Уставка (общая)",Color::Black,false);
+  auto productLeft=AddSeries(0,L"T продукта (левый)",Color::ForestGreen,false);
+  auto productRight=AddSeries(0,L"T продукта (правый)",Color::DarkViolet,false);
   auto ten1=AddSeries(1,L"ТЭН1: 0/1",Color::Goldenrod,true);
   auto ten2=AddSeries(1,L"ТЭН2: 2/3",Color::SaddleBrown,true);
   auto water=AddSeries(1,L"Впрыск: 4/5",Color::DodgerBlue,true);
@@ -99,18 +101,9 @@ public ref class PidGraphForm : public Form {
    double traw=Number(row,rawColumn);double tf=Number(row,filterColumn);
    if(Number(row,activeColumn)==0) {traw=Double::NaN;tf=Double::NaN;}
    raw->Add(at,traw);filt->Add(at,tf);
-   // Eight past controller seconds: exact for complete 1s telemetry, held-value estimate for sparse telemetry.
-   double sum=0;bool complete=true;int k=j;
-   for(int age=0;age<8;++age) {
-    DateTime wanted=at.AddSeconds(-age);
-    while(k>=0&&rowTimes[k]>wanted)--k;
-    if(k<0||wanted.Subtract(rowTimes[k]).TotalSeconds>gapSeconds) {complete=false;break;}
-    double value=Number(sourceRows[k],rawColumn);
-    if(!Finite(value)||Number(sourceRows[k],activeColumn)==0) {complete=false;break;}
-    sum+=value;
-   }
-   avg8->Add(at,complete?sum/8:Double::NaN);
    target->Add(at,(Number(row,"T_filt_0")+Number(row,"T_filt_1"))/2+Number(row,"eT_common"));
+   productLeft->Add(at,Number(row,"Act3")==0?Double::NaN:Number(row,"T3"));
+   productRight->Add(at,Number(row,"Act4")==0?Double::NaN:Number(row,"T4"));
    double h1=Number(row,"Ten1_"+suffix),h2=Number(row,"Ten2_"+suffix),wi=Number(row,"_Inj");
    ten1->Add(at,Finite(h1)?(h1>0?1:0):Double::NaN);
    ten2->Add(at,Finite(h2)?(h2>0?3:2):Double::NaN);
@@ -122,7 +115,17 @@ public ref class PidGraphForm : public Form {
    integral->Add(at,I);derivative->Add(at,Number(row,"PID_D"));
    ff->Add(at,Number(row,"PID_FF"));duty->Add(at,100*Number(row,"PID_waterDuty"));
   }
-  message->Text=String::Format(L"Снимок текущего цикла: {0} строк; {1} строк с I/D/FF. *При шаге лога больше 1 с среднее 8 с — оценка.\r\n"
+  // Fixed offsets match the axis marks; keep full ranges without altering log values.
+  int band=0;
+  for each(PidPlotSeries^ s in series)if(s->panel==4) {
+   double minimum=0,maximum=2;
+   for each(double value in s->y)if(Finite(value)) {
+    minimum=Math::Min(minimum,value);maximum=Math::Max(maximum,value);
+   }
+   s->offset=3.0*band++;s->plotMin=s->offset+minimum;
+   s->plotMax=s->offset+maximum;
+  }
+  message->Text=String::Format(L"Снимок текущего цикла: {0} строк; {1} строк с I/D/FF.\r\n"
    L"I/D/FF и запрос воды взяты из тех же строк основного лога. В старом формате эти поля отсутствуют и не восстанавливаются.",sampleCount,diagnosticCount);
   canvas->Invalidate();
  }
@@ -133,16 +136,17 @@ public ref class PidGraphForm : public Form {
   g->SmoothingMode=System::Drawing::Drawing2D::SmoothingMode::AntiAlias;
   float left=78.f,width=static_cast<float>(Math::Max(300,canvas->ClientSize.Width-105));
   float section=(canvas->ClientSize.Height-65.f)/5.f;
-  auto titles=gcnew cli::array<String^>{L"Температура выбранной стороны, °C",L"Подтверждённые ТЭНы и команда впрыска",L"Влажность возврата и запрос воды, %",L"Разрешённая доля нагрева",L"Запрос нагрева, экв. ТЭНа на сторону"};
+  auto titles=gcnew cli::array<String^>{L"Температура воздуха и продукта, °C",L"Подтверждённые ТЭНы и команда впрыска",L"Влажность возврата и запрос воды, %",L"Разрешённая доля нагрева",L"Запрос нагрева и ПИД, экв. ТЭНа на сторону (со смещениями)"};
   auto font=gcnew System::Drawing::Font(L"Segoe UI",9.f);
   auto bold=gcnew System::Drawing::Font(L"Segoe UI",10.f,System::Drawing::FontStyle::Bold);
   try {
    g->DrawString(String::Format(L"{0} • {1:dd.MM.yyyy HH:mm:ss} — {2:dd.MM.yyyy HH:mm:ss}",side->Text,from->Value,until->Value),bold,Brushes::Black,left,2.f);
    for(int panel=0;panel<5;++panel) {
     float top=panel*section+77,H=section-78;
-    double lo=panel==0?Double::PositiveInfinity:(panel==4?-.7:0),hi=panel==0?Double::NegativeInfinity:(panel==1?5.3:(panel==2?100:(panel==3?1.05:2.1)));
-    if(panel==0||panel==4)for each(PidPlotSeries^ s in series)if(s->panel==panel)
+    double lo=panel==0?Double::PositiveInfinity:0,hi=panel==0?Double::NegativeInfinity:(panel==1?5.0:(panel==2?100:(panel==3?1.0:2.0)));
+    if(panel==0)for each(PidPlotSeries^ s in series)if(s->panel==panel)
      for each(double value in s->y)if(Finite(value)){lo=Math::Min(lo,value);hi=Math::Max(hi,value);}
+    if(panel==4)for each(PidPlotSeries^ s in series)if(s->panel==panel){lo=Math::Min(lo,s->plotMin);hi=Math::Max(hi,s->plotMax);}
     if(!Finite(lo)||!Finite(hi)) {lo=0;hi=1;}
     if(panel==0) {double margin=Math::Max(.1,(hi-lo)*.08);lo-=margin;hi+=margin;}
     if(hi-lo<.01)hi=lo+1;
@@ -151,16 +155,26 @@ public ref class PidGraphForm : public Form {
     for each(PidPlotSeries^ s in series)if(s->panel==panel) {
      auto brush=gcnew SolidBrush(s->color);
      try {bool hasValue=false;for each(double value in s->y)if(Finite(value)){hasValue=true;break;}
-      String^ name=s->name;if(!hasValue)name+=L" (нет данных)";
+      String^ name=s->name;
+      if(panel==4)name+=L" (+"+s->offset.ToString("0.##",System::Globalization::CultureInfo::InvariantCulture)+L")";
+      if(!hasValue)name+=L" (нет данных)";
       g->DrawString(name,font,brush,legendX,panel*section+53);
       legendX+=g->MeasureString(name,font).Width+18;
      }finally{delete brush;}
     }
     auto grid=gcnew Pen(Color::FromArgb(225,230,237));
     try {
-     for(int tick=0;tick<5;++tick) {
-      float y=top+H-tick*H/4;double value=lo+(hi-lo)*tick/4;
-      g->DrawLine(grid,left,y,left+width,y);g->DrawString(value.ToString("F2"),font,Brushes::DimGray,3.f,y-8);
+     int divisions=panel==1?5:4;
+     auto ticks=gcnew List<double>();
+     if(panel==4) {
+      for(int tick=0;tick<5;++tick)ticks->Add(3.0*tick);
+     } else for(int tick=0;tick<=divisions;++tick)ticks->Add(lo+(hi-lo)*tick/divisions);
+     for each(double value in ticks) {
+      float y=top+H-static_cast<float>((value-lo)/(hi-lo))*H;
+      String^ label=(panel==1||panel==4)?value.ToString("F0"):panel==3
+       ? (value==0?L"0":value.ToString("0.0#",System::Globalization::CultureInfo::InvariantCulture))
+       : value.ToString("F2");
+      g->DrawLine(grid,left,y,left+width,y);g->DrawString(label,font,Brushes::DimGray,3.f,y-8);
      }
      for(int tick=0;tick<7;++tick) {
       float x=left+width*tick/6;g->DrawLine(grid,x,top,x,top+H);
@@ -168,6 +182,9 @@ public ref class PidGraphForm : public Form {
       g->DrawString(label,font,Brushes::DimGray,x-25,top+H+3);
      }
     }finally{delete grid;}
+    auto plotState=g->Save();
+    try {
+    g->SetClip(System::Drawing::RectangleF(left,top,width,H));
     for each(PidPlotSeries^ s in series)if(s->panel==panel) {
      auto pen=gcnew Pen(s->color,s->name==L"Фильтр 32"?2.f:1.5f);
      bool previous=false;float px=0,py=0;double pt=0;
@@ -175,7 +192,7 @@ public ref class PidGraphForm : public Form {
       for(int q=0;q<s->x->Count;++q) {
        double value=s->y[q],time=s->x[q];if(!Finite(value)){previous=false;continue;}
        float x=left+(float)((time-x0)/(x1-x0))*width;
-       float y=top+H-(float)((value-lo)/(hi-lo))*H;
+       float y=top+H-(float)((value+s->offset-lo)/(hi-lo))*H;
        double allowed=gapSeconds;
        if(previous&&(time-pt)*86400<=allowed) {
         if(s->step){g->DrawLine(pen,px,py,x,py);g->DrawLine(pen,x,py,x,y);}
@@ -185,6 +202,7 @@ public ref class PidGraphForm : public Form {
       }
      }finally{delete pen;}
     }
+    }finally{g->Restore(plotState);}
    }
   } finally {delete font;delete bold;}
  }

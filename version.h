@@ -2,7 +2,7 @@
 
 // Версия и строка для отображения из единого набора компонентов.
 #define VERSION_MAJOR 3
-#define VERSION_MINOR 0
+#define VERSION_MINOR 1
 #define VERSION_PATCH 0
 #define VERSION_STRINGIFY_IMPL(x) #x
 #define VERSION_STRINGIFY(x) VERSION_STRINGIFY_IMPL(x)
@@ -14,6 +14,11 @@ static const wchar_t* const VERSION_STR =
     VERSION_WIDE(VERSION_STRINGIFY(VERSION_PATCH));
 
 /*
+Версия 3.1.0
+- Вкладка «ПИД»: один регулятор температуры и влажности для всех фаз (прошивка ≥ 3.1.0).
+- Переключатель прежнего алгоритма убран. Резервный слот группы 7 сохраняет
+  бинарный формат; неактуальные параметры прежнего регулирования скрыты.
+
 Версия 3.0.0
 - Вкладка «ПИД Plateau» окна Data: группа 7, проверка диапазонов,
   атомарная запись и контрольное чтение без остановки процесса.

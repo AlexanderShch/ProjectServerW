@@ -5,6 +5,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Threading;
 using System.Windows.Forms;
@@ -113,6 +115,33 @@ static class LogSessionIsolationTests
         var times = new List<string>();
         foreach (DataRow row in table.Rows) times.Add(row["Time"].ToString());
         return String.Join(",", times.ToArray());
+    }
+    static byte[] Response(byte type, byte code, byte[] payload)
+    {
+        var packet = new byte[payload.Length + 6];
+        packet[0] = type; packet[1] = code; packet[3] = (byte)payload.Length;
+        Array.Copy(payload, 0, packet, 4, payload.Length);
+        ushort crc = 0xffff;
+        for (int i = 0; i < packet.Length - 2; ++i) {
+            crc ^= packet[i];
+            for (int bit = 0; bit < 8; ++bit) crc = (ushort)((crc & 1) != 0 ? (crc >> 1) ^ 0xa001 : crc >> 1);
+        }
+        packet[packet.Length - 2] = (byte)crc; packet[packet.Length - 1] = (byte)(crc >> 8);
+        return packet;
+    }
+    static byte[] Group7(float[] values)
+    {
+        var payload = new byte[82]; payload[0] = 7;
+        for (int i = 0; i < values.Length; ++i) Array.Copy(BitConverter.GetBytes(values[i]), 0, payload, 2 + 4 * i, 4);
+        return Response(3, 7, payload);
+    }
+    static byte[] ReadCommand(NetworkStream stream)
+    {
+        var header = new byte[3];
+        for (int i = 0; i < 3; ++i) { int b = stream.ReadByte(); if (b < 0) throw new Exception("Truncated command"); header[i] = (byte)b; }
+        var packet = new byte[header[2] + 5]; Array.Copy(header, packet, 3);
+        for (int i = 3; i < packet.Length; ++i) { int b = stream.ReadByte(); if (b < 0) throw new Exception("Truncated payload"); packet[i] = (byte)b; }
+        return packet;
     }
 
     [STAThread]
@@ -250,7 +279,61 @@ static class LogSessionIsolationTests
                 Equal(0, Get(f, "excelExportInProgress")); Equal("", Labels(Table(f)));
                 Equal("next", ((DataRow)Get(f, "pendingRow"))["RealTime"]);
             });
-            Console.WriteLine("Passed " + passed + " session-isolation tests.");
+            Test("mandatory PID: 19 editable values round-trip through unchanged group-7 slots", delegate {
+                var f = NewForm();
+                var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
+                using (var client = new TcpClient()) {
+                    client.Connect((IPEndPoint)listener.LocalEndpoint);
+                    using (var controller = listener.AcceptTcpClient()) {
+                        listener.Stop(); controller.ReceiveTimeout = 2000;
+                        Set(f, "clientSocket", unchecked((ulong)client.Client.Handle.ToInt64()));
+                        float[] values = { 0, .18f, .003f, 60, 30, 10, .6f, .3f, 15, .2f, .02f, .0002f, 0, 10, 15, 90, 1, .14285714f, 1, 1 };
+                        Call(f, "EnqueueResponse", Group7(values));
+                        Call(f, "ReadPlateauSettings", null, EventArgs.Empty);
+                        var request = ReadCommand(controller.GetStream()); Equal((byte)3, request[0]); Equal((byte)7, request[1]);
+                        var grid = (DataGridView)Get(f, "plateauSettingsGrid");
+                        Equal(19, grid.Rows.Count); Equal("tempKp", grid.Rows[0].Cells[0].Value);
+                        Equal("humidityOverRH", grid.Rows[18].Cells[0].Value);
+                        foreach (DataGridViewRow row in grid.Rows) {
+                            if (row.Cells[0].Value.ToString() == "enabled" || row.Cells[0].Value.ToString() == "reservedAlgorithm")
+                                throw new Exception("Algorithm selector is visible");
+                        }
+                        grid.Rows[0].Cells[2].Value = "0.25"; values[0] = 1; values[1] = .25f;
+                        Call(f, "EnqueueResponse", Response(2, 5, new byte[0]));
+                        Call(f, "EnqueueResponse", Group7(values));
+                        Call(f, "ApplyPlateauSettings", null, EventArgs.Empty);
+                        var write = ReadCommand(controller.GetStream());
+                        Equal((byte)2, write[0]); Equal((byte)5, write[1]); Equal((byte)81, write[2]); Equal((byte)7, write[3]);
+                        for (int i = 0; i < values.Length; ++i) Equal(values[i], BitConverter.ToSingle(write, 4 + i * 4));
+                        var verify = ReadCommand(controller.GetStream()); Equal((byte)3, verify[0]); Equal((byte)7, verify[1]);
+                        if (!((Label)Get(f, "plateauSettingsStatus")).Text.StartsWith("Записано в EEPROM")) throw new Exception("Verification failed");
+                        Set(f, "clientSocket", UInt64.MaxValue);
+                    }
+                }
+            });
+            Test("PID graph uses fixed 0/3/6/9/12 offsets and preserves negative/raw values", delegate {
+                var source = new DataTable(); source.Columns.Add("RealTime", typeof(string));
+                foreach (var name in new[] { "uCommon_TEN", "uRight_TEN", "PID_I", "PID_D", "PID_FF" }) source.Columns.Add(name, typeof(double));
+                source.Rows.Add("12:00:00", 1.75, 1.75, -4.0, 0.0, 0.0);
+                source.Rows.Add("12:00:01", 1.75, 1.75, 1.75, 0.0, 0.0);
+                var graph = Activator.CreateInstance(assembly.GetType("ProjectServerW.PidGraphForm"), new object[] { source, epoch });
+                int curves = 0;
+                foreach (var curve in (IEnumerable)Get(graph, "series")) {
+                    if ((int)Get(curve, "panel") != 4) continue;
+                    double minimum = (double)Get(curve, "plotMin"), maximum = (double)Get(curve, "plotMax");
+                    var values = (IList)Get(curve, "y");
+                    Equal((double)source.Rows[0][curves + 1], values[0]);
+                    Equal((double)source.Rows[1][curves + 1], values[1]);
+                    double shift = (double)Get(curve, "offset");
+                    Equal(3.0 * curves, shift);
+                    foreach (double value in values) if (value + shift < minimum || value + shift > maximum) throw new Exception("Clipped PID value");
+                    if (curves == 0) { Equal(0.0, minimum); Equal(2.0, maximum); Equal(0.0, shift); }
+                    ++curves;
+                }
+                Equal(5, curves); Equal(-4.0, source.Rows[0]["PID_I"]);
+                ((Form)graph).Dispose();
+            });
+            Console.WriteLine("Passed " + passed + " regression tests.");
             return 0;
         }
         catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }

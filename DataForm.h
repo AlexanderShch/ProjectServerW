@@ -74,7 +74,27 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::DataGridView^ plateauSettingsGrid;
 	private: System::Windows::Forms::Label^ plateauSettingsStatus;
 	private: System::Windows::Forms::DataGridView^ plateauStateGrid;
+	private: System::Windows::Forms::SplitContainer^ plateauSplit;
+	private: System::Windows::Forms::GroupBox^ plateauParametersGroup;
+	private: System::Windows::Forms::GroupBox^ plateauStateGroup;
+	private: System::Windows::Forms::TableLayoutPanel^ plateauParameterToolbar;
+	private: System::Windows::Forms::FlowLayoutPanel^ plateauStateToolbar;
+	private: System::Windows::Forms::Button^ buttonPlateauInfo;
+	private: System::Windows::Forms::Button^ buttonPlateauRead;
+	private: System::Windows::Forms::Button^ buttonPlateauApply;
+	private: System::Windows::Forms::Button^ buttonPlateauRefresh;
+	private: System::Windows::Forms::Button^ buttonPlateauGraph;
+	private: System::Windows::Forms::ToolTip^ plateauInfoTip;
+	private: System::Windows::Forms::DataGridViewTextBoxColumn^ plateauParameterColumn;
+	private: System::Windows::Forms::DataGridViewTextBoxColumn^ plateauDescriptionColumn;
+	private: System::Windows::Forms::DataGridViewTextBoxColumn^ plateauValueColumn;
+	private: System::Windows::Forms::DataGridViewTextBoxColumn^ plateauBoundsColumn;
+	private: System::Windows::Forms::DataGridViewTextBoxColumn^ plateauSignalColumn;
+	private: System::Windows::Forms::DataGridViewTextBoxColumn^ plateauCurrentColumn;
+	private: System::Windows::Forms::DataGridViewTextBoxColumn^ plateauUnitsColumn;
+	private: void InitializeParameterColumnWidths();
 	private: void InitializePlateauTab();
+	private: void ShowPlateauInfo(System::Object^ sender, System::EventArgs^ e);
 	private: void ReadPlateauSettings(System::Object^ sender, System::EventArgs^ e);
 	private: void ApplyPlateauSettings(System::Object^ sender, System::EventArgs^ e);
 	private: void ReadPlateauDiagnostics(System::Object^ sender, System::EventArgs^ e);
@@ -308,6 +328,7 @@ namespace ProjectServerW {
 			DataForm(void)
 			{
 				InitializeComponent();
+				InitializeParameterColumnWidths();
 				InitializePlateauTab();
 				// Явно: иначе в ClientHandler prevSocket может быть мусором/0 и срабатывает ложный shutdown «drop old socket».
 				clientSocket = INVALID_SOCKET;
@@ -616,6 +637,39 @@ private: System::ComponentModel::IContainer^ components;
 				this->dataGridEquipmentAlarm = (gcnew System::Windows::Forms::DataGridView());
 				this->timerAutoStart = (gcnew System::Windows::Forms::Timer(this->components));
 				this->timerAutoRestart = (gcnew System::Windows::Forms::Timer(this->components));
+				this->plateauSettingsTab = (gcnew System::Windows::Forms::TabPage());
+				this->plateauSplit = (gcnew System::Windows::Forms::SplitContainer());
+				this->plateauParametersGroup = (gcnew System::Windows::Forms::GroupBox());
+				this->plateauStateGroup = (gcnew System::Windows::Forms::GroupBox());
+				this->plateauParameterToolbar = (gcnew System::Windows::Forms::TableLayoutPanel());
+				this->plateauStateToolbar = (gcnew System::Windows::Forms::FlowLayoutPanel());
+				this->buttonPlateauInfo = (gcnew System::Windows::Forms::Button());
+				this->buttonPlateauRead = (gcnew System::Windows::Forms::Button());
+				this->buttonPlateauApply = (gcnew System::Windows::Forms::Button());
+				this->buttonPlateauRefresh = (gcnew System::Windows::Forms::Button());
+				this->buttonPlateauGraph = (gcnew System::Windows::Forms::Button());
+				this->plateauInfoTip = (gcnew System::Windows::Forms::ToolTip(this->components));
+				this->plateauSettingsGrid = (gcnew System::Windows::Forms::DataGridView());
+				this->plateauStateGrid = (gcnew System::Windows::Forms::DataGridView());
+				this->plateauSettingsStatus = (gcnew System::Windows::Forms::Label());
+				this->plateauParameterColumn = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
+				this->plateauDescriptionColumn = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
+				this->plateauValueColumn = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
+				this->plateauBoundsColumn = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
+				this->plateauSignalColumn = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
+				this->plateauCurrentColumn = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
+				this->plateauUnitsColumn = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
+				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->plateauSettingsGrid))->BeginInit();
+				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->plateauStateGrid))->BeginInit();
+				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->plateauSplit))->BeginInit();
+				this->plateauSettingsTab->SuspendLayout();
+				this->plateauSplit->SuspendLayout();
+				this->plateauSplit->Panel1->SuspendLayout();
+				this->plateauSplit->Panel2->SuspendLayout();
+				this->plateauParametersGroup->SuspendLayout();
+				this->plateauStateGroup->SuspendLayout();
+				this->plateauParameterToolbar->SuspendLayout();
+				this->plateauStateToolbar->SuspendLayout();
 				this->menuStrip1->SuspendLayout();
 				this->tabControl1->SuspendLayout();
 				this->tabPage1->SuspendLayout();
@@ -637,7 +691,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->menuStrip1->Items->AddRange(gcnew cli::array< System::Windows::Forms::ToolStripItem^  >(1) { this->выходToolStripMenuItem });
 				this->menuStrip1->Location = System::Drawing::Point(0, 0);
 				this->menuStrip1->Name = L"menuStrip1";
-				this->menuStrip1->Size = System::Drawing::Size(1435, 33);
+				this->menuStrip1->Size = System::Drawing::Size(1766, 33);
 				this->menuStrip1->TabIndex = 0;
 				this->menuStrip1->Text = L"menuStrip1";
 				this->menuStrip1->ItemClicked += gcnew System::Windows::Forms::ToolStripItemClickedEventHandler(this, &DataForm::menuStrip1_ItemClicked);
@@ -665,10 +719,11 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabControl1->Controls->Add(this->tabPage2);
 				this->tabControl1->Controls->Add(this->tabPage3);
 				this->tabControl1->Controls->Add(this->tabPage4);
+				this->tabControl1->Controls->Add(this->plateauSettingsTab);
 				this->tabControl1->Location = System::Drawing::Point(0, 36);
 				this->tabControl1->Name = L"tabControl1";
 				this->tabControl1->SelectedIndex = 0;
-				this->tabControl1->Size = System::Drawing::Size(1411, 527);
+				this->tabControl1->Size = System::Drawing::Size(1733, 852);
 				this->tabControl1->TabIndex = 6;
 				this->tabControl1->SelectedIndexChanged += gcnew System::EventHandler(this, &DataForm::tabControl1_SelectedIndexChanged);
 				// 
@@ -693,7 +748,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage1->Location = System::Drawing::Point(4, 29);
 				this->tabPage1->Name = L"tabPage1";
 				this->tabPage1->Padding = System::Windows::Forms::Padding(3);
-				this->tabPage1->Size = System::Drawing::Size(1403, 494);
+				this->tabPage1->Size = System::Drawing::Size(1725, 819);
 				this->tabPage1->TabIndex = 0;
 				this->tabPage1->Text = L"Данные";
 				this->tabPage1->UseVisualStyleBackColor = true;
@@ -835,7 +890,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->dataGridView->RowHeadersWidthSizeMode = System::Windows::Forms::DataGridViewRowHeadersWidthSizeMode::AutoSizeToDisplayedHeaders;
 				this->dataGridView->RowTemplate->Height = 20;
 				this->dataGridView->RowTemplate->Resizable = System::Windows::Forms::DataGridViewTriState::True;
-				this->dataGridView->Size = System::Drawing::Size(1711, 400);
+				this->dataGridView->Size = System::Drawing::Size(1710, 701);
 				this->dataGridView->TabIndex = 6;
 				this->dataGridView->CellContentClick += gcnew System::Windows::Forms::DataGridViewCellEventHandler(this, &DataForm::dataGridView_CellContentClick);
 				// 
@@ -869,7 +924,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage2->Location = System::Drawing::Point(4, 29);
 				this->tabPage2->Name = L"tabPage2";
 				this->tabPage2->Padding = System::Windows::Forms::Padding(3);
-				this->tabPage2->Size = System::Drawing::Size(1403, 494);
+				this->tabPage2->Size = System::Drawing::Size(1725, 819);
 				this->tabPage2->TabIndex = 1;
 				this->tabPage2->Text = L"Настройки";
 				this->tabPage2->UseVisualStyleBackColor = true;
@@ -1156,14 +1211,14 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage3->Controls->Add(this->dataGridView1);
 				this->tabPage3->Location = System::Drawing::Point(4, 29);
 				this->tabPage3->Name = L"tabPage3";
-				this->tabPage3->Size = System::Drawing::Size(1403, 494);
+				this->tabPage3->Size = System::Drawing::Size(1725, 819);
 				this->tabPage3->TabIndex = 2;
 				this->tabPage3->Text = L"Параметры";
 				this->tabPage3->UseVisualStyleBackColor = true;
 				// 
 				// buttonLoadFromFile
 				// 
-				this->buttonLoadFromFile->Location = System::Drawing::Point(957, 8);
+				this->buttonLoadFromFile->Location = System::Drawing::Point(964, 8);
 				this->buttonLoadFromFile->Name = L"buttonLoadFromFile";
 				this->buttonLoadFromFile->Size = System::Drawing::Size(117, 36);
 				this->buttonLoadFromFile->TabIndex = 7;
@@ -1174,7 +1229,7 @@ private: System::ComponentModel::IContainer^ components;
 				// label2
 				// 
 				this->label2->AutoSize = true;
-				this->label2->Location = System::Drawing::Point(802, 16);
+				this->label2->Location = System::Drawing::Point(809, 16);
 				this->label2->Name = L"label2";
 				this->label2->Size = System::Drawing::Size(149, 20);
 				this->label2->TabIndex = 6;
@@ -1183,7 +1238,7 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// buttonLoadDefrostDefaults
 				// 
-				this->buttonLoadDefrostDefaults->Location = System::Drawing::Point(1265, 60);
+				this->buttonLoadDefrostDefaults->Location = System::Drawing::Point(1272, 60);
 				this->buttonLoadDefrostDefaults->Name = L"buttonLoadDefrostDefaults";
 				this->buttonLoadDefrostDefaults->Size = System::Drawing::Size(117, 36);
 				this->buttonLoadDefrostDefaults->TabIndex = 8;
@@ -1193,7 +1248,7 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// buttonWriteParameters
 				// 
-				this->buttonWriteParameters->Location = System::Drawing::Point(1111, 60);
+				this->buttonWriteParameters->Location = System::Drawing::Point(1118, 60);
 				this->buttonWriteParameters->Name = L"buttonWriteParameters";
 				this->buttonWriteParameters->Size = System::Drawing::Size(117, 36);
 				this->buttonWriteParameters->TabIndex = 5;
@@ -1203,7 +1258,7 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// buttonReadParameters
 				// 
-				this->buttonReadParameters->Location = System::Drawing::Point(957, 60);
+				this->buttonReadParameters->Location = System::Drawing::Point(964, 60);
 				this->buttonReadParameters->Name = L"buttonReadParameters";
 				this->buttonReadParameters->Size = System::Drawing::Size(117, 36);
 				this->buttonReadParameters->TabIndex = 4;
@@ -1214,16 +1269,14 @@ private: System::ComponentModel::IContainer^ components;
 				// label1
 				// 
 				this->label1->AutoSize = true;
-				this->label1->Location = System::Drawing::Point(849, 68);
+				this->label1->Location = System::Drawing::Point(856, 68);
 				this->label1->Name = L"label1";
 				this->label1->Size = System::Drawing::Size(102, 20);
 				this->label1->TabIndex = 3;
 				this->label1->Text = L"Дефростер:";
 				// 
 				// dataGridView2
-				// Важно: Fill на уровне грида растягивает все колонки и игнорирует Width —
-				// фиксируем ширину через AutoSizeColumnsMode::None + AutoSizeMode у колонок.
-				this->dataGridView2->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::None;
+				//
 				this->dataGridView2->ColumnHeadersHeightSizeMode = System::Windows::Forms::DataGridViewColumnHeadersHeightSizeMode::AutoSize;
 				this->dataGridView2->Columns->AddRange(gcnew cli::array< System::Windows::Forms::DataGridViewColumn^  >(3) {
 					this->Parameter2,
@@ -1234,105 +1287,97 @@ private: System::ComponentModel::IContainer^ components;
 				this->dataGridView2->RowHeadersVisible = false;
 				this->dataGridView2->RowHeadersWidth = 24;
 				this->dataGridView2->RowTemplate->Height = 16;
-				this->dataGridView2->Size = System::Drawing::Size(773, 465);
+				this->dataGridView2->Size = System::Drawing::Size(773, 794);
 				this->dataGridView2->TabIndex = 1;
 				this->dataGridView2->CellValueChanged += gcnew System::Windows::Forms::DataGridViewCellEventHandler(this, &DataForm::dataGridView2_CellValueChanged);
 				this->dataGridView2->UserAddedRow += gcnew System::Windows::Forms::DataGridViewRowEventHandler(this, &DataForm::dataGridView2_RowChanged);
 				this->dataGridView2->UserDeletedRow += gcnew System::Windows::Forms::DataGridViewRowEventHandler(this, &DataForm::dataGridView2_RowChanged);
 				// 
-				// Parameter2 — фиксированная ширина 8 символов
+				// Parameter2
 				// 
-				this->Parameter2->HeaderText = L"Параметр";
-				this->Parameter2->Name = L"Parameter2";
 				this->Parameter2->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::None;
+				this->Parameter2->HeaderText = L"Параметр";
+				this->Parameter2->MinimumWidth = 8;
+				this->Parameter2->Name = L"Parameter2";
 				this->Parameter2->Resizable = System::Windows::Forms::DataGridViewTriState::False;
-				{
-					System::Drawing::Size w8 = System::Windows::Forms::TextRenderer::MeasureText(
-						L"00000000", this->dataGridView2->Font);
-					this->Parameter2->Width = w8.Width;
-					this->Parameter2->MinimumWidth = w8.Width;
-				}
+				this->Parameter2->Width = 80;
 				// 
-				// Description — занимает оставшуюся ширину
+				// Description
 				// 
+				this->Description->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::Fill;
 				this->Description->HeaderText = L"Описание параметра";
 				this->Description->MinimumWidth = 80;
 				this->Description->Name = L"Description";
-				this->Description->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::Fill;
 				// 
-				// Value — фиксированная ширина 7 символов
+				// Value
 				// 
-				this->Value->HeaderText = L"Величина";
-				this->Value->Name = L"Value";
 				this->Value->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::None;
+				this->Value->HeaderText = L"Величина";
+				this->Value->MinimumWidth = 8;
+				this->Value->Name = L"Value";
 				this->Value->Resizable = System::Windows::Forms::DataGridViewTriState::False;
-				{
-					System::Drawing::Size w7 = System::Windows::Forms::TextRenderer::MeasureText(
-						L"0000000", this->dataGridView2->Font);
-					this->Value->Width = w7.Width;
-					this->Value->MinimumWidth = w7.Width;
-				}
+				this->Value->Width = 72;
 				// 
 				// dataGridView1
 				// 
-				// Как у dataGridView2: Fill на уровне грида игнорирует Width — фиксируем ширину по колонкам.
-				this->dataGridView1->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::None;
 				this->dataGridView1->ColumnHeadersHeightSizeMode = System::Windows::Forms::DataGridViewColumnHeadersHeightSizeMode::AutoSize;
 				this->dataGridView1->Columns->AddRange(gcnew cli::array< System::Windows::Forms::DataGridViewColumn^  >(5) {
-					this->Parameter, this->Description1,
-						this->WarmUP, this->Plateau, this->Finish
+					this->Parameter,
+						this->Description1, this->WarmUP, this->Plateau, this->Finish
 				});
-				this->dataGridView1->Location = System::Drawing::Point(806, 115);
+				this->dataGridView1->Location = System::Drawing::Point(811, 115);
 				this->dataGridView1->Name = L"dataGridView1";
 				this->dataGridView1->RowHeadersVisible = false;
 				this->dataGridView1->RowHeadersWidth = 24;
 				this->dataGridView1->RowTemplate->Height = 16;
-				this->dataGridView1->Size = System::Drawing::Size(579, 358);
+				this->dataGridView1->Size = System::Drawing::Size(911, 358);
 				this->dataGridView1->TabIndex = 0;
 				this->dataGridView1->CellValueChanged += gcnew System::Windows::Forms::DataGridViewCellEventHandler(this, &DataForm::dataGridView1_CellValueChanged);
 				this->dataGridView1->UserAddedRow += gcnew System::Windows::Forms::DataGridViewRowEventHandler(this, &DataForm::dataGridView1_RowChanged);
 				this->dataGridView1->UserDeletedRow += gcnew System::Windows::Forms::DataGridViewRowEventHandler(this, &DataForm::dataGridView1_RowChanged);
 				// 
-				// Parameter — фиксированная ширина 6 символов
+				// Parameter
 				// 
-				this->Parameter->HeaderText = L"Параметр";
-				this->Parameter->Name = L"Parameter";
 				this->Parameter->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::None;
+				this->Parameter->HeaderText = L"Параметр";
+				this->Parameter->MinimumWidth = 8;
+				this->Parameter->Name = L"Parameter";
 				this->Parameter->Resizable = System::Windows::Forms::DataGridViewTriState::False;
-				{
-					System::Drawing::Size w6 = System::Windows::Forms::TextRenderer::MeasureText(
-						L"000000", this->dataGridView1->Font);
-					this->Parameter->Width = w6.Width;
-					this->Parameter->MinimumWidth = w6.Width;
-				}
+				this->Parameter->Width = 64;
 				// 
-				// Description1 — занимает оставшуюся ширину
+				// Description1
 				// 
+				this->Description1->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::Fill;
 				this->Description1->HeaderText = L"Описание параметра";
 				this->Description1->MinimumWidth = 80;
-				this->Description1->Name = L"Description";
-				this->Description1->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::Fill;
+				this->Description1->Name = L"Description1";
 				// 
-				// WarmUP, Plateau, Finish — фиксированная ширина 4 символа
+				// WarmUP
 				// 
+				this->WarmUP->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::None;
 				this->WarmUP->HeaderText = L"Прогрев";
+				this->WarmUP->MinimumWidth = 8;
 				this->WarmUP->Name = L"WarmUP";
+				this->WarmUP->Resizable = System::Windows::Forms::DataGridViewTriState::False;
+				this->WarmUP->Width = 48;
+				//
+				// Plateau
+				//
+				this->Plateau->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::None;
 				this->Plateau->HeaderText = L"Плато";
+				this->Plateau->MinimumWidth = 8;
 				this->Plateau->Name = L"Plateau";
+				this->Plateau->Resizable = System::Windows::Forms::DataGridViewTriState::False;
+				this->Plateau->Width = 48;
+				//
+				// Finish
+				//
+				this->Finish->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::None;
 				this->Finish->HeaderText = L"Финиш";
+				this->Finish->MinimumWidth = 8;
 				this->Finish->Name = L"Finish";
-				{
-					System::Drawing::Size w4 = System::Windows::Forms::TextRenderer::MeasureText(
-						L"0000", this->dataGridView1->Font);
-					cli::array<System::Windows::Forms::DataGridViewTextBoxColumn^>^ phaseCols =
-						gcnew cli::array<System::Windows::Forms::DataGridViewTextBoxColumn^>(3) { this->WarmUP, this->Plateau, this->Finish };
-					for each (System::Windows::Forms::DataGridViewTextBoxColumn ^ col in phaseCols) {
-						col->AutoSizeMode = System::Windows::Forms::DataGridViewAutoSizeColumnMode::None;
-						col->Resizable = System::Windows::Forms::DataGridViewTriState::False;
-						col->Width = w4.Width;
-						col->MinimumWidth = w4.Width;
-					}
-				}
+				this->Finish->Resizable = System::Windows::Forms::DataGridViewTriState::False;
+				this->Finish->Width = 48;
 				// 
 				// tabPage4
 				// 
@@ -1340,7 +1385,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->tabPage4->Controls->Add(this->dataGridEquipmentAlarm);
 				this->tabPage4->Location = System::Drawing::Point(4, 29);
 				this->tabPage4->Name = L"tabPage4";
-				this->tabPage4->Size = System::Drawing::Size(1403, 494);
+				this->tabPage4->Size = System::Drawing::Size(1725, 819);
 				this->tabPage4->TabIndex = 3;
 				this->tabPage4->Text = L"АВАРИЯ";
 				this->tabPage4->UseVisualStyleBackColor = true;
@@ -1365,6 +1410,141 @@ private: System::ComponentModel::IContainer^ components;
 				this->dataGridEquipmentAlarm->Size = System::Drawing::Size(1132, 388);
 				this->dataGridEquipmentAlarm->TabIndex = 0;
 				// 
+				// ПИД Plateau — designer-owned layout; runtime data is filled separately.
+				this->plateauSettingsTab->Name = L"plateauSettingsTab";
+				this->plateauSplit->Name = L"plateauSplit";
+				this->plateauParametersGroup->Name = L"plateauParametersGroup";
+				this->plateauStateGroup->Name = L"plateauStateGroup";
+				this->plateauParameterToolbar->Name = L"plateauParameterToolbar";
+				this->plateauStateToolbar->Name = L"plateauStateToolbar";
+				this->buttonPlateauInfo->Name = L"buttonPlateauInfo";
+				this->buttonPlateauRead->Name = L"buttonPlateauRead";
+				this->buttonPlateauApply->Name = L"buttonPlateauApply";
+				this->buttonPlateauRefresh->Name = L"buttonPlateauRefresh";
+				this->buttonPlateauGraph->Name = L"buttonPlateauGraph";
+				this->plateauSettingsGrid->Name = L"plateauSettingsGrid";
+				this->plateauStateGrid->Name = L"plateauStateGrid";
+				this->plateauSettingsStatus->Name = L"plateauSettingsStatus";
+				this->plateauParameterColumn->Name = L"plateauParameterColumn";
+				this->plateauDescriptionColumn->Name = L"plateauDescriptionColumn";
+				this->plateauValueColumn->Name = L"plateauValueColumn";
+				this->plateauBoundsColumn->Name = L"plateauBoundsColumn";
+				this->plateauSignalColumn->Name = L"plateauSignalColumn";
+				this->plateauCurrentColumn->Name = L"plateauCurrentColumn";
+				this->plateauUnitsColumn->Name = L"plateauUnitsColumn";
+				this->plateauSettingsTab->Text = L"ПИД";
+				this->plateauSettingsTab->Padding = System::Windows::Forms::Padding(6);
+				this->plateauSettingsTab->UseVisualStyleBackColor = true;
+				this->plateauSettingsTab->Size = System::Drawing::Size(1725, 819);
+				this->plateauSettingsTab->TabIndex = 4;
+				this->plateauSettingsTab->Controls->Add(this->plateauSplit);
+				this->plateauSplit->Dock = System::Windows::Forms::DockStyle::Fill;
+				this->plateauSplit->Orientation = System::Windows::Forms::Orientation::Vertical;
+				this->plateauSplit->Size = System::Drawing::Size(1713, 807);
+				this->plateauSplit->SplitterDistance = 1060;
+				this->plateauSplit->Panel1MinSize = 450;
+				this->plateauSplit->Panel2MinSize = 300;
+				this->plateauSplit->Panel1->Controls->Add(this->plateauParametersGroup);
+				this->plateauSplit->Panel2->Controls->Add(this->plateauStateGroup);
+				this->plateauParametersGroup->Text = L"Параметры";
+				this->plateauParametersGroup->Dock = System::Windows::Forms::DockStyle::Fill;
+				this->plateauParametersGroup->Padding = System::Windows::Forms::Padding(6);
+				this->plateauParametersGroup->Controls->Add(this->plateauSettingsGrid);
+				this->plateauParametersGroup->Controls->Add(this->plateauParameterToolbar);
+				this->plateauStateGroup->Text = L"Состояние ПИД";
+				this->plateauStateGroup->Dock = System::Windows::Forms::DockStyle::Fill;
+				this->plateauStateGroup->Padding = System::Windows::Forms::Padding(6);
+				this->plateauStateGroup->Controls->Add(this->plateauStateGrid);
+				this->plateauStateGroup->Controls->Add(this->plateauStateToolbar);
+				this->plateauParameterToolbar->Dock = System::Windows::Forms::DockStyle::Top;
+				this->plateauParameterToolbar->Height = 48;
+				this->plateauParameterToolbar->ColumnCount = 4;
+				this->plateauParameterToolbar->RowCount = 1;
+				this->plateauParameterToolbar->ColumnStyles->Add(gcnew System::Windows::Forms::ColumnStyle(System::Windows::Forms::SizeType::Absolute, 36.0F));
+				this->plateauParameterToolbar->ColumnStyles->Add(gcnew System::Windows::Forms::ColumnStyle(System::Windows::Forms::SizeType::Absolute, 136.0F));
+				this->plateauParameterToolbar->ColumnStyles->Add(gcnew System::Windows::Forms::ColumnStyle(System::Windows::Forms::SizeType::Absolute, 136.0F));
+				this->plateauParameterToolbar->ColumnStyles->Add(gcnew System::Windows::Forms::ColumnStyle(System::Windows::Forms::SizeType::Percent, 100.0F));
+				this->plateauParameterToolbar->RowStyles->Add(gcnew System::Windows::Forms::RowStyle(System::Windows::Forms::SizeType::Percent, 100.0F));
+				this->plateauParameterToolbar->Controls->Add(this->buttonPlateauInfo, 0, 0);
+				this->plateauParameterToolbar->Controls->Add(this->buttonPlateauRead, 1, 0);
+				this->plateauParameterToolbar->Controls->Add(this->buttonPlateauApply, 2, 0);
+				this->plateauParameterToolbar->Controls->Add(this->plateauSettingsStatus, 3, 0);
+				this->plateauSettingsStatus->Dock = System::Windows::Forms::DockStyle::Fill;
+				this->plateauSettingsStatus->TextAlign = System::Drawing::ContentAlignment::MiddleLeft;
+				this->plateauSettingsStatus->Margin = System::Windows::Forms::Padding(6, 0, 3, 0);
+				this->plateauSettingsStatus->Text = L"Не считано. Нужна прошивка с группой 7.";
+				this->plateauStateToolbar->Dock = System::Windows::Forms::DockStyle::Top;
+				this->plateauStateToolbar->Height = 48;
+				this->plateauStateToolbar->WrapContents = false;
+				this->plateauStateToolbar->Padding = System::Windows::Forms::Padding(0, 6, 0, 6);
+				this->plateauStateToolbar->Controls->Add(this->buttonPlateauRefresh);
+				this->plateauStateToolbar->Controls->Add(this->buttonPlateauGraph);
+				this->buttonPlateauInfo->Text = L"ⓘ";
+				this->buttonPlateauInfo->Size = System::Drawing::Size(30, 30);
+				this->buttonPlateauInfo->UseVisualStyleBackColor = true;
+				this->buttonPlateauInfo->Anchor = System::Windows::Forms::AnchorStyles::Left;
+				this->buttonPlateauInfo->Click += gcnew System::EventHandler(this, &DataForm::ShowPlateauInfo);
+				this->buttonPlateauRead->Text = L"Считать";
+				this->buttonPlateauRead->Size = System::Drawing::Size(130, 30);
+				this->buttonPlateauRead->UseVisualStyleBackColor = true;
+				this->buttonPlateauRead->Anchor = System::Windows::Forms::AnchorStyles::Left;
+				this->buttonPlateauRead->Click += gcnew System::EventHandler(this, &DataForm::ReadPlateauSettings);
+				this->buttonPlateauApply->Text = L"Записать";
+				this->buttonPlateauApply->Size = System::Drawing::Size(130, 30);
+				this->buttonPlateauApply->UseVisualStyleBackColor = true;
+				this->buttonPlateauApply->Anchor = System::Windows::Forms::AnchorStyles::Left;
+				this->buttonPlateauApply->Click += gcnew System::EventHandler(this, &DataForm::ApplyPlateauSettings);
+				this->buttonPlateauRefresh->Text = L"Обновить";
+				this->buttonPlateauRefresh->Size = System::Drawing::Size(110, 30);
+				this->buttonPlateauRefresh->UseVisualStyleBackColor = true;
+				this->buttonPlateauRefresh->Anchor = System::Windows::Forms::AnchorStyles::Left;
+				this->buttonPlateauRefresh->Click += gcnew System::EventHandler(this, &DataForm::ReadPlateauDiagnostics);
+				this->buttonPlateauGraph->Text = L"График";
+				this->buttonPlateauGraph->Size = System::Drawing::Size(110, 30);
+				this->buttonPlateauGraph->UseVisualStyleBackColor = true;
+				this->buttonPlateauGraph->Anchor = System::Windows::Forms::AnchorStyles::Left;
+				this->buttonPlateauGraph->Click += gcnew System::EventHandler(this, &DataForm::ShowPlateauGraph);
+				this->buttonPlateauApply->Enabled = false;
+				this->buttonPlateauInfo->AccessibleName = L"Информация";
+				this->buttonPlateauInfo->Font = gcnew System::Drawing::Font(L"Segoe UI Symbol", 10.0F);
+				this->plateauInfoTip->SetToolTip(this->buttonPlateauInfo, L"Информация");
+				this->plateauSettingsGrid->Dock = System::Windows::Forms::DockStyle::Fill;
+				this->plateauSettingsGrid->RowHeadersVisible = false;
+				this->plateauSettingsGrid->AllowUserToAddRows = false;
+				this->plateauSettingsGrid->AllowUserToDeleteRows = false;
+				this->plateauSettingsGrid->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::Fill;
+				this->plateauSettingsGrid->ColumnHeadersHeightSizeMode = System::Windows::Forms::DataGridViewColumnHeadersHeightSizeMode::AutoSize;
+				this->plateauSettingsGrid->Columns->AddRange(gcnew cli::array<System::Windows::Forms::DataGridViewColumn^>(4) { this->plateauParameterColumn, this->plateauDescriptionColumn, this->plateauValueColumn, this->plateauBoundsColumn });
+				this->plateauStateGrid->Dock = System::Windows::Forms::DockStyle::Fill;
+				this->plateauStateGrid->RowHeadersVisible = false;
+				this->plateauStateGrid->AllowUserToAddRows = false;
+				this->plateauStateGrid->AllowUserToDeleteRows = false;
+				this->plateauStateGrid->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::Fill;
+				this->plateauStateGrid->ColumnHeadersHeightSizeMode = System::Windows::Forms::DataGridViewColumnHeadersHeightSizeMode::AutoSize;
+				this->plateauStateGrid->Columns->AddRange(gcnew cli::array<System::Windows::Forms::DataGridViewColumn^>(3) { this->plateauSignalColumn, this->plateauCurrentColumn, this->plateauUnitsColumn });
+				this->plateauStateGrid->ReadOnly = true;
+				this->plateauParameterColumn->HeaderText = L"Параметр";
+				this->plateauParameterColumn->ReadOnly = true;
+				this->plateauParameterColumn->SortMode = System::Windows::Forms::DataGridViewColumnSortMode::NotSortable;
+				this->plateauDescriptionColumn->HeaderText = L"Назначение и единицы";
+				this->plateauDescriptionColumn->ReadOnly = true;
+				this->plateauDescriptionColumn->SortMode = System::Windows::Forms::DataGridViewColumnSortMode::NotSortable;
+				this->plateauValueColumn->HeaderText = L"Значение";
+				this->plateauValueColumn->ReadOnly = false;
+				this->plateauValueColumn->SortMode = System::Windows::Forms::DataGridViewColumnSortMode::NotSortable;
+				this->plateauBoundsColumn->HeaderText = L"Допустимый диапазон";
+				this->plateauBoundsColumn->ReadOnly = true;
+				this->plateauBoundsColumn->SortMode = System::Windows::Forms::DataGridViewColumnSortMode::NotSortable;
+				this->plateauSignalColumn->HeaderText = L"Состояние ПИД";
+				this->plateauSignalColumn->ReadOnly = true;
+				this->plateauSignalColumn->SortMode = System::Windows::Forms::DataGridViewColumnSortMode::NotSortable;
+				this->plateauCurrentColumn->HeaderText = L"Значение";
+				this->plateauCurrentColumn->ReadOnly = true;
+				this->plateauCurrentColumn->SortMode = System::Windows::Forms::DataGridViewColumnSortMode::NotSortable;
+				this->plateauUnitsColumn->HeaderText = L"Единицы";
+				this->plateauUnitsColumn->ReadOnly = true;
+				this->plateauUnitsColumn->SortMode = System::Windows::Forms::DataGridViewColumnSortMode::NotSortable;
+				this->plateauDescriptionColumn->FillWeight = 230.0F;
 				// timerAutoStart
 				// 
 				this->timerAutoStart->Interval = 30000;
@@ -1381,7 +1561,7 @@ private: System::ComponentModel::IContainer^ components;
 				this->AutoScaleMode = System::Windows::Forms::AutoScaleMode::Font;
 				this->AutoScroll = true;
 				this->AutoSizeMode = System::Windows::Forms::AutoSizeMode::GrowAndShrink;
-				this->ClientSize = System::Drawing::Size(1435, 601);
+				this->ClientSize = System::Drawing::Size(1766, 930);
 				this->Controls->Add(this->tabControl1);
 				this->Controls->Add(this->menuStrip1);
 				this->MainMenuStrip = this->menuStrip1;
@@ -1405,6 +1585,17 @@ private: System::ComponentModel::IContainer^ components;
 				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridView1))->EndInit();
 				this->tabPage4->ResumeLayout(false);
 				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->dataGridEquipmentAlarm))->EndInit();
+				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->plateauSettingsGrid))->EndInit();
+				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->plateauStateGrid))->EndInit();
+				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->plateauSplit))->EndInit();
+				this->plateauParameterToolbar->ResumeLayout(false);
+				this->plateauStateToolbar->ResumeLayout(false);
+				this->plateauParametersGroup->ResumeLayout(false);
+				this->plateauStateGroup->ResumeLayout(false);
+				this->plateauSplit->Panel1->ResumeLayout(false);
+				this->plateauSplit->Panel2->ResumeLayout(false);
+				this->plateauSplit->ResumeLayout(false);
+				this->plateauSettingsTab->ResumeLayout(false);
 				this->ResumeLayout(false);
 				this->PerformLayout();
 

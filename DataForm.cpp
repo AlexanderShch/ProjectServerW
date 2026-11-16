@@ -32,6 +32,31 @@ namespace
     }
 }
 
+// Keep font-dependent sizing outside InitializeComponent: the WinForms CodeDOM
+// designer cannot parse local scopes/loops in its generated initialization method.
+void ProjectServerW::DataForm::InitializeParameterColumnWidths() {
+    const int parameterWidth = System::Windows::Forms::TextRenderer::MeasureText(
+        L"00000000", dataGridView2->Font).Width;
+    Parameter2->MinimumWidth = parameterWidth;
+    Parameter2->Width = parameterWidth;
+    const int valueWidth = System::Windows::Forms::TextRenderer::MeasureText(
+        L"0000000", dataGridView2->Font).Width;
+    Value->MinimumWidth = valueWidth;
+    Value->Width = valueWidth;
+    const int nameWidth = System::Windows::Forms::TextRenderer::MeasureText(
+        L"000000", dataGridView1->Font).Width;
+    Parameter->MinimumWidth = nameWidth;
+    Parameter->Width = nameWidth;
+    const int phaseWidth = System::Windows::Forms::TextRenderer::MeasureText(
+        L"0000", dataGridView1->Font).Width;
+    cli::array<System::Windows::Forms::DataGridViewTextBoxColumn^>^ phaseColumns =
+        gcnew cli::array<System::Windows::Forms::DataGridViewTextBoxColumn^> { WarmUP, Plateau, Finish };
+    for each (System::Windows::Forms::DataGridViewTextBoxColumn^ column in phaseColumns) {
+        column->MinimumWidth = phaseWidth;
+        column->Width = phaseWidth;
+    }
+}
+
 // Пакет лога алгоритма (Type 0x01): сначала отфильтрованные температуры 6 датчиков 0..5 (°C),
 // затем текущая фаза + группа 3 — переменные алгоритма (совпадает с ControlLogPayload_t на контроллере).
 #pragma pack(push, 1)
@@ -2198,7 +2223,7 @@ static void RefreshPhaseGridDescriptions(DataGridView^ grid) {
         DataGridViewRow^ row = grid->Rows[r];
         if (row->IsNewRow) continue;
         Object^ nameObj = row->Cells["Parameter"]->Value;
-        row->Cells["Description"]->Value = PhaseRowDescription(nameObj != nullptr ? nameObj->ToString() : nullptr);
+        row->Cells["Description1"]->Value = PhaseRowDescription(nameObj != nullptr ? nameObj->ToString() : nullptr);
     }
 }
 
@@ -2228,12 +2253,8 @@ void ProjectServerW::DataForm::LoadDataGridView2Defaults() {
     /* Нагрев / баланс */
     dataGridView2->Rows->Add("leftRightTrimGain", L"Подстройка нагрева на 1 °C разницы", "0.08");
     dataGridView2->Rows->Add("leftRightTrimMaxEq", L"Макс. эквивалент подстройки нагрева", "0.6");
-    dataGridView2->Rows->Add("piKp", L"ПИ: пропорциональный коэфф. (темп. подачи)", "0.18");
-    dataGridView2->Rows->Add("piKi", L"ПИ: интегральный коэфф. (темп. подачи)", "0.02");
     dataGridView2->Rows->Add("tenMinHold_s", L"Мин. время удержания ТЭНа между переключениями, сек.", "10");
     /* Влажность: форсунка, вытяжка, продувка */
-    dataGridView2->Rows->Add("injHysteresisRH_percent", L"Гистерезис включения форсунок, контроль влажности, +/- %", "3");
-    dataGridView2->Rows->Add("injMinHold_s", L"Длительность импульса впрыска (после импульса пауза 90 с), сек.", "10");
     dataGridView2->Rows->Add("wDeadband_kgkg", L"Зона нечувствительности по влажности (вытяжка), кг/кг", "0.0008");
     dataGridView2->Rows->Add("forbidHumidityReduceWhileRunning", L"Запретить снижение влажности во время работы (1=запрещено)", "1");
     dataGridView2->Rows->Add("humidityThresholdRH_percent", L"Порог RH %: вытяжка (снижение влажности) и конец продувки", "50");
@@ -2571,11 +2592,7 @@ void ProjectServerW::DataForm::FillDataGridView2FromGroup6Payload(const uint8_t*
     }
     dataGridView2->Rows->Add(gcnew System::String("leftRightTrimGain"), gcnew System::String(FindGroup6Desc("leftRightTrimGain")), s.leftRightTrimGain.ToString(inv));
     dataGridView2->Rows->Add(gcnew System::String("leftRightTrimMaxEq"), gcnew System::String(FindGroup6Desc("leftRightTrimMaxEq")), s.leftRightTrimMaxEq.ToString(inv));
-    dataGridView2->Rows->Add(gcnew System::String("piKp"), gcnew System::String(FindGroup6Desc("piKp")), s.piKp.ToString(inv));
-    dataGridView2->Rows->Add(gcnew System::String("piKi"), gcnew System::String(FindGroup6Desc("piKi")), s.piKi.ToString(inv));
     dataGridView2->Rows->Add(gcnew System::String("tenMinHold_s"), gcnew System::String(FindGroup6Desc("tenMinHold_s")), System::Convert::ToString((int)s.tenMinHold_s));
-    dataGridView2->Rows->Add(gcnew System::String("injHysteresisRH_percent"), gcnew System::String(FindGroup6Desc("injHysteresisRH_percent")), s.injHysteresisRH_percent.ToString(inv));
-    dataGridView2->Rows->Add(gcnew System::String("injMinHold_s"), gcnew System::String(FindGroup6Desc("injMinHold_s")), System::Convert::ToString((int)s.injMinHold_s));
     dataGridView2->Rows->Add(gcnew System::String("wDeadband_kgkg"), gcnew System::String(FindGroup6Desc("wDeadband_kgkg")), s.wDeadband_kgkg.ToString(inv));
     dataGridView2->Rows->Add(gcnew System::String("forbidHumidityReduceWhileRunning"), gcnew System::String(FindGroup6Desc("forbidHumidityReduceWhileRunning")), System::Convert::ToString((int)s.forbidHumidityReduceWhileRunning));
     dataGridView2->Rows->Add(gcnew System::String("humidityThresholdRH_percent"), gcnew System::String(FindGroup6Desc("humidityThresholdRH_percent")), s.humidityThresholdRH_percent.ToString(inv));
@@ -2712,7 +2729,7 @@ System::Data::DataTable^ ProjectServerW::DataForm::BuildPhaseParamsDataTableForE
             if (row->IsNewRow) continue;
             System::Data::DataRow^ dr = t->NewRow();
             dr[0] = row->Cells["Parameter"]->Value;
-            dr[1] = row->Cells["Description"]->Value;
+            dr[1] = row->Cells["Description1"]->Value;
             dr[2] = row->Cells["WarmUP"]->Value;
             dr[3] = row->Cells["Plateau"]->Value;
             dr[4] = row->Cells["Finish"]->Value;
