@@ -126,7 +126,7 @@ void ProjectServerW::DataForm::ApplyPlateauSettings(System::Object^, System::Eve
  auto inv=System::Globalization::CultureInfo::InvariantCulture;
  for(unsigned i=0;i<PLATEAU_PARAM_COUNT;++i) {
   auto cell=plateauSettingsGrid->Rows[i]->Cells[2]->Value;
-  float value=0;String^ text=cell==nullptr?"":cell->ToString()->Trim()->Replace(',','.');
+  float value=0;String^ text=cell==nullptr?"":cell->ToString()->Trim()->Replace(L',',L'.');
   if(!Single::TryParse(text,System::Globalization::NumberStyles::Float,inv,value)||
    Single::IsNaN(value)||Single::IsInfinity(value)||value<kPlateauFields[i].minimum||value>kPlateauFields[i].maximum) {
    plateauSettingsStatus->Text=L"Неверное значение: "+gcnew String(kPlateauFields[i].name);return;

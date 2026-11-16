@@ -131,7 +131,7 @@ public ref class PidGraphForm : public Form {
   Graphics^ g=paintArgs->Graphics;g->Clear(Color::White);
   if(series==nullptr||sampleCount<2||x1<=x0) {g->DrawString(L"Выберите период с данными и нажмите «Построить».",this->Font,Brushes::Black,30.f,30.f);return;}
   g->SmoothingMode=System::Drawing::Drawing2D::SmoothingMode::AntiAlias;
-  float left=78,width=Math::Max(300,canvas->ClientSize.Width-105);
+  float left=78.f,width=static_cast<float>(Math::Max(300,canvas->ClientSize.Width-105));
   float section=(canvas->ClientSize.Height-65.f)/5.f;
   auto titles=gcnew cli::array<String^>{L"Температура выбранной стороны, °C",L"Подтверждённые ТЭНы и команда впрыска",L"Влажность возврата и запрос воды, %",L"Разрешённая доля нагрева",L"Запрос нагрева, экв. ТЭНа на сторону"};
   auto font=gcnew System::Drawing::Font(L"Segoe UI",9.f);
@@ -193,7 +193,7 @@ public ref class PidGraphForm : public Form {
   auto dialog=gcnew SaveFileDialog();dialog->Filter=L"PNG (*.png)|*.png";dialog->FileName=L"PID_regulation.png";
   if(dialog->ShowDialog(this)!=System::Windows::Forms::DialogResult::OK)return;
   auto image=gcnew Bitmap(canvas->Width,canvas->Height);
-  try {canvas->DrawToBitmap(image,Rectangle(0,0,image->Width,image->Height));image->Save(dialog->FileName,System::Drawing::Imaging::ImageFormat::Png);}
+  try {canvas->DrawToBitmap(image,System::Drawing::Rectangle(0,0,image->Width,image->Height));image->Save(dialog->FileName,System::Drawing::Imaging::ImageFormat::Png);}
   finally {delete image;}
  }
 public:
