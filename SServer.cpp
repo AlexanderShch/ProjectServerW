@@ -354,7 +354,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	// CRC16 считается по блоку: [Type][Cmd][Status][DataLen][Data...].
 	// Длина телеметрии должна соответствовать контракту структуры MSGQUEUE_OBJ_t (см. DataForm.h).
 	const int TELEMETRY_DATA_LEN = static_cast<int>(sizeof(MSGQUEUE_OBJ_t));
-	const int CONTROL_LOG_DATA_LEN = 89; // sizeof(ControlLogPayload_t) for T_filt_C[0..5]
+	const int CONTROL_LOG_DATA_LEN = 105; // legacy 89 + I,D,FF,requested water duty
 	// Максимальный размер блока после AA55: 4 + DataLen + 2.
 	const int MAX_FRAMED_PAYLOAD_LEN = 128;
 
@@ -526,7 +526,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 					}
 				}
 				else if (isLogFrame) {
-					if (payloadDataLenByte != CONTROL_LOG_DATA_LEN) {
+					if (payloadDataLenByte != 89 && payloadDataLenByte != CONTROL_LOG_DATA_LEN) {
 						GlobalLogger::LogMessage(String::Format(
 							"Warning: Dropping framed control log with unexpected DataLen={0}", payloadDataLenByte));
 					}

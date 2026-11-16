@@ -88,14 +88,14 @@ const uint8_t DEFROST_GROUP5_PAYLOAD_SIZE = 72;
 const uint8_t DEFROST_GROUP6_PAYLOAD_SIZE = 60; /* airOnly в мин. +forbidHumidity +thresholdRH +purgeTimeout_s */
 
 // Максимальный размер кадра команды/ответа (буфер приёма). Ответ GET_DEFROST_GROUP(5) = 81 байт (5+74+2), (6) = 69 байт (5+62+2).
-const size_t MAX_COMMAND_SIZE = 96;
+const size_t MAX_COMMAND_SIZE = 128;
 
 // Структура команды
 struct Command {
     uint8_t commandType;           // Тип команды
     uint8_t commandCode;           // Код команды
     uint8_t dataLength;            // Длина данных параметров
-    uint8_t data[MAX_COMMAND_SIZE - 5]; // Данные параметров (макс. 59 байт)
+    uint8_t data[MAX_COMMAND_SIZE - 5]; // command header 3 + CRC 2
     uint16_t crc;                  // CRC16 для проверки целостности
 
     Command() : commandType(0), commandCode(0), dataLength(0), crc(0) {

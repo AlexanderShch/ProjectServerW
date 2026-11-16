@@ -70,6 +70,16 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::Button^ buttonWriteParameters;
 	private: System::Windows::Forms::Button^ buttonReadParameters;
 	private: System::Windows::Forms::Button^ buttonLoadDefrostDefaults;
+	private: System::Windows::Forms::TabPage^ plateauSettingsTab;
+	private: System::Windows::Forms::DataGridView^ plateauSettingsGrid;
+	private: System::Windows::Forms::Label^ plateauSettingsStatus;
+	private: System::Windows::Forms::DataGridView^ plateauStateGrid;
+	private: void InitializePlateauTab();
+	private: void ReadPlateauSettings(System::Object^ sender, System::EventArgs^ e);
+	private: void ApplyPlateauSettings(System::Object^ sender, System::EventArgs^ e);
+	private: void ReadPlateauDiagnostics(System::Object^ sender, System::EventArgs^ e);
+	private: void UpdatePlateauStateFromLog(System::Data::DataRow^ row);
+	private: void ShowPlateauGraph(System::Object^ sender, System::EventArgs^ e);
 	private: System::Windows::Forms::Label^ label1;
 
 
@@ -298,6 +308,7 @@ namespace ProjectServerW {
 			DataForm(void)
 			{
 				InitializeComponent();
+				InitializePlateauTab();
 				// Явно: иначе в ClientHandler prevSocket может быть мусором/0 и срабатывает ложный shutdown «drop old socket».
 				clientSocket = INVALID_SOCKET;
 				GetBitFieldNames();	// Инициализация имен битов (если еще не инициализированы)

@@ -1,9 +1,27 @@
 #pragma once
 
-// Строка версии для отображения
-static const wchar_t* const VERSION_STR = L"2.7.0";
+// Версия и строка для отображения из единого набора компонентов.
+#define VERSION_MAJOR 3
+#define VERSION_MINOR 0
+#define VERSION_PATCH 0
+#define VERSION_STRINGIFY_IMPL(x) #x
+#define VERSION_STRINGIFY(x) VERSION_STRINGIFY_IMPL(x)
+#define VERSION_WIDE_IMPL(x) L##x
+#define VERSION_WIDE(x) VERSION_WIDE_IMPL(x)
+static const wchar_t* const VERSION_STR =
+    VERSION_WIDE(VERSION_STRINGIFY(VERSION_MAJOR)) L"."
+    VERSION_WIDE(VERSION_STRINGIFY(VERSION_MINOR)) L"."
+    VERSION_WIDE(VERSION_STRINGIFY(VERSION_PATCH));
 
 /*
+Версия 3.0.0
+- Вкладка «ПИД Plateau» окна Data: группа 7, проверка диапазонов,
+  атомарная запись и контрольное чтение без остановки процесса.
+- «Записать» сохраняет ПИД в EEPROM контроллера с подтверждением; «Считать» читает настройки контроллера.
+- Таблица состояния обновляется по основному логу; I,D,FF и доля воды сохраняются вместе с T.
+- Окно «График»: период, сторона, T/ТЭНы/впрыск/RH/heatScale/запрос/I/D/FF, сохранение PNG.
+- Приём старого лога 89 байт и нового 105 байт; группы параметров 5/6 и телеметрия не изменены.
+
 Версия 2.7.0
 - После завершения цикла сохраняется WorkData и начинается сбор EndData на 2 часа.
   При новом запуске EndData сохраняется досрочно, данные нового цикла собираются отдельно.

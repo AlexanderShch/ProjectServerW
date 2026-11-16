@@ -177,6 +177,9 @@
     <ClInclude Include="SServer.h" />
     <ClInclude Include="version.h" />
     <ClInclude Include="Commands.h" />
+    <ClInclude Include="PlateauParams.h" />
+    <ClInclude Include="PlateauSettings.inl" />
+    <ClInclude Include="PidGraphForm.h" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="DataForm.resx">

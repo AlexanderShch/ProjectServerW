@@ -44,8 +44,9 @@ typedef struct {
     float w_sup_avg, wErr, injDuty;
     float rate_Cps;
     float fishHot_C, fishCold_C;
+    float pidIntegral, pidDerivative, pidFeedforward, pidWaterDuty;
 } ControlLogPayload_t;
-static_assert(sizeof(ControlLogPayload_t) == 89, "ControlLogPayload_t size must be 89 bytes");
+static_assert(sizeof(ControlLogPayload_t) == 105, "ControlLogPayload_t size must be 105 bytes");
 
 /* Ответ GET_DEFROST_GROUP(groupId=5): структура совпадает с DefrostLogPhasePayload_t на контроллере. */
 namespace { constexpr int DEFROST_PHASE_COUNT_SERVER = 3; }
@@ -1022,6 +1023,10 @@ void ProjectServerW::DataForm::InitializeDataTable() {
     dataTable->Columns->Add("rate_Cps", float::typeid);
     dataTable->Columns->Add("fishHot_C", float::typeid);
     dataTable->Columns->Add("fishCold_C", float::typeid);
+    dataTable->Columns->Add("PID_I", float::typeid);
+    dataTable->Columns->Add("PID_D", float::typeid);
+    dataTable->Columns->Add("PID_FF", float::typeid);
+    dataTable->Columns->Add("PID_waterDuty", float::typeid);
 
     // Fix: на некоторых сборках/сценариях Designer может держать "хвост" колонок (например T_filt_6),
     // даже если DataTable содержит только T_filt_0..T_filt_5. Очищаем и заставляем AutoGenerateColumns
@@ -1845,14 +1850,14 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
 void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte>^ packet, int size) {
     const int expectedPayloadSize = (int)sizeof(ControlLogPayload_t);   // Ожидаемый размер полезной нагрузки
     // Входной массив содержит: [Type][Cmd][Status][DataLen][Data...][CRC16]
-    const int minPacketSize = 4 + expectedPayloadSize + 2;   // Минимальный размер пакета
+    const int minPacketSize = 4 + 89 + 2;   // accept legacy prefix as well as extended log
     if (packet == nullptr || size < minPacketSize) {   // Если пакет отсутствует или размер меньше минимального размера пакета
         GlobalLogger::LogMessage(String::Format(
             "Предупреждение: AppendControlLogToDataRow: пакет отсутствует или размер {0} < {1}", size, minPacketSize));   // Лог ошибки
         return;
     }
     const int dataLenByte = (int)packet[3];
-    if (dataLenByte != expectedPayloadSize) {   // Если байт DataLen не равен ожидаемому размеру полезной нагрузки
+    if ((dataLenByte != expectedPayloadSize && dataLenByte != 89) || size < 4 + dataLenByte + 2) {
         GlobalLogger::LogMessage(String::Format(
             "Предупреждение: AppendControlLogToDataRow: байт DataLen {0} != sizeof(ControlLogPayload_t)={1}, пакет отбрасывается", dataLenByte, expectedPayloadSize));   // Лог ошибки
         return;
@@ -1861,8 +1866,8 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
     // Блокировка управляемого массива в неуправляемой памяти (pin_ptr для передачи в native-код)
     pin_ptr<System::Byte> pinned = &packet[0];   // Блокируем массив байт в неуправляемой памяти
     const uint8_t* raw = reinterpret_cast<const uint8_t*>(pinned);   // Преобразуем массив байт в строку
-    ControlLogPayload_t pl;   // Структура для хранения данных лога
-    memcpy(&pl, raw + 4, sizeof(ControlLogPayload_t));   // Копируем данные лога в структуру pl начиная с 4-го байта
+    ControlLogPayload_t pl = {};
+    memcpy(&pl, raw + 4, dataLenByte); // strict 89/105 above; missing extension stays absent in table
     lastFishCold_C = pl.fishCold_C;   // Сохраняем последнее значение параметра fishCold_C
     lastFishCold_C_Valid = true;   // Устанавливаем флаг валидности последнего значения параметра fishCold_C
 
@@ -1913,6 +1918,18 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
         rowToUpdate["rate_Cps"] = pl.rate_Cps;
         rowToUpdate["fishHot_C"] = pl.fishHot_C;
         rowToUpdate["fishCold_C"] = pl.fishCold_C;
+        if (dataLenByte == expectedPayloadSize) {
+            rowToUpdate["PID_I"] = pl.pidIntegral;
+            rowToUpdate["PID_D"] = pl.pidDerivative;
+            rowToUpdate["PID_FF"] = pl.pidFeedforward;
+            rowToUpdate["PID_waterDuty"] = pl.pidWaterDuty;
+        } else {
+            rowToUpdate["PID_I"] = DBNull::Value;
+            rowToUpdate["PID_D"] = DBNull::Value;
+            rowToUpdate["PID_FF"] = DBNull::Value;
+            rowToUpdate["PID_waterDuty"] = DBNull::Value;
+        }
+        UpdatePlateauStateFromLog(rowToUpdate);
 
         // Если флаг добавления строки в таблицу установлен, добавляем строку в таблицу
         if (shouldAddToTable) {

@@ -413,7 +413,8 @@ bool ProjectServerW::DataForm::GetDefrostGroup(uint8_t groupId, uint8_t page, ui
     uint8_t payloadLen = (uint8_t)(response.dataLength - 2);
     const uint8_t expectedPayloadLen =
         (groupId == 5u) ? DEFROST_GROUP5_PAYLOAD_SIZE :
-        (groupId == 6u) ? DEFROST_GROUP6_PAYLOAD_SIZE : 0u;
+        (groupId == 6u) ? DEFROST_GROUP6_PAYLOAD_SIZE :
+        (groupId == 7u) ? 80u : (groupId == 8u) ? 21u : 0u;
     if (expectedPayloadLen != 0u && payloadLen != expectedPayloadLen) {
         GlobalLogger::LogMessage(String::Format(
             "Warning: GET_DEFROST_GROUP({0}) payload rejected: got {1} bytes, expected exactly {2}",
@@ -1190,3 +1191,4 @@ System::Void ProjectServerW::DataForm::button_CMDINFO_Click(System::Object^ send
 }
 
 
+#include "PlateauSettings.inl"

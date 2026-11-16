@@ -34,7 +34,7 @@ uint16_t CalculateCommandCRC(const uint8_t* buffer, size_t length) {
 size_t BuildCommandBuffer(const Command& cmd, uint8_t* buffer, size_t bufferSize) {
     // Проверяем размер буфера
     size_t requiredSize = 3 + static_cast<size_t>(cmd.dataLength) + 2; // тип + код + длина + данные + CRC
-    if (bufferSize < requiredSize) {
+    if (buffer == nullptr || cmd.dataLength > sizeof(cmd.data) || bufferSize < requiredSize) {
         return 0; // Недостаточно места в буфере
     }
 
