@@ -25,7 +25,9 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd) {
 bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandName) {
     try {
         const bool suppressUiErrors =
-            isFormClosingNow || this->Disposing || this->IsDisposed;
+            isFormClosingNow || this->Disposing || this->IsDisposed ||
+            (cmd.commandType==CmdType::REQUEST &&
+             (cmd.commandCode==CmdRequest::GET_BUTTON_EVENTS || cmd.commandCode==CmdRequest::ACK_BUTTON_EVENTS));
         // Проверяем, что сокет клиента валиден
         if (clientSocket == INVALID_SOCKET) {
             if (!suppressUiErrors) {
@@ -82,7 +84,7 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
         else if (bytesSent == commandLength) {
             // Команда успешно отправлена
             const bool backgroundPoll =
-                (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_SENSOR_DIAG);
+                (cmd.commandType == CmdType::REQUEST && (cmd.commandCode == CmdRequest::GET_SENSOR_DIAG || cmd.commandCode == CmdRequest::GET_BUTTON_EVENTS || cmd.commandCode == CmdRequest::ACK_BUTTON_EVENTS));
             if (!backgroundPoll) {
                 Label_Commands->Text = "Команда " + commandName + " отправлена клиенту";
                 GlobalLogger::LogMessage("Information: Команда " + commandName + " отправлена клиенту");
@@ -1110,7 +1112,7 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
             const bool isProgControl = (cmd.commandType == CmdType::PROG_CONTROL);
             // Фоновый ежеминутный запрос: разбирает и логирует вызывающий, общий ProcessResponse не нужен.
             const bool isSensorDiag =
-                (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_SENSOR_DIAG);
+                (cmd.commandType == CmdType::REQUEST && (cmd.commandCode == CmdRequest::GET_SENSOR_DIAG || cmd.commandCode == CmdRequest::GET_BUTTON_EVENTS || cmd.commandCode == CmdRequest::ACK_BUTTON_EVENTS));
             // GET_ALARM_FLAGS по RS-485/полудуплексу и при загрузке контроллера часто не укладывается в 100 мс.
             const int totalTimeoutMs =
                 (isGetDefrostGroup || isGetAlarmFlags || isSetDefrostGroup || isLoadDefrostDefaults || isSensorDiag) ? 1000 :
@@ -1162,7 +1164,7 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
         // UI callbacks can Invoke onto a thread which itself needs this gate.
         // The network transaction is complete before touching UI/session state.
         const bool isSensorDiagResponse =
-            (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_SENSOR_DIAG);
+            (cmd.commandType == CmdType::REQUEST && (cmd.commandCode == CmdRequest::GET_SENSOR_DIAG || cmd.commandCode == CmdRequest::GET_BUTTON_EVENTS || cmd.commandCode == CmdRequest::ACK_BUTTON_EVENTS));
         if (!isSensorDiagResponse) ProcessResponse(response);
         return (response.status == CmdStatus::OK);
 
@@ -1192,3 +1194,70 @@ System::Void ProjectServerW::DataForm::button_CMDINFO_Click(System::Object^ send
 
 
 #include "PlateauSettings.inl"
+
+/* Опрос очереди не блокирует UI и пропускается при занятой командной линии.
+ * Таймаут снимает ожидание, но не удаляет события из RAM контроллера. */
+void ProjectServerW::DataForm::PollButtonEvents(Object^,EventArgs^) {
+    if (isFormClosingNow || IsDisposed || Disposing || !startupSequenceCompleted ||
+        clientSocket==INVALID_SOCKET) return;
+    if (buttonEventsSocket!=clientSocket) {
+        buttonEventsSocket=clientSocket;buttonEventsUnsupported=false;buttonEventsPending=false;
+    }
+    if (buttonEventsUnsupported || sensorDiagInProgress || pendingRowWrkBit) return;
+    if (hasTelemetry && DateTime::Now.Subtract(lastTelemetryTime).TotalMilliseconds<700) return;
+    if (buttonEventsPending && DateTime::Now.Subtract(buttonEventsRequestTime).TotalSeconds<2) return;
+    if (!System::Threading::Monitor::TryEnter(commandPipelineGate)) return;
+    try {
+        Command cmd=CreateRequestCommand(CmdRequest::GET_BUTTON_EVENTS);cmd.dataLength=16;
+        // Новый кандидат в каждом запросе: если МК перезагрузился без смены
+        // TCP-сокета, новая очередь получит новый ключ и номера не столкнутся.
+        auto proposedSession=Guid::NewGuid().ToByteArray();
+        for(int i=0;i<16;++i)cmd.data[i]=proposedSession[i];
+        buttonEventsPending=SendCommand(cmd,"GET_BUTTON_EVENTS");
+        buttonEventsRequestTime=DateTime::Now;
+    } finally {System::Threading::Monitor::Exit(commandPipelineGate);}
+}
+
+/* Проверяет весь пакет до записи. Только успешно записанный префикс подтверждается;
+ * повторный ответ и потерянный ACK безопасны благодаря постоянным ключам в log.txt. */
+void ProjectServerW::DataForm::HandleButtonEventsResponse(cli::array<Byte>^ packet) {
+    if (isFormClosingNow || IsDisposed || Disposing || packet==nullptr || packet->Length==0) return;
+    pin_ptr<Byte> pinned=&packet[0];CommandResponse response{};
+    if (!ParseResponseBuffer(reinterpret_cast<const uint8_t*>(pinned),packet->Length,response)) return;
+    if (response.commandCode==CmdRequest::ACK_BUTTON_EVENTS) return;
+    buttonEventsPending=false;
+    if (response.status==CmdStatus::INVALID_CODE) {buttonEventsUnsupported=true;return;}
+    if (response.status!=CmdStatus::OK || response.dataLength<21) return;
+    const int count=response.data[20];
+    if (count>10 || response.dataLength!=21+9*count) return;
+    for(int i=0;i<count;++i) {
+        const uint8_t* event=response.data+21+9*i;
+        uint32_t sequence,previous=0;memcpy(&sequence,event,4);
+        if (i>0)memcpy(&previous,event-9,4);
+        if ((event[8]!=1 && event[8]!=2) || sequence==0 || (i>0 && sequence<=previous)) return;
+    }
+    auto session=gcnew cli::array<Byte>(16);
+    for(int i=0;i<16;++i)session[i]=response.data[i];
+    String^ id=Guid(session).ToString("N");
+    uint32_t overflow;memcpy(&overflow,response.data+16,4);
+    if (overflow && !GlobalLogger::TryLogButtonEvent(
+        String::Format("[ButtonEvent:{0}:overflow:{1}]",id,overflow),
+        String::Format(L"Ошибка: переполнение очереди кнопок контроллера {0}; потеряно событий: {1}",ClientIP,overflow))) return;
+    uint32_t last=0;
+    for(int i=0;i<count;++i) {
+        const uint8_t* event=response.data+21+9*i;
+        uint32_t sequence,seconds;memcpy(&sequence,event,4);memcpy(&seconds,event+4,4);
+        String^ key=String::Format("[ButtonEvent:{0}:{1}]",id,sequence);
+        String^ text=String::Format(L"Информация: контроллер {1} обработал нажатие физической кнопки {0}; время контроллера: {2} с; событие №{3}",
+            event[8]==1?L"СТАРТ":L"СТОП",ClientIP,seconds,sequence);
+        if (!GlobalLogger::TryLogButtonEvent(key,text)) break;
+        last=sequence;
+    }
+    if (!last || clientSocket==INVALID_SOCKET) return;
+    if (!System::Threading::Monitor::TryEnter(commandPipelineGate)) return;
+    try {
+        Command ack=CreateRequestCommand(CmdRequest::ACK_BUTTON_EVENTS);ack.dataLength=20;
+        memcpy(ack.data,response.data,16);memcpy(ack.data+16,&last,4);
+        SendCommand(ack,"ACK_BUTTON_EVENTS");
+    } finally {System::Threading::Monitor::Exit(commandPipelineGate);}
+}

@@ -333,6 +333,40 @@ static class LogSessionIsolationTests
                 Equal(5, curves); Equal(-4.0, source.Rows[0]["PID_I"]);
                 ((Form)graph).Dispose();
             });
+            Test("PID state shows four heater confirmations and updates without a control log", delegate {
+                var f = NewForm(); var table = Table(f); var row = table.NewRow();
+                row["RealTime"] = "12:00:00"; row["Typ6"] = (byte)4; row["Act6"] = (byte)1;
+                row["Ten1_Left"] = true; row["Ten2_Left"] = false;
+                row["Ten1_Right"] = false; row["Ten2_Right"] = true;
+                row["_H0"] = false; row["_H1"] = true; row["_H2"] = true; row["_H3"] = false;
+                row["PID_P"] = .25f; row["PID_I"] = .75f; row["_Inj"] = true; table.Rows.Add(row);
+                Call(f, "ReadPlateauDiagnostics", null, EventArgs.Empty);
+                var state = (DataGridView)Get(f, "plateauStateGrid"); Equal(12, state.Rows.Count);
+                var reminder = (TextBox)Get(f, "plateauPidReminder");
+                Equal(true, reminder.ReadOnly); Equal(true, reminder.Multiline);
+                if (!reminder.Text.Contains("uCommon_TEN = heatScale") || !reminder.Text.Contains("FF = ffMaxEq")) throw new Exception("PID reminder resource missing");
+                var stateSplit = (SplitContainer)Get(f, "plateauStateSplit");
+                Equal(Orientation.Horizontal, stateSplit.Orientation);
+                Equal(stateSplit.Panel1, state.Parent); Equal(stateSplit.Panel2, reminder.Parent);
+                Equal("1", state.Rows[8].Cells[1].Value); Equal("0", state.Rows[9].Cells[1].Value);
+                Equal("0", state.Rows[10].Cells[1].Value); Equal("1", state.Rows[11].Cells[1].Value);
+                Equal("0.250", state.Rows[2].Cells[1].Value);
+                Equal("0.750", state.Rows[3].Cells[1].Value);
+                Equal("1", state.Rows[7].Cells[1].Value);
+                row["_Inj"] = false; Call(f, "UpdatePlateauStateFromLog", row);
+                Equal("0", state.Rows[7].Cells[1].Value);
+                row["_Inj"] = DBNull.Value; Call(f, "UpdatePlateauStateFromLog", row);
+                Equal("нет данных", state.Rows[7].Cells[1].Value);
+                // A stopped controller still sends telemetry, with all four feedback bits OFF.
+                Telemetry(f, 200, false, false, false);
+                for (int i = 8; i < 12; ++i) Equal("0", state.Rows[i].Cells[1].Value);
+                Equal("0.250", state.Rows[2].Cells[1].Value);
+                Equal("0.750", state.Rows[3].Cells[1].Value);
+                row["Act6"] = (byte)0; Call(f, "UpdatePlateauHeaterStates", row);
+                for (int i = 8; i < 12; ++i) Equal("нет данных", state.Rows[i].Cells[1].Value);
+                row["Act6"] = (byte)1; row["Ten2_Left"] = DBNull.Value; Call(f, "UpdatePlateauHeaterStates", row);
+                Equal("1", state.Rows[8].Cells[1].Value); Equal("нет данных", state.Rows[9].Cells[1].Value);
+            });
             Console.WriteLine("Passed " + passed + " regression tests.");
             return 0;
         }

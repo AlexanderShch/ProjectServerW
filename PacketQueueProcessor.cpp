@@ -355,6 +355,13 @@ namespace ProjectServerW {
         // разбирать телеметрию, а её запись не будет заблокирована ожиданием диагностики.
         // Полную проверку кадра выполняет HandleSensorDiagResponse. Минимум 6 байт —
         // заголовок ответа и CRC; тип и код здесь нужны только для маршрутизации.
+        // Очередь кнопок обслуживается асинхронно и не подменяет ответ обычной команды.
+        if (response->Length >= 6 && response[0] == CmdType::REQUEST &&
+            (response[1] == CmdRequest::GET_BUTTON_EVENTS || response[1] == CmdRequest::ACK_BUTTON_EVENTS)) {
+            if (!IsDisposed && !Disposing && IsHandleCreated)
+                BeginInvoke(gcnew Action<cli::array<System::Byte>^>(this, &DataForm::HandleButtonEventsResponse), response);
+            return;
+        }
         if (response->Length >= 6 && response[0] == CmdType::REQUEST &&
             response[1] == CmdRequest::GET_SENSOR_DIAG) {
             if (!IsDisposed && !Disposing && IsHandleCreated)

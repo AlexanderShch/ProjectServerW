@@ -74,6 +74,8 @@ namespace ProjectServerW {
 	private: System::Windows::Forms::DataGridView^ plateauSettingsGrid;
 	private: System::Windows::Forms::Label^ plateauSettingsStatus;
 	private: System::Windows::Forms::DataGridView^ plateauStateGrid;
+	private: System::Windows::Forms::SplitContainer^ plateauStateSplit;
+	private: System::Windows::Forms::TextBox^ plateauPidReminder;
 	private: System::Windows::Forms::SplitContainer^ plateauSplit;
 	private: System::Windows::Forms::GroupBox^ plateauParametersGroup;
 	private: System::Windows::Forms::GroupBox^ plateauStateGroup;
@@ -99,6 +101,7 @@ namespace ProjectServerW {
 	private: void ApplyPlateauSettings(System::Object^ sender, System::EventArgs^ e);
 	private: void ReadPlateauDiagnostics(System::Object^ sender, System::EventArgs^ e);
 	private: void UpdatePlateauStateFromLog(System::Data::DataRow^ row);
+	private: void UpdatePlateauHeaterStates(System::Data::DataRow^ row);
 	private: void ShowPlateauGraph(System::Object^ sender, System::EventArgs^ e);
 	private: System::Windows::Forms::Label^ label1;
 
@@ -200,7 +203,14 @@ namespace ProjectServerW {
 			bool inactivityCloseRequested;
 			DateTime lastCmdInfoProbeTime; // Why: rate-limit automatic GET_CMD_INFO probes.
 			bool cmdInfoProbeInProgress;  // Why: avoid recursive probing when GET_CMD_INFO itself times out.
-			DateTime lastSensorDiagTime;     // время последнего запроса GET_SENSOR_DIAG
+			// Таймер событий не зависит от записи WorkData/EndData и работает также в простое.
+            System::Windows::Forms::Timer^ buttonEventsTimer;
+            DateTime buttonEventsRequestTime;
+            bool buttonEventsPending, buttonEventsUnsupported;
+            SOCKET buttonEventsSocket;
+            void PollButtonEvents(System::Object^ sender, System::EventArgs^ e);
+            void HandleButtonEventsResponse(cli::array<System::Byte>^ packet);
+            DateTime lastSensorDiagTime;     // время последнего запроса GET_SENSOR_DIAG
 			bool sensorDiagInProgress;       // диагностика ожидает лог, поставлена в UI или отправляется
 			bool sensorDiagLogTimedOut;      // разрешает отправку после ограниченного ожидания лога
 			System::Windows::Forms::Timer^ sensorDiagLogTimer; // одноразовое ожидание лога перед диагностикой
@@ -391,7 +401,13 @@ namespace ProjectServerW {
 				lastTelemetryDeviceSeconds = 0;
 				lastCmdInfoProbeTime = DateTime::MinValue;
 				cmdInfoProbeInProgress = false;
-				lastSensorDiagTime = DateTime::MinValue;
+                buttonEventsRequestTime = DateTime::MinValue;
+                buttonEventsPending = false;buttonEventsUnsupported = false;buttonEventsSocket = INVALID_SOCKET;
+                buttonEventsTimer = gcnew System::Windows::Forms::Timer(this->components);
+                buttonEventsTimer->Interval = 2000;
+                buttonEventsTimer->Tick += gcnew EventHandler(this, &DataForm::PollButtonEvents);
+                buttonEventsTimer->Start();
+                lastSensorDiagTime = DateTime::MinValue;
 				sensorDiagInProgress = false;
 				sensorDiagLogTimedOut = false;
 				sensorDiagLogTimer = gcnew System::Windows::Forms::Timer();
@@ -567,6 +583,7 @@ private: System::ComponentModel::IContainer^ components;
 			/// </summary>
 			void InitializeComponent(void)
 			{
+				System::ComponentModel::ComponentResourceManager^ resources = (gcnew System::ComponentModel::ComponentResourceManager(DataForm::typeid));
 				this->components = (gcnew System::ComponentModel::Container());
 				this->menuStrip1 = (gcnew System::Windows::Forms::MenuStrip());
 				this->выходToolStripMenuItem = (gcnew System::Windows::Forms::ToolStripMenuItem());
@@ -651,6 +668,8 @@ private: System::ComponentModel::IContainer^ components;
 				this->plateauInfoTip = (gcnew System::Windows::Forms::ToolTip(this->components));
 				this->plateauSettingsGrid = (gcnew System::Windows::Forms::DataGridView());
 				this->plateauStateGrid = (gcnew System::Windows::Forms::DataGridView());
+				this->plateauStateSplit = (gcnew System::Windows::Forms::SplitContainer());
+				this->plateauPidReminder = (gcnew System::Windows::Forms::TextBox());
 				this->plateauSettingsStatus = (gcnew System::Windows::Forms::Label());
 				this->plateauParameterColumn = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
 				this->plateauDescriptionColumn = (gcnew System::Windows::Forms::DataGridViewTextBoxColumn());
@@ -668,6 +687,10 @@ private: System::ComponentModel::IContainer^ components;
 				this->plateauSplit->Panel2->SuspendLayout();
 				this->plateauParametersGroup->SuspendLayout();
 				this->plateauStateGroup->SuspendLayout();
+				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->plateauStateSplit))->BeginInit();
+				this->plateauStateSplit->Panel1->SuspendLayout();
+				this->plateauStateSplit->Panel2->SuspendLayout();
+				this->plateauStateSplit->SuspendLayout();
 				this->plateauParameterToolbar->SuspendLayout();
 				this->plateauStateToolbar->SuspendLayout();
 				this->menuStrip1->SuspendLayout();
@@ -1454,8 +1477,26 @@ private: System::ComponentModel::IContainer^ components;
 				this->plateauStateGroup->Text = L"Состояние ПИД";
 				this->plateauStateGroup->Dock = System::Windows::Forms::DockStyle::Fill;
 				this->plateauStateGroup->Padding = System::Windows::Forms::Padding(6);
-				this->plateauStateGroup->Controls->Add(this->plateauStateGrid);
+				this->plateauStateGroup->Controls->Add(this->plateauStateSplit);
 				this->plateauStateGroup->Controls->Add(this->plateauStateToolbar);
+				this->plateauStateSplit->Name = L"plateauStateSplit";
+				this->plateauStateSplit->Dock = System::Windows::Forms::DockStyle::Fill;
+				this->plateauStateSplit->Orientation = System::Windows::Forms::Orientation::Horizontal;
+				this->plateauStateSplit->Size = System::Drawing::Size(641, 728);
+				this->plateauStateSplit->SplitterDistance = 300;
+				this->plateauStateSplit->Panel1MinSize = 150;
+				this->plateauStateSplit->Panel2MinSize = 120;
+				this->plateauStateSplit->Panel1->Controls->Add(this->plateauStateGrid);
+				this->plateauStateSplit->Panel2->Controls->Add(this->plateauPidReminder);
+				this->plateauPidReminder->Name = L"plateauPidReminder";
+				this->plateauPidReminder->Dock = System::Windows::Forms::DockStyle::Fill;
+				this->plateauPidReminder->Multiline = true;
+				this->plateauPidReminder->ReadOnly = true;
+				this->plateauPidReminder->ScrollBars = System::Windows::Forms::ScrollBars::Vertical;
+				this->plateauPidReminder->WordWrap = true;
+				this->plateauPidReminder->BackColor = System::Drawing::SystemColors::Window;
+				this->plateauPidReminder->AccessibleName = L"Памятка по ПИД температуры";
+				this->plateauPidReminder->Text = resources->GetString(L"plateauPidReminder.Text");
 				this->plateauParameterToolbar->Dock = System::Windows::Forms::DockStyle::Top;
 				this->plateauParameterToolbar->Height = 48;
 				this->plateauParameterToolbar->ColumnCount = 4;
@@ -1591,6 +1632,11 @@ private: System::ComponentModel::IContainer^ components;
 				this->plateauParameterToolbar->ResumeLayout(false);
 				this->plateauStateToolbar->ResumeLayout(false);
 				this->plateauParametersGroup->ResumeLayout(false);
+				(cli::safe_cast<System::ComponentModel::ISupportInitialize^>(this->plateauStateSplit))->EndInit();
+				this->plateauStateSplit->Panel1->ResumeLayout(false);
+				this->plateauStateSplit->Panel2->ResumeLayout(false);
+				this->plateauStateSplit->Panel2->PerformLayout();
+				this->plateauStateSplit->ResumeLayout(false);
 				this->plateauStateGroup->ResumeLayout(false);
 				this->plateauSplit->Panel1->ResumeLayout(false);
 				this->plateauSplit->Panel2->ResumeLayout(false);

@@ -13,11 +13,10 @@ using namespace System::Collections::Generic;
 
 ref class PidPlotSeries {
 public:
- int panel;String^ name;Color color;bool step;
- double offset,plotMin,plotMax;
+ int panel;String^ name;Color color;bool step;bool rightAxis;
  List<double>^ x;List<double>^ y;
  PidPlotSeries(int p,String^ n,Color c,bool s) {
-  panel=p;name=n;color=c;step=s;offset=0;plotMin=0;plotMax=0;x=gcnew List<double>();y=gcnew List<double>();
+  panel=p;name=n;color=c;step=s;rightAxis=false;x=gcnew List<double>();y=gcnew List<double>();
  }
  void Add(DateTime at,double value) {x->Add(at.ToOADate());y->Add(value);}
 };
@@ -81,19 +80,21 @@ public ref class PidGraphForm : public Form {
   auto raw=AddSeries(0,L"Сырая T",Color::DarkGray,false);
   auto filt=AddSeries(0,L"Фильтр 32",Color::Firebrick,false);
   auto target=AddSeries(0,L"Уставка (общая)",Color::Black,false);
-  auto productLeft=AddSeries(0,L"T продукта (левый)",Color::ForestGreen,false);
-  auto productRight=AddSeries(0,L"T продукта (правый)",Color::DarkViolet,false);
-  auto ten1=AddSeries(1,L"ТЭН1: 0/1",Color::Goldenrod,true);
-  auto ten2=AddSeries(1,L"ТЭН2: 2/3",Color::SaddleBrown,true);
-  auto water=AddSeries(1,L"Впрыск: 4/5",Color::DodgerBlue,true);
-  auto rh=AddSeries(2,L"RH возврата, %",Color::RoyalBlue,false);
-  auto duty=AddSeries(2,L"Запрос воды, %",Color::SeaGreen,false);
-  auto scale=AddSeries(3,L"heatScale",Color::MediumPurple,false);
-  auto common=AddSeries(4,L"uCommon",Color::Black,false);
-  auto chosen=AddSeries(4,L"Запрос стороны",Color::DarkOrange,false);
-  auto integral=AddSeries(4,L"I",Color::RoyalBlue,false);
-  auto derivative=AddSeries(4,L"D",Color::MediumPurple,false);
-  auto ff=AddSeries(4,L"FF",Color::SeaGreen,false);
+  auto productLeft=AddSeries(1,L"T продукта (левый, сырая)",Color::ForestGreen,false);
+  auto productRight=AddSeries(1,L"T продукта (правый, сырая)",Color::DarkViolet,false);
+  auto ten1=AddSeries(2,L"ТЭН1: 0/1",Color::Goldenrod,true);
+  auto ten2=AddSeries(2,L"ТЭН2: 2/3",Color::SaddleBrown,true);
+  auto water=AddSeries(3,L"Впрыск: 0/1 (правая шкала)",Color::DodgerBlue,true);
+  water->rightAxis=true;
+  auto rh=AddSeries(3,L"RH возврата, %",Color::RoyalBlue,false);
+  auto duty=AddSeries(3,L"Запрос воды, %",Color::SeaGreen,false);
+  auto scale=AddSeries(4,L"heatScale",Color::MediumPurple,false);
+  auto common=AddSeries(5,L"uCommon",Color::Black,false);
+  auto chosen=AddSeries(6,L"Запрос стороны",Color::DarkOrange,false);
+  auto proportional=AddSeries(7,L"P",Color::DarkCyan,false);
+  auto integral=AddSeries(8,L"I",Color::RoyalBlue,false);
+  auto derivative=AddSeries(9,L"D",Color::MediumPurple,false);
+  auto ff=AddSeries(10,L"FF",Color::SeaGreen,false);
   int diagnosticCount=0;
   for(int j=0;j<rowTimes->Count;++j) {
    DateTime at=rowTimes[j];if(at<from->Value||at>until->Value)continue;
@@ -107,23 +108,14 @@ public ref class PidGraphForm : public Form {
    double h1=Number(row,"Ten1_"+suffix),h2=Number(row,"Ten2_"+suffix),wi=Number(row,"_Inj");
    ten1->Add(at,Finite(h1)?(h1>0?1:0):Double::NaN);
    ten2->Add(at,Finite(h2)?(h2>0?3:2):Double::NaN);
-   water->Add(at,Finite(wi)?(wi>0?5:4):Double::NaN);
+   water->Add(at,Finite(wi)?(wi>0?1:0):Double::NaN);
    rh->Add(at,Number(row,"Act2")==0?Double::NaN:Number(row,"H2"));
    scale->Add(at,Number(row,"heatScale01"));common->Add(at,Number(row,"uCommon_TEN"));
    chosen->Add(at,Number(row,sideRequestColumn));
    double I=Number(row,"PID_I");if(Finite(I))++diagnosticCount;
+   proportional->Add(at,Number(row,"PID_P"));
    integral->Add(at,I);derivative->Add(at,Number(row,"PID_D"));
    ff->Add(at,Number(row,"PID_FF"));duty->Add(at,100*Number(row,"PID_waterDuty"));
-  }
-  // Fixed offsets match the axis marks; keep full ranges without altering log values.
-  int band=0;
-  for each(PidPlotSeries^ s in series)if(s->panel==4) {
-   double minimum=0,maximum=2;
-   for each(double value in s->y)if(Finite(value)) {
-    minimum=Math::Min(minimum,value);maximum=Math::Max(maximum,value);
-   }
-   s->offset=3.0*band++;s->plotMin=s->offset+minimum;
-   s->plotMax=s->offset+maximum;
   }
   message->Text=String::Format(L"Снимок текущего цикла: {0} строк; {1} строк с I/D/FF.\r\n"
    L"I/D/FF и запрос воды взяты из тех же строк основного лога. В старом формате эти поля отсутствуют и не восстанавливаются.",sampleCount,diagnosticCount);
@@ -134,29 +126,42 @@ public ref class PidGraphForm : public Form {
   Graphics^ g=paintArgs->Graphics;g->Clear(Color::White);
   if(series==nullptr||sampleCount<2||x1<=x0) {g->DrawString(L"Выберите период с данными и нажмите «Построить».",this->Font,Brushes::Black,30.f,30.f);return;}
   g->SmoothingMode=System::Drawing::Drawing2D::SmoothingMode::AntiAlias;
-  float left=78.f,width=static_cast<float>(Math::Max(300,canvas->ClientSize.Width-105));
-  float section=(canvas->ClientSize.Height-65.f)/5.f;
-  auto titles=gcnew cli::array<String^>{L"Температура воздуха и продукта, °C",L"Подтверждённые ТЭНы и команда впрыска",L"Влажность возврата и запрос воды, %",L"Разрешённая доля нагрева",L"Запрос нагрева и ПИД, экв. ТЭНа на сторону (со смещениями)"};
+  float left=78.f,width=static_cast<float>(Math::Max(300,canvas->ClientSize.Width-155));
+  float section=(canvas->ClientSize.Height-65.f)/11.f;
+  auto titles=gcnew cli::array<String^>{L"Температура воздуха дефростера, °C",L"Температура продукта, °C",L"Подтверждённые ТЭНы",L"Влажность возврата, запрос воды и впрыск",L"Разрешённая доля нагрева",L"Общий запрос нагрева uCommon, экв. ТЭНа",L"Запрос нагрева выбранной стороны, экв. ТЭНа",L"Пропорциональная составляющая P, экв. ТЭНа",L"Интегральная составляющая I, экв. ТЭНа",L"Дифференциальная поправка D, экв. ТЭНа",L"Компенсация впрыска FF, экв. ТЭНа"};
   auto font=gcnew System::Drawing::Font(L"Segoe UI",9.f);
   auto bold=gcnew System::Drawing::Font(L"Segoe UI",10.f,System::Drawing::FontStyle::Bold);
   try {
    g->DrawString(String::Format(L"{0} • {1:dd.MM.yyyy HH:mm:ss} — {2:dd.MM.yyyy HH:mm:ss}",side->Text,from->Value,until->Value),bold,Brushes::Black,left,2.f);
-   for(int panel=0;panel<5;++panel) {
+   for(int panel=0;panel<11;++panel) {
     float top=panel*section+77,H=section-78;
-    double lo=panel==0?Double::PositiveInfinity:0,hi=panel==0?Double::NegativeInfinity:(panel==1?5.0:(panel==2?100:(panel==3?1.0:2.0)));
-    if(panel==0)for each(PidPlotSeries^ s in series)if(s->panel==panel)
+    // Температуры воздуха и продукта имеют отдельные автоматические шкалы.
+    bool temperaturePanel=panel<=1;
+    double lo=temperaturePanel?Double::PositiveInfinity:0,hi=temperaturePanel?Double::NegativeInfinity:(panel==2?3.0:(panel==3?100:(panel==4?1.0:2.0)));
+    if(temperaturePanel)for each(PidPlotSeries^ s in series)if(s->panel==panel)
      for each(double value in s->y)if(Finite(value)){lo=Math::Min(lo,value);hi=Math::Max(hi,value);}
-    if(panel==4)for each(PidPlotSeries^ s in series)if(s->panel==panel){lo=Math::Min(lo,s->plotMin);hi=Math::Max(hi,s->plotMax);}
+    // Составляющие ПИД показаны в собственных единицах, без прибавления смещений.
+    // Базовые диапазоны сохраняют читаемость нулевых кривых; реальные выбросы расширяют шкалу.
+    if(panel>=7) {
+     lo=panel==9?-1.0:0.0;hi=panel>=9?1.0:2.0;
+     for each(PidPlotSeries^ s in series)if(s->panel==panel)
+      for each(double value in s->y)if(Finite(value)){lo=Math::Min(lo,value);hi=Math::Max(hi,value);}
+    }
     if(!Finite(lo)||!Finite(hi)) {lo=0;hi=1;}
-    if(panel==0) {double margin=Math::Max(.1,(hi-lo)*.08);lo-=margin;hi+=margin;}
+    if(temperaturePanel) {double margin=Math::Max(.1,(hi-lo)*.08);lo-=margin;hi+=margin;}
     if(hi-lo<.01)hi=lo+1;
+    // Деления сохраняют исходный диапазон шкалы, а область рисования шире
+    // на 4% с каждой стороны. Нулевые и предельные линии всех графиков
+    // находятся внутри отсечения и видны целиком, включая толщину пера.
+    const double scaleLo=lo,scaleHi=hi;
+    const double edgeMargin=(scaleHi-scaleLo)*.04;
+    lo=scaleLo-edgeMargin;hi=scaleHi+edgeMargin;
     g->DrawString(titles[panel],bold,Brushes::Black,left,panel*section+32);
     float legendX=left;
     for each(PidPlotSeries^ s in series)if(s->panel==panel) {
      auto brush=gcnew SolidBrush(s->color);
      try {bool hasValue=false;for each(double value in s->y)if(Finite(value)){hasValue=true;break;}
       String^ name=s->name;
-      if(panel==4)name+=L" (+"+s->offset.ToString("0.##",System::Globalization::CultureInfo::InvariantCulture)+L")";
       if(!hasValue)name+=L" (нет данных)";
       g->DrawString(name,font,brush,legendX,panel*section+53);
       legendX+=g->MeasureString(name,font).Width+18;
@@ -164,17 +169,32 @@ public ref class PidGraphForm : public Form {
     }
     auto grid=gcnew Pen(Color::FromArgb(225,230,237));
     try {
-     int divisions=panel==1?5:4;
+     int divisions=panel==2?3:4;
      auto ticks=gcnew List<double>();
-     if(panel==4) {
-      for(int tick=0;tick<5;++tick)ticks->Add(3.0*tick);
-     } else for(int tick=0;tick<=divisions;++tick)ticks->Add(lo+(hi-lo)*tick/divisions);
+     // Поля не меняют подписи шкал: 0..3, 0..1, 0..2 и прочие исходные диапазоны.
+     for(int tick=0;tick<=divisions;++tick)
+      ticks->Add(scaleLo+(scaleHi-scaleLo)*tick/divisions);
      for each(double value in ticks) {
       float y=top+H-static_cast<float>((value-lo)/(hi-lo))*H;
-      String^ label=(panel==1||panel==4)?value.ToString("F0"):panel==3
+      String^ label=panel==2?value.ToString("F0"):panel==4
        ? (value==0?L"0":value.ToString("0.0#",System::Globalization::CultureInfo::InvariantCulture))
        : value.ToString("F2");
       g->DrawLine(grid,left,y,left+width,y);g->DrawString(label,font,Brushes::DimGray,3.f,y-8);
+     }
+     // Правая ось показывает команду форсунки целыми 0/1. Её границы
+     // совпадают с 0/100% левой оси и сохраняют защитные поля от обрезания.
+     if(panel==3) {
+      auto axisPen=gcnew Pen(Color::DodgerBlue);
+      auto axisBrush=gcnew SolidBrush(Color::DodgerBlue);
+      try {
+       float axisX=left+width;
+       g->DrawLine(axisPen,axisX,top,axisX,top+H);
+       for(int state=0;state<=1;++state) {
+        float axisY=top+H-static_cast<float>((100.0*state-lo)/(hi-lo))*H;
+        g->DrawLine(axisPen,axisX,axisY,axisX+5,axisY);
+        g->DrawString(state.ToString(),font,axisBrush,axisX+8,axisY-8);
+       }
+      }finally{delete axisPen;delete axisBrush;}
      }
      for(int tick=0;tick<7;++tick) {
       float x=left+width*tick/6;g->DrawLine(grid,x,top,x,top+H);
@@ -192,7 +212,10 @@ public ref class PidGraphForm : public Form {
       for(int q=0;q<s->x->Count;++q) {
        double value=s->y[q],time=s->x[q];if(!Finite(value)){previous=false;continue;}
        float x=left+(float)((time-x0)/(x1-x0))*width;
-       float y=top+H-(float)((value+s->offset-lo)/(hi-lo))*H;
+       // Впрыск хранится как 0/1; только координата переводится в диапазон
+       // левой оси 0..100%, исходные значения лога не изменяются.
+       double plotValue=s->rightAxis?100.0*value:value;
+       float y=top+H-(float)((plotValue-lo)/(hi-lo))*H;
        double allowed=gapSeconds;
        if(previous&&(time-pt)*86400<=allowed) {
         if(s->step){g->DrawLine(pen,px,py,x,py);g->DrawLine(pen,x,py,x,y);}
@@ -229,8 +252,11 @@ public:
   auto build=gcnew Button();build->Text=L"Построить";build->Width=110;build->Click+=gcnew EventHandler(this,&PidGraphForm::Replot);toolbar->Controls->Add(build);
   auto save=gcnew Button();save->Text=L"Сохранить PNG";save->Width=140;save->Click+=gcnew EventHandler(this,&PidGraphForm::SaveImage);toolbar->Controls->Add(save);
   message=gcnew Label();message->Dock=DockStyle::Bottom;message->Height=55;
-  canvas=gcnew PidPlotCanvas();canvas->Dock=DockStyle::Fill;canvas->Paint+=gcnew PaintEventHandler(this,&PidGraphForm::DrawGraph);
-  Controls->Add(canvas);Controls->Add(toolbar);Controls->Add(message);
+  // Прокрутка сохраняет читаемую высоту всех одиннадцати графиков, включая отдельный график продукта.
+  auto graphViewport=gcnew Panel();graphViewport->Dock=DockStyle::Fill;graphViewport->AutoScroll=true;
+  canvas=gcnew PidPlotCanvas();canvas->Dock=DockStyle::Top;canvas->Height=2265;canvas->Paint+=gcnew PaintEventHandler(this,&PidGraphForm::DrawGraph);
+  graphViewport->Controls->Add(canvas);
+  Controls->Add(graphViewport);Controls->Add(toolbar);Controls->Add(message);
   if(rowTimes->Count>=2) {
    until->Value=rowTimes[rowTimes->Count-1];DateTime first=rowTimes[0];
    from->Value=until->Value.Subtract(first).TotalMinutes>30?until->Value.AddMinutes(-30):first;

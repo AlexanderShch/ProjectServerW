@@ -44,6 +44,8 @@ struct CmdRequest {
     static const uint8_t GET_DEFROST_GROUP = 0x07;  // Запросить пачку параметров группы (payload: groupId, page)
     static const uint8_t SEND_STATE = 0x08;       // Отправить состояние (телеметрия + при авторежиме лог)
     static const uint8_t GET_ALARM_FLAGS = 0x09;  // Запросить регистры аварий: устройства и датчики
+    static const uint8_t GET_BUTTON_EVENTS = 0x0B; // Очередь физических нажатий, без удаления
+    static const uint8_t ACK_BUTTON_EVENTS = 0x0C; // Подтверждение после записи log.txt
     static const uint8_t GET_SENSOR_DIAG = 0x0A;  // Запросить причины ошибок приёма от датчиков (счётчики обнуляются при чтении)
 };
 

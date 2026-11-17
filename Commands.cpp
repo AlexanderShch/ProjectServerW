@@ -104,6 +104,8 @@ const char* GetCommandName(const Command& cmd) {
         case 0x08: return "SEND_STATE";
         case 0x09: return "GET_ALARM_FLAGS";
         case 0x0A: return "GET_SENSOR_DIAG";
+        case 0x0B: return "GET_BUTTON_EVENTS";
+        case 0x0C: return "ACK_BUTTON_EVENTS";
         default: return "REQUEST_UNKNOWN";
         }
     }

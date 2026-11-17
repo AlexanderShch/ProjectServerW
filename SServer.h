@@ -2,6 +2,7 @@
 #define SSERVER_H
 
 #pragma once
+#using <System.Core.dll>
 #pragma comment(lib, "Ws2_32.lib")
 
 #include <winsock2.h>       // Должен быть первым!
@@ -52,6 +53,7 @@ private:
 ref class GlobalLogger abstract sealed { // abstract sealed = static class
 private:
     static StreamWriter^ writer;
+    static System::Collections::Generic::HashSet<String^>^ buttonEventKeys;
     static Object^ lockObject;
     static bool isInitialized;
 
@@ -111,6 +113,52 @@ public:
         catch (Exception^ ex) {
             MessageBox::Show("Error writing to log: " + ex->Message);
         }
+    }
+
+    // Возвращает true только после устойчивой записи события или обнаружения
+    // его идентификатора в журнале. При повторном запуске список восстанавливается
+    // из самого log.txt, поэтому сбой между записью и ACK не создаёт дублей.
+    static bool TryLogButtonEvent(String^ key, String^ text) {
+        Monitor::Enter(lockObject);
+        try {
+            if (!isInitialized || writer == nullptr) Initialize();
+            if (writer == nullptr) return false;
+            if (buttonEventKeys == nullptr) {
+                auto keys = gcnew System::Collections::Generic::HashSet<String^>();
+                String^ path = Path::Combine(Path::GetDirectoryName(Application::ExecutablePath), "log.txt");
+                auto stream = gcnew FileStream(path,FileMode::Open,FileAccess::Read,FileShare::ReadWrite);
+                auto reader = gcnew StreamReader(stream,System::Text::Encoding::UTF8);
+                try {
+                    String^ line;
+                    while ((line=reader->ReadLine()) != nullptr) {
+                        int start=line->IndexOf("[ButtonEvent:",StringComparison::Ordinal);
+                        if (start>=0 && line->EndsWith("]",StringComparison::Ordinal))
+                            keys->Add(line->Substring(start));
+                    }
+                } finally { delete reader; }
+                buttonEventKeys=keys;
+            }
+            if (buttonEventKeys->Contains(key)) {
+                safe_cast<FileStream^>(writer->BaseStream)->Flush(true);
+                return true;
+            }
+            writer->WriteLine(DateTime::Now.ToString("dd.MM.yy HH:mm:ss")+" : "+text+" "+key);
+            writer->Flush();
+            // Flush(true) перед ACK: данные передаются файловой системе с запросом
+            // сброса на носитель. Ошибка оставляет событие в контроллере для повтора.
+            safe_cast<FileStream^>(writer->BaseStream)->Flush(true);
+            buttonEventKeys->Add(key);
+            return true;
+        }
+        catch (Exception^) {
+            // Неудачный Flush мог уже дописать строку. Перед повтором перечитаем
+            // её ключ из файла и заново откроем поток после устранения ошибки диска.
+            buttonEventKeys=nullptr;
+            try { if (writer!=nullptr) writer->Close(); } catch (Exception^) {}
+            writer=nullptr;isInitialized=false;
+            return false;
+        }
+        finally { Monitor::Exit(lockObject); }
     }
 
     // Запись в лог управляемой строки (Unicode). Файл log.txt в UTF-8.

@@ -70,8 +70,10 @@ typedef struct {
     float rate_Cps;
     float fishHot_C, fishCold_C;
     float pidIntegral, pidDerivative, pidFeedforward, pidWaterDuty;
+    // Добавлено в конец: первые 105 байт совместимы с прежним форматом лога.
+    float pidProportional;
 } ControlLogPayload_t;
-static_assert(sizeof(ControlLogPayload_t) == 105, "ControlLogPayload_t size must be 105 bytes");
+static_assert(sizeof(ControlLogPayload_t) == 109, "ControlLogPayload_t size must be 109 bytes");
 
 /* Ответ GET_DEFROST_GROUP(groupId=5): структура совпадает с DefrostLogPhasePayload_t на контроллере. */
 namespace { constexpr int DEFROST_PHASE_COUNT_SERVER = 3; }
@@ -1048,6 +1050,7 @@ void ProjectServerW::DataForm::InitializeDataTable() {
     dataTable->Columns->Add("rate_Cps", float::typeid);
     dataTable->Columns->Add("fishHot_C", float::typeid);
     dataTable->Columns->Add("fishCold_C", float::typeid);
+    dataTable->Columns->Add("PID_P", float::typeid);
     dataTable->Columns->Add("PID_I", float::typeid);
     dataTable->Columns->Add("PID_D", float::typeid);
     dataTable->Columns->Add("PID_FF", float::typeid);
@@ -1176,6 +1179,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     }
     row[bitNames[1][15]] = (data.ShutdownActive != 0) ? 1 : 0;    // _Shd
     row[bitNames[1][16]] = (bitField & (1 << 15)) != 0;            // _Alr
+    UpdatePlateauHeaterStates(row); // Feedback also updates outside a running algorithm/control log.
     //--------------------------------------------------------------------
 
     // Определяем режимы работы и флаги
@@ -1517,6 +1521,8 @@ bool ProjectServerW::DataForm::ExecuteStartupCommandSequence() {
     // Прошивка могла смениться при переподключении: поддержку GET_SENSOR_DIAG проверяем заново.
     CancelSensorDiagPoll();
     sensorDiagUnsupported = false;
+    buttonEventsUnsupported = false;
+    buttonEventsPending = false;
     lastSensorDiagTime = DateTime::MinValue;
 
     // ПОЛУЧЕНИЕ ВЕРСИИ УСТРОЙСТВА -------------------------------------------------------------
@@ -1882,7 +1888,7 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
         return;
     }
     const int dataLenByte = (int)packet[3];
-    if ((dataLenByte != expectedPayloadSize && dataLenByte != 89) || size < 4 + dataLenByte + 2) {
+    if ((dataLenByte != expectedPayloadSize && dataLenByte != 105 && dataLenByte != 89) || size < 4 + dataLenByte + 2) {
         GlobalLogger::LogMessage(String::Format(
             "Предупреждение: AppendControlLogToDataRow: байт DataLen {0} != sizeof(ControlLogPayload_t)={1}, пакет отбрасывается", dataLenByte, expectedPayloadSize));   // Лог ошибки
         return;
@@ -1892,7 +1898,7 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
     pin_ptr<System::Byte> pinned = &packet[0];   // Блокируем массив байт в неуправляемой памяти
     const uint8_t* raw = reinterpret_cast<const uint8_t*>(pinned);   // Преобразуем массив байт в строку
     ControlLogPayload_t pl = {};
-    memcpy(&pl, raw + 4, dataLenByte); // strict 89/105 above; missing extension stays absent in table
+    memcpy(&pl, raw + 4, dataLenByte); // strict 89/105/109 above; missing extension stays absent in table
     lastFishCold_C = pl.fishCold_C;   // Сохраняем последнее значение параметра fishCold_C
     lastFishCold_C_Valid = true;   // Устанавливаем флаг валидности последнего значения параметра fishCold_C
 
@@ -1943,7 +1949,9 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
         rowToUpdate["rate_Cps"] = pl.rate_Cps;
         rowToUpdate["fishHot_C"] = pl.fishHot_C;
         rowToUpdate["fishCold_C"] = pl.fishCold_C;
-        if (dataLenByte == expectedPayloadSize) {
+        // В старых форматах отсутствующее P не заменяем вымышленным нулём.
+        rowToUpdate["PID_P"] = dataLenByte==expectedPayloadSize ? safe_cast<Object^>(pl.pidProportional) : DBNull::Value;
+        if (dataLenByte >= 105) {
             rowToUpdate["PID_I"] = pl.pidIntegral;
             rowToUpdate["PID_D"] = pl.pidDerivative;
             rowToUpdate["PID_FF"] = pl.pidFeedforward;
@@ -3407,6 +3415,11 @@ System::Void DataForm::DataForm_HandleDestroyed(Object^ sender, EventArgs^ e)
         catch (...) {}
         inactivityTimer = nullptr;
     }
+    if (buttonEventsTimer != nullptr) {
+        buttonEventsTimer->Stop();
+        delete buttonEventsTimer;
+        buttonEventsTimer = nullptr;
+    }
     if (sensorDiagLogTimer != nullptr) {
         CancelSensorDiagPoll();
         sensorDiagLogTimer->Tick -= gcnew EventHandler(this, &DataForm::OnSensorDiagLogTimeout);
@@ -3525,6 +3538,8 @@ void ProjectServerW::DataForm::OnSendStateTimerTick(System::Object^ sender, Syst
         // иначе очередной pendingRow заменит строку, ради которой ждём диагностику.
         // Потеря лога задержит опрос максимум на одноразовый таймаут 1 с.
         if (sensorDiagInProgress) return;
+        // Ограниченное ожидание ответа очереди защищает полудуплексный канал.
+        if (buttonEventsPending && DateTime::Now.Subtract(buttonEventsRequestTime).TotalSeconds < 2) return;
         if (ClientSocket == INVALID_SOCKET)
             return;
         if (!startupSequenceCompleted)

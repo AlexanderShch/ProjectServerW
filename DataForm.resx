@@ -118,7 +118,7 @@
     <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </resheader>
   <metadata name="menuStrip1.TrayLocation" type="System.Drawing.Point, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a">
-    <value>401, 17</value>
+    <value>582, 17</value>
   </metadata>
   <metadata name="Parameter2.UserAddedColumn" type="System.Boolean, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089">
     <value>True</value>
@@ -141,10 +141,40 @@
   <metadata name="Finish.UserAddedColumn" type="System.Boolean, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089">
     <value>True</value>
   </metadata>
+  <metadata name="plateauInfoTip.TrayLocation" type="System.Drawing.Point, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a">
+    <value>17, 17</value>
+  </metadata>
+  <data name="plateauPidReminder.Text" xml:space="preserve">
+    <value>ПИД температуры — общий запрос тепла для обеих сторон
+P, I, D и FF - в эквивалентах ТЭНа
+Эквивалент ТЭНа: 0..1 — мощность одного ТЭНа
+
+uCommon_TEN = heatScale × ограничить(P + I + D + FF, 0, 2)
+
+Ошибка = Tуставки − Tподачи
+P = Kp × Ошибка
+I = Iпредыдущее + Ki × Ошибка × Δt
+D = ограничить(−Kd × dTподачи/dt, −dLimitEq, +dLimitEq)
+FF = ffMaxEq × A × ограничить((Ошибка + ffBand_C) / (2 × ffBand_C), 0, 1)
+
+Δt = 1 с — шаг расчёта в контроллере
+dTподачи/dt — сглаженная скорость изменения температуры подачи, °C/с
+A = 1 при впрыске, после выключения линейно уменьшается до 0 за ffTail_s
+При ffTail_s = 0 хвост FF отключён.
+Прирост I блокируется, если он усиливает насыщение выхода (выше 2 или ниже 0) либо противодействует защитам.
+
+Диапазоны:
+heatScale — разрешённая защитами доля нагрева - 0…1
+P и I — фиксированных границ нет
+D — −dLimitEq…+dLimitEq
+FF — 0…ffMaxEq
+uCommon_TEN — 0…2 экв.ТЭНа каждой стороне одинаково
+Для каждой стороны uCommon_TEN корректируется отдельно по разности Т сторон</value>
+  </data>
   <metadata name="timerAutoStart.TrayLocation" type="System.Drawing.Point, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a">
-    <value>218, 17</value>
+    <value>399, 17</value>
   </metadata>
   <metadata name="timerAutoRestart.TrayLocation" type="System.Drawing.Point, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a">
-    <value>17, 17</value>
+    <value>198, 17</value>
   </metadata>
 </root>

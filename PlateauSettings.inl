@@ -15,9 +15,9 @@ static const wchar_t* kPlateauDescriptions[] = {
  L"", // reserved wire slot 0: not displayed and never selects a controller
  L"Температура: Kp (Пропорциональный), экв./°C", L"Температура: Ki (Интегральный), экв./(°C·с)",
  L"Температура: Kd (Дифференциальный), экв.·с/°C", L"Окно скорости температуры, целые секунды",
- L"Фильтр скорости температуры, τ, с", L"Предел D, ± экв.",
- L"Максимальная компенсация впрыска, экв.", L"Затухающий хвост компенсации, с",
- L"Полоса разрешения компенсации ± °C от уставки",
+ L"Фильтр скорости температуры, τ, с", L"Предел D (дифф.поправки), ± экв.",
+ L"Максимальная компенсация впрыска, экв.", L"Затухающий хвост компенсации впрыска, с",
+ L"Полоса разрешения компенсации впрыска ± °C от уставки",
  L"Влажность возврата: Kp (Пропорциональный), доля/(п.п. RH)", L"Влажность: Ki (Интегральный), доля/(п.п. RH·с)",
  L"Влажность: Kd (Дифференциальный), доля·с/(п.п. RH); 0 отключает D", L"Фильтр RH, τ, с",
  L"Максимальная длина импульса воды, целые с", L"Минимальная пауза между импульсами, целые с",
@@ -31,11 +31,17 @@ static const wchar_t* kPlateauDescriptions[] = {
 void ProjectServerW::DataForm::InitializePlateauTab() {
  plateauStateGrid->Rows->Add(L"Время строки основного лога",L"—",L"время сервера");
  plateauStateGrid->Rows->Add(L"Общий запрос после heatScale",L"—",L"экв. ТЭНа на сторону");
+ // P берётся из того же такта основного лога, что и I/D/FF.
+ plateauStateGrid->Rows->Add(L"Пропорциональная составляющая P",L"—",L"экв.");
  plateauStateGrid->Rows->Add(L"Интегратор I",L"—",L"экв.");
  plateauStateGrid->Rows->Add(L"Поправка D",L"—",L"экв.");
  plateauStateGrid->Rows->Add(L"Компенсация впрыска FF",L"—",L"экв.");
  plateauStateGrid->Rows->Add(L"Запрошенная доля воды",L"—",L"0…1");
  plateauStateGrid->Rows->Add(L"Форсунка",L"—",L"0 / 1");
+ plateauStateGrid->Rows->Add(L"ТЭН 1 слева",L"—",L"подтверждение DI");
+ plateauStateGrid->Rows->Add(L"ТЭН 2 слева",L"—",L"подтверждение DI");
+ plateauStateGrid->Rows->Add(L"ТЭН 1 справа",L"—",L"подтверждение DI");
+ plateauStateGrid->Rows->Add(L"ТЭН 2 справа",L"—",L"подтверждение DI");
 }
 
 void ProjectServerW::DataForm::ShowPlateauInfo(System::Object^, System::EventArgs^) {
@@ -108,12 +114,26 @@ void ProjectServerW::DataForm::ApplyPlateauSettings(System::Object^, System::Eve
 void ProjectServerW::DataForm::UpdatePlateauStateFromLog(System::Data::DataRow^ row) {
  if(plateauStateGrid==nullptr||plateauStateGrid->IsDisposed||row==nullptr)return;
  plateauStateGrid->Rows[0]->Cells[1]->Value=row["RealTime"];
- auto names=gcnew cli::array<String^>{"uCommon_TEN","PID_I","PID_D","PID_FF","PID_waterDuty","_Inj"};
+ auto names=gcnew cli::array<String^>{"uCommon_TEN","PID_P","PID_I","PID_D","PID_FF","PID_waterDuty","_Inj"};
  auto inv=System::Globalization::CultureInfo::InvariantCulture;
  for(int i=0;i<names->Length;++i) {
-  Object^ value=row[names[i]];
+  Object^ value=row->Table->Columns->Contains(names[i])?row[names[i]]:DBNull::Value;
   plateauStateGrid->Rows[i+1]->Cells[1]->Value=(value==nullptr||value==DBNull::Value)
-   ? L"нет данных" : Convert::ToDouble(value).ToString("F3",inv);
+   ? L"нет данных" : (names[i]=="_Inj" ? (Convert::ToBoolean(value)?L"1":L"0") : Convert::ToDouble(value).ToString("F3",inv));
+ }
+ UpdatePlateauHeaterStates(row);
+}
+
+void ProjectServerW::DataForm::UpdatePlateauHeaterStates(System::Data::DataRow^ row) {
+ if(plateauStateGrid==nullptr||plateauStateGrid->IsDisposed||row==nullptr)return;
+ // Use feedback inputs, not the _H0.._H3 output commands. Invalid IO is unknown, not OFF.
+ const bool inputsValid=row->Table->Columns->Contains("Typ6")&&row->Table->Columns->Contains("Act6")&&
+  !row->IsNull("Typ6")&&!row->IsNull("Act6")&&Convert::ToInt32(row["Typ6"])==4&&Convert::ToInt32(row["Act6"])!=0;
+ auto names=gcnew cli::array<String^>{"Ten1_Left","Ten2_Left","Ten1_Right","Ten2_Right"};
+ for(int i=0;i<names->Length;++i) {
+  const bool known=inputsValid&&row->Table->Columns->Contains(names[i])&&!row->IsNull(names[i]);
+  plateauStateGrid->Rows[8+i]->Cells[1]->Value=known
+   ? (Convert::ToBoolean(row[names[i]])?L"1":L"0") : L"нет данных";
  }
 }
 
