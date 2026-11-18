@@ -115,7 +115,7 @@ int main(array<String^>^ args){
         subprocess.run([str(folder/"logger.exe"),"retry"],check=True)
         # Рабочий обработчик ответа сервера: CRC, тип кнопки, повторы и запрет ACK при ошибке файла.
         receiver = (ROOT/"CommandsDefroster.cpp").read_text(encoding="utf-8-sig")
-        receiver = receiver[receiver.index("void ProjectServerW::DataForm::HandleButtonEventsResponse"):]
+        receiver = receiver[receiver.index("void ProjectServerW::DataForm::ResetButtonEventPolling"): ]
         prefix = r'''
 #using <System.dll>
 #using <System.Core.dll>
@@ -132,10 +132,16 @@ namespace ProjectServerW {
 ref class DataForm {
 public:
  bool isFormClosingNow=false, IsDisposed=false, Disposing=false;
- bool buttonEventsPending=false,buttonEventsUnsupported=false;
- int clientSocket=1,acks=0; uint32_t acknowledged=0;
+ bool buttonEventsPending=false,buttonEventsUnsupported=false,controllerRestartVersionPending=false;
+ int versionRequests=0;
+ bool SendVersionRequest() {++versionRequests;return true;}
+ int clientSocket=1,buttonEventsSocket=1,acks=0,polls=0; uint32_t acknowledged=0;
+ bool startupSequenceCompleted=true,sensorDiagInProgress=false,pendingRowWrkBit=false,hasTelemetry=false;
+ DateTime lastTelemetryTime=DateTime::MinValue,buttonEventsRequestTime=DateTime::MinValue;
  String^ ClientIP="test"; Object^ commandPipelineGate=gcnew Object();
- bool SendCommand(const Command& c,String^) {++acks;uint32_t value;memcpy(&value,c.data+16,4);acknowledged=value;return true;}
+ bool SendCommand(const Command& c,String^) {if(c.commandCode!=CmdRequest::ACK_BUTTON_EVENTS){++polls;return true;}++acks;uint32_t value;memcpy(&value,c.data+16,4);acknowledged=value;return true;}
+ void ResetButtonEventPolling();
+ void PollButtonEvents(Object^,EventArgs^);
  void HandleButtonEventsResponse(array<Byte>^);
 };
 }
@@ -153,11 +159,25 @@ int main(){
  r->HandleButtonEventsResponse(packet());if(r->acks!=2)return 2;
  r->HandleButtonEventsResponse(packet(9));if(r->acks!=2)return 3;
  auto bad=packet();bad[29]^=1;r->HandleButtonEventsResponse(bad);if(r->acks!=2)return 4;
+ // Старая прошивка не опрашивается повторно по времени. После рестарта
+ // на том же сокете запрашивается версия, затем снова читается очередь.
+ r->buttonEventsUnsupported=true;r->buttonEventsRequestTime=DateTime::Now;
+ r->PollButtonEvents(nullptr,EventArgs::Empty);if(r->polls!=0)return 6;
+ r->buttonEventsRequestTime=DateTime::Now.AddSeconds(-61);
+ r->PollButtonEvents(nullptr,EventArgs::Empty);if(r->polls!=0)return 7;
+ r->HandleButtonEventsResponse(packet());if(r->buttonEventsUnsupported)return 8;
+ r->buttonEventsUnsupported=true;r->buttonEventsPending=true;r->ResetButtonEventPolling();
+ r->controllerRestartVersionPending=true;
+ if(r->buttonEventsUnsupported || r->buttonEventsPending)return 9;
+ r->PollButtonEvents(nullptr,EventArgs::Empty);
+ if(r->versionRequests!=1 || r->polls!=0)return 10;
+ r->PollButtonEvents(nullptr,EventArgs::Empty);
+ if(r->versionRequests!=1 || r->polls!=1)return 11;
  auto field=GlobalLogger::typeid->GetField("writer",System::Reflection::BindingFlags::NonPublic|System::Reflection::BindingFlags::Static);
  safe_cast<StreamWriter^>(field->GetValue(nullptr))->BaseStream->Close();
  auto next=packet();next[25]=2;pin_ptr<Byte> ptr=&next[0];uint16_t crc=CalculateCommandCRC(ptr,34);next[34]=crc&255;next[35]=crc>>8;
- r->HandleButtonEventsResponse(next);if(r->acks!=2)return 5;
- Console::WriteLine("PASS: actual response handler, CRC, duplicate ACK, invalid event and failed-log ACK veto");
+ r->HandleButtonEventsResponse(next);if(r->acks!=3)return 5;
+ Console::WriteLine("PASS: response handler, CRC, duplicate ACK, disk failure and same-socket firmware upgrade recovery");
 }
 '''
         cpp=folder/"receiver.cpp";cpp.write_text(prefix,encoding="utf-8")

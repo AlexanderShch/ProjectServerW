@@ -1195,6 +1195,15 @@ System::Void ProjectServerW::DataForm::button_CMDINFO_Click(System::Object^ send
 
 #include "PlateauSettings.inl"
 
+// Сбрасывает только транспортное состояние опроса; очередь контроллера и ключи
+// уже записанных событий не затрагиваются. Вызывается из UI при рестарте МК.
+void ProjectServerW::DataForm::ResetButtonEventPolling() {
+    if (buttonEventsUnsupported)
+        GlobalLogger::LogMessage(L"Информация: перезапуск контроллера; повторно проверяем поддержку очереди физических кнопок");
+    buttonEventsUnsupported=false;buttonEventsPending=false;
+    buttonEventsRequestTime=DateTime::MinValue;
+}
+
 /* Опрос очереди не блокирует UI и пропускается при занятой командной линии.
  * Таймаут снимает ожидание, но не удаляет события из RAM контроллера. */
 void ProjectServerW::DataForm::PollButtonEvents(Object^,EventArgs^) {
@@ -1203,11 +1212,19 @@ void ProjectServerW::DataForm::PollButtonEvents(Object^,EventArgs^) {
     if (buttonEventsSocket!=clientSocket) {
         buttonEventsSocket=clientSocket;buttonEventsUnsupported=false;buttonEventsPending=false;
     }
-    if (buttonEventsUnsupported || sensorDiagInProgress || pendingRowWrkBit) return;
+    if (sensorDiagInProgress || pendingRowWrkBit) return;
+    if (buttonEventsUnsupported && !controllerRestartVersionPending) return;
     if (hasTelemetry && DateTime::Now.Subtract(lastTelemetryTime).TotalMilliseconds<700) return;
     if (buttonEventsPending && DateTime::Now.Subtract(buttonEventsRequestTime).TotalSeconds<2) return;
     if (!System::Threading::Monitor::TryEnter(commandPipelineGate)) return;
     try {
+        // Читаем версию вне обработки телеметрии, когда завершён обмен логом.
+        // Штатный GET_VERSION сам пишет версию в log.txt при успешном ответе.
+        if (controllerRestartVersionPending) {
+            controllerRestartVersionPending = false;
+            SendVersionRequest();
+            return;
+        }
         Command cmd=CreateRequestCommand(CmdRequest::GET_BUTTON_EVENTS);cmd.dataLength=16;
         // Новый кандидат в каждом запросе: если МК перезагрузился без смены
         // TCP-сокета, новая очередь получит новый ключ и номера не столкнутся.
@@ -1226,8 +1243,15 @@ void ProjectServerW::DataForm::HandleButtonEventsResponse(cli::array<Byte>^ pack
     if (!ParseResponseBuffer(reinterpret_cast<const uint8_t*>(pinned),packet->Length,response)) return;
     if (response.commandCode==CmdRequest::ACK_BUTTON_EVENTS) return;
     buttonEventsPending=false;
-    if (response.status==CmdStatus::INVALID_CODE) {buttonEventsUnsupported=true;return;}
+    if (response.status==CmdStatus::INVALID_CODE) {
+        if (!buttonEventsUnsupported)
+            GlobalLogger::LogMessage(L"Предупреждение: контроллер не поддерживает очередь физических кнопок (GET_BUTTON_EVENTS). Проверка при перезапуске или новом соединении");
+        buttonEventsUnsupported=true;return;
+    }
     if (response.status!=CmdStatus::OK || response.dataLength<21) return;
+    if (buttonEventsUnsupported)
+        GlobalLogger::LogMessage(L"Информация: контроллер поддерживает очередь физических кнопок; регистрация событий возобновлена");
+    buttonEventsUnsupported=false;
     const int count=response.data[20];
     if (count>10 || response.dataLength!=21+9*count) return;
     for(int i=0;i<count;++i) {

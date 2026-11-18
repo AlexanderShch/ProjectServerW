@@ -8,6 +8,7 @@ using namespace System::Threading;
 using namespace System::Drawing;
 
 namespace ProjectServerW {
+namespace Excel = Microsoft::Office::Interop::Excel;
 
 static System::String^ MapTemperatureColumnNameForExcel(System::String^ columnName)
 {
@@ -43,6 +44,8 @@ static int GetExcelSeriesColorOle(System::String^ tColumnName)
 	if (tColumnName->Equals("_H1")) return ColorTranslator::ToOle(Color::FromArgb(210, 180, 140)); // light brown
 	if (tColumnName->Equals("_H2")) return ColorTranslator::ToOle(Color::FromArgb(255, 255, 0));   // yellow
 	if (tColumnName->Equals("_H3")) return ColorTranslator::ToOle(Color::FromArgb(165, 42, 42));   // brown
+	if (tColumnName->Equals("H0")) return ColorTranslator::ToOle(Color::Teal);
+	if (tColumnName->Equals("H1")) return ColorTranslator::ToOle(Color::DarkOrange);
 	if (tColumnName->Equals("H2")) return ColorTranslator::ToOle(Color::FromArgb(0, 0, 255));     // blue
 	if (tColumnName->Equals("_Inj")) return ColorTranslator::ToOle(Color::FromArgb(0, 191, 255));  // sky blue
 	if (tColumnName->Equals("T_filt_4")) return ColorTranslator::ToOle(Color::FromArgb(255, 182, 193)); // light pink
@@ -74,39 +77,303 @@ static String^ GetExcelChartSeriesName(String^ columnName)
 	if (columnName->Equals("_H1")) return "Нагреватель 2 левый (_H1)";
 	if (columnName->Equals("_H2")) return "Нагреватель 1 правый (_H2)";
 	if (columnName->Equals("_H3")) return "Нагреватель 2 правый (_H3)";
+	if (columnName->Equals("H0")) return L"Влажность слева (H0), %";
+	if (columnName->Equals("H1")) return L"Влажность справа (H1), %";
 	if (columnName->Equals("H2")) return "Влажность центр (H2), %";
 	if (columnName->Equals("_Inj")) return "Впрыск воды (_Inj)";
 	if (columnName->Equals("T_filt_4")) return "T прод.Правый фильтр. (T_filt_4)";
 	return MapTemperatureColumnNameForExcel(columnName);
 }
 
-static void AddExcelChartSeries(Microsoft::Office::Interop::Excel::SeriesCollection^ seriesCollection,
-	Microsoft::Office::Interop::Excel::Worksheet^ ws, System::Data::DataTable^ table,
-	Microsoft::Office::Interop::Excel::Range^ xRange, int lastRow, String^ columnName)
+// Читаем значения снимка. Пустые отсчёты остаются пропусками и в диаграмме.
+static double ChartValue(System::Data::DataRow^ row, String^ column)
 {
-	const int columnIndex = table->Columns->IndexOf(columnName);
-	if (columnIndex < 0) return; // Older sessions may not contain filtered temperatures.
-	Microsoft::Office::Interop::Excel::Range^ yRange = nullptr;
-	Microsoft::Office::Interop::Excel::Series^ series = nullptr;
+	if (!row->Table->Columns->Contains(column) || row->IsNull(column)) return Double::NaN;
+	const double value = Convert::ToDouble(row[column]);
+	return Double::IsInfinity(value) ? Double::NaN : value;
+}
+
+static void AddExcelLine(Excel::SeriesCollection^ seriesCollection, Excel::Range^ xRange,
+	Excel::Range^ yRange, String^ name, Color color, bool secondary, double weight)
+{
+	Excel::Series^ series = seriesCollection->NewSeries();
 	try {
-		yRange = ws->Range[ws->Cells[2, columnIndex + 1], ws->Cells[lastRow, columnIndex + 1]];
-		series = seriesCollection->NewSeries();
 		series->XValues = xRange;
 		series->Values = yRange;
-		series->Name = GetExcelChartSeriesName(columnName);
-		series->AxisGroup = columnName->Equals("H2")
-			? Microsoft::Office::Interop::Excel::XlAxisGroup::xlSecondary
-			: Microsoft::Office::Interop::Excel::XlAxisGroup::xlPrimary;
-		const int oleColor = GetExcelSeriesColorOle(columnName);
-		try { series->Border->Color = oleColor; } catch (...) {}
+		series->Name = name;
+		series->AxisGroup = secondary ? Excel::XlAxisGroup::xlSecondary : Excel::XlAxisGroup::xlPrimary;
+		series->Format->Line->ForeColor->RGB = ColorTranslator::ToOle(color);
+		series->Format->Line->Weight = static_cast<float>(weight);
+	}
+	finally { Marshal::ReleaseComObject(series); }
+}
+
+static void AddExcelSourceLine(Excel::SeriesCollection^ lines, Excel::Range^ xRange,
+	Excel::Worksheet^ source, System::Data::DataTable^ table, String^ column,
+	String^ name, Color color, bool secondary, double weight)
+{
+	const int index = table->Columns->IndexOf(column);
+	if (index < 0) return;
+	Excel::Range^ range = source->Range[source->Cells[2, index + 1], source->Cells[table->Rows->Count + 1, index + 1]];
+	try { AddExcelLine(lines, xRange, range, name, color, secondary, weight); }
+	finally { Marshal::ReleaseComObject(range); }
+}
+
+// Преобразованные значения живут на листе графика. Исходные температуры,
+// статусы, доли и фазы в основной таблице сохраняют свои единицы измерения.
+static void AddExcelMappedLine(Excel::SeriesCollection^ lines, Excel::Range^ xRange,
+	Excel::Worksheet^ sheet, int helperColumn, cli::array<Object^, 2>^ values,
+	String^ name, Color color, bool secondary, double weight)
+{
+	int rows = values->GetLength(0);
+	sheet->Cells[1, helperColumn] = name;
+	Excel::Range^ range = sheet->Range[sheet->Cells[2, helperColumn], sheet->Cells[rows + 1, helperColumn]];
+	try {
+		range->Value2 = values;
+		AddExcelLine(lines, xRange, range, name, color, secondary, weight);
+	}
+	finally { Marshal::ReleaseComObject(range); }
+}
+
+static Excel::Axis^ ExcelValueAxis(Excel::Chart^ chart, bool secondary)
+{
+	return safe_cast<Excel::Axis^>(chart->Axes(Excel::XlAxisType::xlValue,
+		secondary ? Excel::XlAxisGroup::xlSecondary : Excel::XlAxisGroup::xlPrimary));
+}
+
+static void SetExcelAxisTitle(Excel::Axis^ axis, String^ title)
+{
+	axis->HasTitle = true;
+	axis->AxisTitle->Text = title;
+}
+
+static void AddExcelPhase(Excel::Chart^ chart, Excel::SeriesCollection^ lines, Excel::Range^ xRange,
+	Excel::Worksheet^ sheet, System::Data::DataTable^ table, int column, bool humidityChart)
+{
+	auto values = gcnew cli::array<Object^, 2>(table->Rows->Count, 1);
+	bool hasPhase = false;
+	for (int i = 0; i < table->Rows->Count; ++i) {
+		double phase = ChartValue(table->Rows[i], "phase");
+		if (phase == 0 || phase == 1 || phase == 2) {
+			values[i,0] = humidityChart ? 110.0 + 10.0 * phase : phase;
+			hasPhase = true;
+		}
+	}
+	if (!hasPhase) return;
+
+	// Отводим верхние 2/7 высоты под фазу на обоих листах. Правая шкала
+	// Chart при этом оставляет рабочий диапазон влажности 0…100% внизу.
+	Excel::Axis^ primary = ExcelValueAxis(chart, false);
+	try {
+		double lo = primary->MinimumScale, hi = primary->MaximumScale;
+		primary->MinimumScale = lo;
+		primary->MaximumScale = hi + .4 * (hi - lo);
+	}
+	finally { Marshal::ReleaseComObject(primary); }
+	String^ label = humidityChart ? L"Фаза: 110 прогрев / 120 плато / 130 финиш" :
+		L"Фаза: 0 прогрев / 1 плато / 2 финиш";
+	AddExcelMappedLine(lines, xRange, sheet, column, values, label, Color::Indigo, true, 2.4);
+	Excel::Axis^ right = ExcelValueAxis(chart, true);
+	try {
+		right->MinimumScale = humidityChart ? 0.0 : -11.0;
+		right->MaximumScale = humidityChart ? 140.0 : 3.0;
+		right->MajorUnit = humidityChart ? 10.0 : 1.0;
+		if (!humidityChart) right->TickLabels->NumberFormat = L"[>=0]0;[<0]\"\"";
+		SetExcelAxisTitle(right, humidityChart ? L"Влажность, % / фаза" : L"Фаза");
+	}
+	finally { Marshal::ReleaseComObject(right); }
+}
+
+static void AddExcelPidLines(Excel::SeriesCollection^ lines, Excel::Range^ xRange,
+	Excel::Worksheet^ sheet, System::Data::DataTable^ table, int helperColumn)
+{
+	auto columns = gcnew cli::array<String^>{"uCommon_TEN","PID_P","PID_I","PID_D","PID_FF"};
+	auto names = gcnew cli::array<String^>{"uCommon","P","I","D","FF"};
+	auto colors = gcnew cli::array<Color>{Color::Black,Color::DarkCyan,Color::RoyalBlue,Color::MediumPurple,Color::SeaGreen};
+	double minimum = 0, maximum = 2;
+	for each (System::Data::DataRow^ row in table->Rows)
+		for each (String^ column in columns) {
+			double value = ChartValue(row, column);
+			if (!Double::IsNaN(value)) { minimum = Math::Min(minimum,value); maximum = Math::Max(maximum,value); }
+		}
+	// Одинаковый интервал между кривыми даёт отдельные полосы, включая
+	// отрицательные P/I/D. В легенде видно, какое смещение вычесть.
+	const double spacing = Math::Ceiling(maximum-minimum)+1;
+	for (int k = 0; k < columns->Length; ++k) {
+		if (!table->Columns->Contains(columns[k])) continue;
+		auto values = gcnew cli::array<Object^, 2>(table->Rows->Count, 1);
+		const double offset = k * spacing;
+		for (int i = 0; i < table->Rows->Count; ++i) {
+			double value = ChartValue(table->Rows[i], columns[k]);
+			if (!Double::IsNaN(value)) values[i,0] = value + offset;
+		}
+		AddExcelMappedLine(lines, xRange, sheet, helperColumn+k, values,
+			String::Format(L"{0} (+{1:0})", names[k], offset), colors[k], false, 1.8);
+	}
+}
+
+static void BuildExcelPidPanel(int panel, Excel::Chart^ chart, Excel::SeriesCollection^ lines,
+	Excel::Range^ xRange, Excel::Worksheet^ source, Excel::Worksheet^ sheet,
+	System::Data::DataTable^ table, int% helperColumn)
+{
+	const int rowCount = table->Rows->Count;
+	switch (panel) {
+	case 0: {
+		AddExcelSourceLine(lines,xRange,source,table,"T0",L"Сырая T слева",Color::DarkGray,false,1.2);
+		AddExcelSourceLine(lines,xRange,source,table,"T1",L"Сырая T справа",Color::DarkGray,false,1.2);
+		AddExcelSourceLine(lines,xRange,source,table,"T_filt_0",L"Фильтр 32 слева",Color::FromArgb(138,174,152),false,1.4);
+		AddExcelSourceLine(lines,xRange,source,table,"T_filt_1",L"Фильтр 32 справа",Color::FromArgb(193,151,139),false,1.4);
+		AddExcelSourceLine(lines,xRange,source,table,"T_sup_avg_C",L"Средняя T регулятора",Color::RoyalBlue,false,2.8);
+		auto target = gcnew cli::array<Object^, 2>(rowCount,1);
+		for (int i = 0; i < rowCount; ++i) {
+			auto row = table->Rows[i];
+			double average = ChartValue(row,"T_sup_avg_C");
+			if (Double::IsNaN(average) && ChartValue(row,"Act0")!=0 && ChartValue(row,"Act1")!=0)
+				average = (ChartValue(row,"T_filt_0")+ChartValue(row,"T_filt_1"))/2;
+			double setpoint = average+ChartValue(row,"eT_common");
+			if (!Double::IsNaN(setpoint)) target[i,0] = setpoint;
+		}
+		AddExcelMappedLine(lines,xRange,sheet,helperColumn++,target,L"Уставка",Color::Black,false,2.8);
+		break;
+	}
+	case 1:
+		AddExcelSourceLine(lines,xRange,source,table,"T3",L"Сырая T продукта слева",Color::ForestGreen,false,1.8);
+		AddExcelSourceLine(lines,xRange,source,table,"T4",L"Сырая T продукта справа",Color::DarkViolet,false,1.8);
+		break;
+	case 2: {
+		auto columns = gcnew cli::array<String^>{"Ten1_Left","Ten2_Left","Ten1_Right","Ten2_Right"};
+		auto names = gcnew cli::array<String^>{L"Слева ТЭН1: 0/1",L"Слева ТЭН2: 1/2",L"Справа ТЭН1: 2/3",L"Справа ТЭН2: 3/4"};
+		auto colors = gcnew cli::array<Color>{Color::DarkGreen,Color::MediumSeaGreen,Color::SaddleBrown,Color::Firebrick};
+		for (int k = 0; k < columns->Length; ++k) {
+			if (!table->Columns->Contains(columns[k])) continue;
+			auto values = gcnew cli::array<Object^, 2>(rowCount,1);
+			for (int i = 0; i < rowCount; ++i) {
+				auto row = table->Rows[i];
+				double feedback = ChartValue(row,columns[k]);
+				double ioType = ChartValue(row,"Typ6");
+				if (ChartValue(row,"Act6")!=0 && (Double::IsNaN(ioType) || ioType==4) && !Double::IsNaN(feedback))
+					values[i,0] = k + (feedback>0 ? 1 : 0);
+			}
+			AddExcelMappedLine(lines,xRange,sheet,helperColumn++,values,names[k],colors[k],false,4.8-k);
+		}
+		if (lines->Count > 0) {
+			Excel::Axis^ axis = ExcelValueAxis(chart,false);
+			try { axis->MinimumScale=-1; axis->MaximumScale=5; axis->MajorUnit=1; }
+			finally { Marshal::ReleaseComObject(axis); }
+
+		}
+		break;
+	}
+	case 3: {
+		AddExcelSourceLine(lines,xRange,source,table,"H2",L"Влажность возврата, %",Color::RoyalBlue,false,1.8);
+		auto duty = gcnew cli::array<Object^, 2>(rowCount,1);
+		auto water = gcnew cli::array<Object^, 2>(rowCount,1);
+		for (int i = 0; i < rowCount; ++i) {
+			double requested = ChartValue(table->Rows[i],"PID_waterDuty");
+			double active = ChartValue(table->Rows[i],"_Inj");
+			if (!Double::IsNaN(requested)) duty[i,0] = requested*100;
+			if (!Double::IsNaN(active)) water[i,0] = active>0 ? 1 : 0;
+		}
+		AddExcelMappedLine(lines,xRange,sheet,helperColumn++,duty,L"Запрос воды, %",Color::SeaGreen,false,1.8);
+		AddExcelMappedLine(lines,xRange,sheet,helperColumn++,water,L"Впрыск: 0/1 (правая шкала)",Color::DodgerBlue,true,1.8);
+		Excel::Axis^ left = ExcelValueAxis(chart,false);
+		Excel::Axis^ right = ExcelValueAxis(chart,true);
 		try {
-			series->Format->Line->ForeColor->RGB = oleColor;
-			series->Format->Line->Weight = 2.0;
-		} catch (...) {}
+			left->MinimumScale=0; left->MaximumScale=100; left->MajorUnit=25;
+			right->MinimumScale=0; right->MaximumScale=1; right->MajorUnit=1;
+			SetExcelAxisTitle(right,L"Впрыск");
+		}
+		finally { Marshal::ReleaseComObject(left); Marshal::ReleaseComObject(right); }
+		break;
+	}
+	case 4:
+		AddExcelSourceLine(lines,xRange,source,table,"heatScale01",L"heatScale",Color::MediumPurple,false,1.8);
+		break;
+	case 5:
+		AddExcelPidLines(lines,xRange,sheet,table,helperColumn);
+		helperColumn += 5;
+		AddExcelPhase(chart,lines,xRange,sheet,table,helperColumn++,false);
+		break;
+	case 6:
+		AddExcelSourceLine(lines,xRange,source,table,"uLeft_TEN",L"Запрос слева",Color::SeaGreen,false,1.8);
+		AddExcelSourceLine(lines,xRange,source,table,"uRight_TEN",L"Запрос справа",Color::Firebrick,false,1.8);
+		break;
+	}
+}
+
+static void BuildExcelCharts(Excel::Worksheet^ source, System::Data::DataTable^ table, bool pid)
+{
+	auto missing = Type::Missing;
+	Excel::Workbook^ book = safe_cast<Excel::Workbook^>(source->Parent);
+	Excel::Worksheet^ sheet = nullptr;
+	Excel::ChartObjects^ objects = nullptr;
+	Excel::Range^ xRange = nullptr;
+	try {
+		sheet = safe_cast<Excel::Worksheet^>(book->Worksheets->Add(missing,source,1,Excel::XlSheetType::xlWorksheet));
+		sheet->Name = pid ? L"ПИД" : L"Chart";
+		if (table->Rows->Count == 0) return;
+		int xIndex = table->Columns->IndexOf("RealTime");
+		if (xIndex < 0) xIndex = Math::Max(0,table->Columns->IndexOf("Time"));
+		xRange = source->Range[source->Cells[2,xIndex+1],source->Cells[table->Rows->Count+1,xIndex+1]];
+		objects = safe_cast<Excel::ChartObjects^>(sheet->ChartObjects(missing));
+		auto titles = pid ? gcnew cli::array<String^>{
+			L"Температура воздуха",L"Температура продукта",L"Подтверждённые ТЭНы",
+			L"Влажность возврата, запрос воды и впрыск",L"Разрешённая доля нагрева",
+			L"Общий запрос нагрева и составляющие ПИД",L"Запрос нагрева по сторонам"
+		} : gcnew cli::array<String^>{L"Температуры, влажность, оборудование и фаза"};
+		auto units = pid ? gcnew cli::array<String^>{
+			L"°C",L"°C",L"Уровни ТЭНов",L"%",L"Доля нагрева",L"Экв. ТЭНа со смещением",L"Экв. ТЭНа"
+		} : gcnew cli::array<String^>{L"T, °C / уровни оборудования"};
+		int helperColumn = 24;
+		for (int panel = 0; panel < titles->Length; ++panel) {
+			const double height = pid ? 320 : 500;
+			Excel::ChartObject^ object = objects->Add(20,20+panel*(height+18),900,height);
+			Excel::Chart^ chart = object->Chart;
+			Excel::SeriesCollection^ lines = nullptr;
+			try {
+				chart->ChartType = Excel::XlChartType::xlLine;
+				chart->DisplayBlanksAs = Excel::XlDisplayBlanksAs::xlNotPlotted;
+				lines = safe_cast<Excel::SeriesCollection^>(chart->SeriesCollection(missing));
+				if (!pid) {
+					auto columns = gcnew cli::array<String^>{"T0","T1","T2","T3","T4","T5","_H0","_H1","_H2","_H3","H0","H1","H2","_Inj","T_filt_4"};
+					for each (String^ col in columns)
+						AddExcelSourceLine(lines,xRange,source,table,col,GetExcelChartSeriesName(col),
+							ColorTranslator::FromOle(GetExcelSeriesColorOle(col)),col=="H0"||col=="H1"||col=="H2",1.8);
+					if (table->Columns->Contains("H0") || table->Columns->Contains("H1") || table->Columns->Contains("H2")) {
+						Excel::Axis^ right = ExcelValueAxis(chart,true);
+						try { right->MinimumScale=0; right->MaximumScale=100; SetExcelAxisTitle(right,L"Влажность, %"); }
+						finally { Marshal::ReleaseComObject(right); }
+					}
+					AddExcelPhase(chart,lines,xRange,sheet,table,helperColumn++,true);
+				} else {
+					BuildExcelPidPanel(panel,chart,lines,xRange,source,sheet,table,helperColumn);
+				}
+				chart->HasTitle = true;
+				chart->ChartTitle->Text = titles[panel];
+				if (lines->Count != 0) {
+					Excel::Axis^ axis = ExcelValueAxis(chart,false);
+					try { SetExcelAxisTitle(axis,units[panel]); }
+					finally { Marshal::ReleaseComObject(axis); }
+					chart->HasLegend = true;
+					chart->Legend->Position = Excel::XlLegendPosition::xlLegendPositionBottom;
+					Excel::Axis^ timeAxis = safe_cast<Excel::Axis^>(
+						chart->Axes(Excel::XlAxisType::xlCategory,Excel::XlAxisGroup::xlPrimary));
+					try { SetExcelAxisTitle(timeAxis,table->Columns->Contains("RealTime") ? L"Время" : L"Отсчёт"); }
+					finally { Marshal::ReleaseComObject(timeAxis); }
+				}
+			}
+			finally {
+				if (lines != nullptr) Marshal::ReleaseComObject(lines);
+				Marshal::ReleaseComObject(chart);
+				Marshal::ReleaseComObject(object);
+			}
+		}
 	}
 	finally {
-		if (series != nullptr) Marshal::ReleaseComObject(series);
-		if (yRange != nullptr) Marshal::ReleaseComObject(yRange);
+		if (objects != nullptr) Marshal::ReleaseComObject(objects);
+		if (xRange != nullptr) Marshal::ReleaseComObject(xRange);
+		if (sheet != nullptr) Marshal::ReleaseComObject(sheet);
+		Marshal::ReleaseComObject(book);
 	}
 }
 
@@ -319,93 +586,12 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 				Marshal::ReleaseComObject(dataRange);
 			}
 
-			// Добавление листа с графиком температур (Chart)
-			try {
-				if (rowCount > 0) {
-					const int lastRow = rowCount + 1; // 1: заголовок
-					if (lastRow >= 2) {
-						Microsoft::Office::Interop::Excel::Workbook^ wb = safe_cast<Microsoft::Office::Interop::Excel::Workbook^>(ws->Parent);
-						System::Object^ missing = System::Type::Missing;
-
-						Microsoft::Office::Interop::Excel::Worksheet^ chartSheet =
-							safe_cast<Microsoft::Office::Interop::Excel::Worksheet^>(wb->Worksheets->Add(missing, ws, 1, Microsoft::Office::Interop::Excel::XlSheetType::xlWorksheet));
-						chartSheet->Name = "Chart";
-
-						Microsoft::Office::Interop::Excel::ChartObjects^ chartObjects = nullptr;
-						Microsoft::Office::Interop::Excel::ChartObject^ chartObject = nullptr;
-						Microsoft::Office::Interop::Excel::Chart^ chart = nullptr;
-						Microsoft::Office::Interop::Excel::Range^ xRange = nullptr;
-						try {
-							chartObjects = safe_cast<Microsoft::Office::Interop::Excel::ChartObjects^>(chartSheet->ChartObjects(missing));
-							chartObject = chartObjects->Add(20, 20, 900, 500);
-							chart = chartObject->Chart;
-							chart->ChartType = Microsoft::Office::Interop::Excel::XlChartType::xlLine;
-						}
-						finally {
-							if (chartObjects != nullptr) Marshal::ReleaseComObject(chartObjects);
-						}
-
-						// Ось X: RealTime или Time
-						int xCol = -1;
-						try {
-							int idx = job->tableSnapshot->Columns->IndexOf("RealTime");
-							if (idx >= 0) xCol = idx + 1;
-							else {
-								idx = job->tableSnapshot->Columns->IndexOf("Time");
-								if (idx >= 0) xCol = idx + 1;
-							}
-						}
-						catch (...) {}
-						if (xCol < 1) xCol = 1;
-						xRange = ws->Range[ws->Cells[2, xCol], ws->Cells[lastRow, xCol]];
-
-						Microsoft::Office::Interop::Excel::SeriesCollection^ seriesCollection =
-							safe_cast<Microsoft::Office::Interop::Excel::SeriesCollection^>(chart->SeriesCollection(missing));
-
-						for (uint8_t i = 0; i < (SQ - 1); i++) {
-							AddExcelChartSeries(seriesCollection, ws, job->tableSnapshot, xRange, lastRow,
-								"T" + Convert::ToString(i));
-						}
-						cli::array<String^>^ extraColumns = gcnew cli::array<String^> {
-							"_H0", "_H1", "_H2", "_H3", "H2", "_Inj", "T_filt_4"
-						};
-						for each (String^ columnName in extraColumns) {
-							AddExcelChartSeries(seriesCollection, ws, job->tableSnapshot, xRange, lastRow, columnName);
-						}
-						Marshal::ReleaseComObject(seriesCollection);
-
-						chart->HasTitle = true;
-						chart->ChartTitle->Text = "Температуры, влажность и оборудование";
-
-						Microsoft::Office::Interop::Excel::Axis^ categoryAxis = safe_cast<Microsoft::Office::Interop::Excel::Axis^>(
-							chart->Axes(Microsoft::Office::Interop::Excel::XlAxisType::xlCategory, Microsoft::Office::Interop::Excel::XlAxisGroup::xlPrimary));
-						categoryAxis->HasTitle = true;
-						categoryAxis->AxisTitle->Text = "RealTime";
-
-						Microsoft::Office::Interop::Excel::Axis^ valueAxis = safe_cast<Microsoft::Office::Interop::Excel::Axis^>(
-							chart->Axes(Microsoft::Office::Interop::Excel::XlAxisType::xlValue, Microsoft::Office::Interop::Excel::XlAxisGroup::xlPrimary));
-						valueAxis->HasTitle = true;
-						valueAxis->AxisTitle->Text = "T, °C / уровни оборудования";
-						if (job->tableSnapshot->Columns->Contains("H2")) {
-							Microsoft::Office::Interop::Excel::Axis^ humidityAxis = safe_cast<Microsoft::Office::Interop::Excel::Axis^>(
-								chart->Axes(Microsoft::Office::Interop::Excel::XlAxisType::xlValue,
-									Microsoft::Office::Interop::Excel::XlAxisGroup::xlSecondary));
-							humidityAxis->HasTitle = true;
-							humidityAxis->AxisTitle->Text = "Влажность, %";
-							humidityAxis->MinimumScale = 0.0;
-							humidityAxis->MaximumScale = 100.0;
-							Marshal::ReleaseComObject(humidityAxis);
-						}
-
-						if (xRange != nullptr) Marshal::ReleaseComObject(xRange);
-					}
+			// Диаграммы обоих листов используют один и тот же снимок экспорта.
+			for each (bool pid in gcnew cli::array<bool>{false,true}) {
+				try { BuildExcelCharts(ws,job->tableSnapshot,pid); }
+				catch (Exception^ ex) {
+					GlobalLogger::LogMessage(String::Format(L"Не удалось построить лист {0}: {1}",pid ? L"ПИД" : L"Chart",ex->Message));
 				}
-			}
-			catch (Exception^ ex) {
-				try {
-					GlobalLogger::LogMessage("Warning: Excel chart creation failed: " + ex->Message);
-				}
-				catch (...) {}
 			}
 			// Лист «Параметры по фазам»: таблица 1 (dataGridView1).
 			try {

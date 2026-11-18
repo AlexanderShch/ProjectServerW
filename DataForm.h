@@ -207,7 +207,9 @@ namespace ProjectServerW {
             System::Windows::Forms::Timer^ buttonEventsTimer;
             DateTime buttonEventsRequestTime;
             bool buttonEventsPending, buttonEventsUnsupported;
+            bool controllerRestartVersionPending = false; // GET_VERSION после отката Time
             SOCKET buttonEventsSocket;
+            void ResetButtonEventPolling(); // повторная проверка поддержки после перезапуска МК
             void PollButtonEvents(System::Object^ sender, System::EventArgs^ e);
             void HandleButtonEventsResponse(cli::array<System::Byte>^ packet);
             DateTime lastSensorDiagTime;     // время последнего запроса GET_SENSOR_DIAG

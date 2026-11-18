@@ -72,8 +72,9 @@ typedef struct {
     float pidIntegral, pidDerivative, pidFeedforward, pidWaterDuty;
     // Добавлено в конец: первые 105 байт совместимы с прежним форматом лога.
     float pidProportional;
+    float supplyAverage_C; // Температура подачи, использованная регулятором.
 } ControlLogPayload_t;
-static_assert(sizeof(ControlLogPayload_t) == 109, "ControlLogPayload_t size must be 109 bytes");
+static_assert(sizeof(ControlLogPayload_t) == 113, "ControlLogPayload_t size must be 113 bytes");
 
 /* Ответ GET_DEFROST_GROUP(groupId=5): структура совпадает с DefrostLogPhasePayload_t на контроллере. */
 namespace { constexpr int DEFROST_PHASE_COUNT_SERVER = 3; }
@@ -1050,6 +1051,7 @@ void ProjectServerW::DataForm::InitializeDataTable() {
     dataTable->Columns->Add("rate_Cps", float::typeid);
     dataTable->Columns->Add("fishHot_C", float::typeid);
     dataTable->Columns->Add("fishCold_C", float::typeid);
+    dataTable->Columns->Add("T_sup_avg_C", float::typeid);
     dataTable->Columns->Add("PID_P", float::typeid);
     dataTable->Columns->Add("PID_I", float::typeid);
     dataTable->Columns->Add("PID_D", float::typeid);
@@ -1100,6 +1102,10 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
             if (dTime < -8) {
                 GlobalLogger::LogMessage(
                     "Информация: перезапуск контроллера (откат поля Time телеметрии). Сброс авторежима; запись в таблицу без новой команды ПУСК отключена.");
+                // Прошивка могла обновиться без закрытия TCP-сокета. Старый
+                // INVALID_CODE не должен навсегда отключать журнал кнопок.
+                ResetButtonEventPolling();
+                controllerRestartVersionPending = true;
                 controllerAutoModeActive = false;
                 stopExportPending = false;
                 shdWrkZeroStableCounts = 0;
@@ -1521,13 +1527,13 @@ bool ProjectServerW::DataForm::ExecuteStartupCommandSequence() {
     // Прошивка могла смениться при переподключении: поддержку GET_SENSOR_DIAG проверяем заново.
     CancelSensorDiagPoll();
     sensorDiagUnsupported = false;
-    buttonEventsUnsupported = false;
-    buttonEventsPending = false;
+    ResetButtonEventPolling();
     lastSensorDiagTime = DateTime::MinValue;
 
     // ПОЛУЧЕНИЕ ВЕРСИИ УСТРОЙСТВА -------------------------------------------------------------
     GlobalLogger::LogMessage("Отладка: Последовательность запуска: шаг 1/4 GET_VERSION начат");
     const bool okVersion = SendVersionRequest();
+    if (okVersion) controllerRestartVersionPending = false;
     if (!okVersion) {
         startupSequenceCompleted = false;
         if (sendStateTimer != nullptr) sendStateTimer->Stop();
@@ -1888,7 +1894,7 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
         return;
     }
     const int dataLenByte = (int)packet[3];
-    if ((dataLenByte != expectedPayloadSize && dataLenByte != 105 && dataLenByte != 89) || size < 4 + dataLenByte + 2) {
+    if ((dataLenByte != expectedPayloadSize && dataLenByte != 109 && dataLenByte != 105 && dataLenByte != 89) || size < 4 + dataLenByte + 2) {
         GlobalLogger::LogMessage(String::Format(
             "Предупреждение: AppendControlLogToDataRow: байт DataLen {0} != sizeof(ControlLogPayload_t)={1}, пакет отбрасывается", dataLenByte, expectedPayloadSize));   // Лог ошибки
         return;
@@ -1898,7 +1904,7 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
     pin_ptr<System::Byte> pinned = &packet[0];   // Блокируем массив байт в неуправляемой памяти
     const uint8_t* raw = reinterpret_cast<const uint8_t*>(pinned);   // Преобразуем массив байт в строку
     ControlLogPayload_t pl = {};
-    memcpy(&pl, raw + 4, dataLenByte); // strict 89/105/109 above; missing extension stays absent in table
+    memcpy(&pl, raw + 4, dataLenByte); // strict 89/105/109/113 above; missing extension stays absent in table
     lastFishCold_C = pl.fishCold_C;   // Сохраняем последнее значение параметра fishCold_C
     lastFishCold_C_Valid = true;   // Устанавливаем флаг валидности последнего значения параметра fishCold_C
 
@@ -1950,7 +1956,8 @@ void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte
         rowToUpdate["fishHot_C"] = pl.fishHot_C;
         rowToUpdate["fishCold_C"] = pl.fishCold_C;
         // В старых форматах отсутствующее P не заменяем вымышленным нулём.
-        rowToUpdate["PID_P"] = dataLenByte==expectedPayloadSize ? safe_cast<Object^>(pl.pidProportional) : DBNull::Value;
+        rowToUpdate["T_sup_avg_C"] = dataLenByte==expectedPayloadSize ? safe_cast<Object^>(pl.supplyAverage_C) : DBNull::Value;
+        rowToUpdate["PID_P"] = dataLenByte>=109 ? safe_cast<Object^>(pl.pidProportional) : DBNull::Value;
         if (dataLenByte >= 105) {
             rowToUpdate["PID_I"] = pl.pidIntegral;
             rowToUpdate["PID_D"] = pl.pidDerivative;

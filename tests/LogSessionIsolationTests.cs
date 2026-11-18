@@ -311,27 +311,83 @@ static class LogSessionIsolationTests
                     }
                 }
             });
-            Test("PID graph uses fixed 0/3/6/9/12 offsets and preserves negative/raw values", delegate {
+            Test("PID graph shares a panel without shifting values", delegate {
                 var source = new DataTable(); source.Columns.Add("RealTime", typeof(string));
-                foreach (var name in new[] { "uCommon_TEN", "uRight_TEN", "PID_I", "PID_D", "PID_FF" }) source.Columns.Add(name, typeof(double));
-                source.Rows.Add("12:00:00", 1.75, 1.75, -4.0, 0.0, 0.0);
-                source.Rows.Add("12:00:01", 1.75, 1.75, 1.75, 0.0, 0.0);
-                var graph = Activator.CreateInstance(assembly.GetType("ProjectServerW.PidGraphForm"), new object[] { source, epoch });
-                int curves = 0;
-                foreach (var curve in (IEnumerable)Get(graph, "series")) {
-                    if ((int)Get(curve, "panel") != 4) continue;
-                    double minimum = (double)Get(curve, "plotMin"), maximum = (double)Get(curve, "plotMax");
-                    var values = (IList)Get(curve, "y");
-                    Equal((double)source.Rows[0][curves + 1], values[0]);
-                    Equal((double)source.Rows[1][curves + 1], values[1]);
-                    double shift = (double)Get(curve, "offset");
-                    Equal(3.0 * curves, shift);
-                    foreach (double value in values) if (value + shift < minimum || value + shift > maximum) throw new Exception("Clipped PID value");
-                    if (curves == 0) { Equal(0.0, minimum); Equal(2.0, maximum); Equal(0.0, shift); }
-                    ++curves;
+                var columns = new Dictionary<string, string> {
+                    { "uCommon", "uCommon_TEN" }, { "P", "PID_P" },
+                    { "I", "PID_I" }, { "D", "PID_D" }, { "FF", "PID_FF" }
+                };
+                foreach (var name in columns.Values) source.Columns.Add(name, typeof(double));
+                var first = source.Rows.Add("12:00:00");
+                var second = source.Rows.Add("12:00:01");
+                double value = -4.0;
+                foreach (var column in columns.Values) {
+                    first[column] = value++;
+                    second[column] = value + .25;
                 }
-                Equal(5, curves); Equal(-4.0, source.Rows[0]["PID_I"]);
-                ((Form)graph).Dispose();
+                using (var graph = (Form)Activator.CreateInstance(assembly.GetType("ProjectServerW.PidGraphForm"), new object[] { source, epoch })) {
+                    int commonPanel = -1;
+                    foreach (var curve in (IEnumerable)Get(graph, "series")) {
+                        var name = (string)Get(curve, "name");
+                        if (name == "uCommon") commonPanel = (int)Get(curve, "panel");
+                    }
+                    if (commonPanel < 0) throw new Exception("Missing uCommon");
+                    foreach (var curve in (IEnumerable)Get(graph, "series")) {
+                        var name = (string)Get(curve, "name");
+                        if (!columns.ContainsKey(name)) {
+                            if ((name == "Слева" || name == "Справа") && commonPanel == (int)Get(curve, "panel"))
+                                throw new Exception("Side request shares the PID panel");
+                            continue;
+                        }
+                        Equal(commonPanel, Get(curve, "panel"));
+                        var values = (IList)Get(curve, "y");
+                        Equal(first[columns[name]], values[0]);
+                        Equal(second[columns[name]], values[1]);
+                        columns.Remove(name);
+                    }
+                    Equal(0, columns.Count);
+                }
+            });
+            Test("Air graph uses the regulator input and shows all four heater bands", delegate {
+                var f = NewForm();
+                Telemetry(f, 100, true, false, false);
+                var packet = new byte[119]; packet[0] = 1; packet[3] = 113;
+                Array.Copy(BitConverter.GetBytes(18.5f), 0, packet, 113, 4);
+                Call(f, "AppendControlLogToDataRow", packet, packet.Length);
+                Equal(18.5f, Table(f).Rows[0]["T_sup_avg_C"]);
+                Telemetry(f, 101, true, false, false);
+                ControlLog(f, 0);
+                Equal(DBNull.Value, Table(f).Rows[1]["T_sup_avg_C"]);
+
+                var source = new DataTable(); source.Columns.Add("RealTime", typeof(string));
+                foreach (var column in new[] { "T0", "T1", "T_filt_0", "T_filt_1", "eT_common",
+                    "T_sup_avg_C", "Ten1_Left", "Ten2_Left", "Ten1_Right", "Ten2_Right" })
+                    source.Columns.Add(column, typeof(double));
+                source.Rows.Add("12:00:00", 21, 22, 23, 24, 5.5, 18.5, 0, 0, 0, 0);
+                source.Rows.Add("12:00:01", 21, 22, 23, 24, 5.5, 18.5, 1, 1, 1, 1);
+                using (var graph = (Form)Activator.CreateInstance(assembly.GetType("ProjectServerW.PidGraphForm"), new object[] { source, epoch })) {
+                    var air = new Dictionary<string, double> {
+                        { "Сырая T слева", 21 }, { "Сырая T справа", 22 },
+                        { "Фильтр 32 слева", 23 }, { "Фильтр 32 справа", 24 },
+                        { "Средняя T регулятора", 18.5 }, { "Уставка", 24 }
+                    };
+                    int heater = 0;
+                    foreach (var curve in (IEnumerable)Get(graph, "series")) {
+                        var panel = (int)Get(curve, "panel");
+                        var values = (IList)Get(curve, "y");
+                        if (panel == 0) {
+                            var name = (string)Get(curve, "name");
+                            Equal(air[name], values[0]);
+                            air.Remove(name);
+                        } else if (panel == 2) {
+                            Equal((double)heater, values[0]);
+                            Equal(heater + 1.0, values[1]);
+                            ++heater;
+                        }
+                    }
+                    Equal(0, air.Count);
+                    Equal(4, heater);
+                }
             });
             Test("PID state shows four heater confirmations and updates without a control log", delegate {
                 var f = NewForm(); var table = Table(f); var row = table.NewRow();
