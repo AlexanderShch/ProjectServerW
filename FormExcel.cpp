@@ -1,4 +1,5 @@
 #include "FormExcel.h"
+#include "PidPlotScale.h"
 #include "Chart.h"      // ExcelHelper
 #include "DataForm.h"   // Для коллбека завершения экспорта
 
@@ -184,12 +185,12 @@ static void AddExcelPhase(Excel::Chart^ chart, Excel::SeriesCollection^ lines, E
 	finally { Marshal::ReleaseComObject(right); }
 }
 
-static void AddExcelPidLines(Excel::SeriesCollection^ lines, Excel::Range^ xRange,
+static double AddExcelPidLines(Excel::Chart^ chart, Excel::SeriesCollection^ lines, Excel::Range^ xRange,
 	Excel::Worksheet^ sheet, System::Data::DataTable^ table, int helperColumn)
 {
 	auto columns = gcnew cli::array<String^>{"uCommon_TEN","PID_P","PID_I","PID_D","PID_FF"};
 	auto names = gcnew cli::array<String^>{"uCommon","P","I","D","FF"};
-	auto colors = gcnew cli::array<Color>{Color::Black,Color::DarkCyan,Color::RoyalBlue,Color::MediumPurple,Color::SeaGreen};
+	auto colors = gcnew cli::array<Color>{Color::Black,Color::Brown,Color::Green,Color::Red,Color::Blue};
 	double minimum = 0, maximum = 2;
 	for each (System::Data::DataRow^ row in table->Rows)
 		for each (String^ column in columns) {
@@ -198,18 +199,42 @@ static void AddExcelPidLines(Excel::SeriesCollection^ lines, Excel::Range^ xRang
 		}
 	// Одинаковый интервал между кривыми даёт отдельные полосы, включая
 	// отрицательные P/I/D. В легенде видно, какое смещение вычесть.
-	const double spacing = Math::Ceiling(maximum-minimum)+1;
+	const double spacing = PidPlotSpacing(minimum, maximum);
+	double plotMinimum=0, plotMaximum=4*spacing;
 	for (int k = 0; k < columns->Length; ++k) {
 		if (!table->Columns->Contains(columns[k])) continue;
 		auto values = gcnew cli::array<Object^, 2>(table->Rows->Count, 1);
 		const double offset = k * spacing;
 		for (int i = 0; i < table->Rows->Count; ++i) {
 			double value = ChartValue(table->Rows[i], columns[k]);
-			if (!Double::IsNaN(value)) values[i,0] = value + offset;
+			if (!Double::IsNaN(value)) {
+				const double shifted = value + offset;
+				values[i,0] = shifted;
+				plotMinimum = Math::Min(plotMinimum, shifted);
+				plotMaximum = Math::Max(plotMaximum, shifted);
+			}
 		}
 		AddExcelMappedLine(lines, xRange, sheet, helperColumn+k, values,
 			String::Format(L"{0} (+{1:0})", names[k], offset), colors[k], false, 1.8);
 	}
+	if (lines->Count > 0) {
+		Excel::Axis^ axis = ExcelValueAxis(chart,false);
+		try {
+			axis->MinimumScale = spacing * Math::Floor(plotMinimum/spacing);
+			axis->MaximumScale = spacing * Math::Ceiling(plotMaximum/spacing);
+			axis->MajorUnit = spacing;
+			// Вспомогательные линии делят основную полосу на четыре равных интервала.
+			axis->MinorUnit = spacing / PidGridSubdivisions;
+			axis->HasMajorGridlines = true;
+			axis->HasMinorGridlines = true;
+			axis->MajorGridlines->Format->Line->ForeColor->RGB = ColorTranslator::ToOle(Color::FromArgb(145,156,173));
+			axis->MajorGridlines->Format->Line->Weight = 1.2f;
+			axis->MinorGridlines->Format->Line->ForeColor->RGB = ColorTranslator::ToOle(Color::FromArgb(228,233,241));
+			axis->MinorGridlines->Format->Line->Weight = .65f;
+		}
+		finally { Marshal::ReleaseComObject(axis); }
+	}
+	return spacing;
 }
 
 static void BuildExcelPidPanel(int panel, Excel::Chart^ chart, Excel::SeriesCollection^ lines,
@@ -254,7 +279,7 @@ static void BuildExcelPidPanel(int panel, Excel::Chart^ chart, Excel::SeriesColl
 				if (ChartValue(row,"Act6")!=0 && (Double::IsNaN(ioType) || ioType==4) && !Double::IsNaN(feedback))
 					values[i,0] = k + (feedback>0 ? 1 : 0);
 			}
-			AddExcelMappedLine(lines,xRange,sheet,helperColumn++,values,names[k],colors[k],false,4.8-k);
+			AddExcelMappedLine(lines,xRange,sheet,helperColumn++,values,names[k],colors[k],false,1.8);
 		}
 		if (lines->Count > 0) {
 			Excel::Axis^ axis = ExcelValueAxis(chart,false);
@@ -265,6 +290,18 @@ static void BuildExcelPidPanel(int panel, Excel::Chart^ chart, Excel::SeriesColl
 		break;
 	}
 	case 3: {
+		const double spacing = AddExcelPidLines(chart,lines,xRange,sheet,table,helperColumn);
+		helperColumn += 5;
+		AddExcelPhase(chart,lines,xRange,sheet,table,helperColumn++,false);
+		if (lines->Count > 0) {
+			// Верхняя полоса фазы тоже заканчивается на делении сетки ПИД.
+			Excel::Axis^ axis = ExcelValueAxis(chart,false);
+			try { axis->MaximumScale = spacing * Math::Ceiling(axis->MaximumScale/spacing); }
+			finally { Marshal::ReleaseComObject(axis); }
+		}
+		break;
+	}
+	case 4: {
 		AddExcelSourceLine(lines,xRange,source,table,"H2",L"Влажность возврата, %",Color::RoyalBlue,false,1.8);
 		auto duty = gcnew cli::array<Object^, 2>(rowCount,1);
 		auto water = gcnew cli::array<Object^, 2>(rowCount,1);
@@ -286,13 +323,8 @@ static void BuildExcelPidPanel(int panel, Excel::Chart^ chart, Excel::SeriesColl
 		finally { Marshal::ReleaseComObject(left); Marshal::ReleaseComObject(right); }
 		break;
 	}
-	case 4:
-		AddExcelSourceLine(lines,xRange,source,table,"heatScale01",L"heatScale",Color::MediumPurple,false,1.8);
-		break;
 	case 5:
-		AddExcelPidLines(lines,xRange,sheet,table,helperColumn);
-		helperColumn += 5;
-		AddExcelPhase(chart,lines,xRange,sheet,table,helperColumn++,false);
+		AddExcelSourceLine(lines,xRange,source,table,"heatScale01",L"heatScale",Color::MediumPurple,false,1.8);
 		break;
 	case 6:
 		AddExcelSourceLine(lines,xRange,source,table,"uLeft_TEN",L"Запрос слева",Color::SeaGreen,false,1.8);
@@ -318,16 +350,19 @@ static void BuildExcelCharts(Excel::Worksheet^ source, System::Data::DataTable^ 
 		objects = safe_cast<Excel::ChartObjects^>(sheet->ChartObjects(missing));
 		auto titles = pid ? gcnew cli::array<String^>{
 			L"Температура воздуха",L"Температура продукта",L"Подтверждённые ТЭНы",
-			L"Влажность возврата, запрос воды и впрыск",L"Разрешённая доля нагрева",
-			L"Общий запрос нагрева и составляющие ПИД",L"Запрос нагрева по сторонам"
+			L"Общий запрос нагрева и составляющие ПИД",L"Влажность возврата, запрос воды и впрыск",
+			L"Разрешённая доля нагрева",L"Запрос нагрева по сторонам"
 		} : gcnew cli::array<String^>{L"Температуры, влажность, оборудование и фаза"};
 		auto units = pid ? gcnew cli::array<String^>{
-			L"°C",L"°C",L"Уровни ТЭНов",L"%",L"Доля нагрева",L"Экв. ТЭНа со смещением",L"Экв. ТЭНа"
+			L"°C",L"°C",L"Уровни ТЭНов",L"Экв. ТЭНа со смещением",L"%",L"Доля нагрева",L"Экв. ТЭНа"
 		} : gcnew cli::array<String^>{L"T, °C / уровни оборудования"};
 		int helperColumn = 24;
+		double top = 20;
 		for (int panel = 0; panel < titles->Length; ++panel) {
-			const double height = pid ? 320 : 500;
-			Excel::ChartObject^ object = objects->Add(20,20+panel*(height+18),900,height);
+			// Общий график ПИД выше остальных. Следующий график начинается ниже его границы.
+			const double height = pid ? (panel==3 ? 480 : 320) : 500;
+			Excel::ChartObject^ object = objects->Add(20,top,900,height);
+			top += height+18;
 			Excel::Chart^ chart = object->Chart;
 			Excel::SeriesCollection^ lines = nullptr;
 			try {

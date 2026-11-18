@@ -180,6 +180,7 @@
     <ClInclude Include="PlateauParams.h" />
     <ClInclude Include="PlateauSettings.inl" />
     <ClInclude Include="PidGraphForm.h" />
+    <ClInclude Include="PidPlotScale.h" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="DataForm.resx">

@@ -311,7 +311,7 @@ static class LogSessionIsolationTests
                     }
                 }
             });
-            Test("PID graph shares a panel without shifting values", delegate {
+            Test("PID graph shares a panel and shifts only displayed values", delegate {
                 var source = new DataTable(); source.Columns.Add("RealTime", typeof(string));
                 var columns = new Dictionary<string, string> {
                     { "uCommon", "uCommon_TEN" }, { "P", "PID_P" },
@@ -332,6 +332,9 @@ static class LogSessionIsolationTests
                         if (name == "uCommon") commonPanel = (int)Get(curve, "panel");
                     }
                     if (commonPanel < 0) throw new Exception("Missing uCommon");
+                    double spacing = (double)Get(graph, "pidSpacing");
+                    Equal(7.0, spacing);
+                    var bands = new List<string> { "uCommon", "P", "I", "D", "FF" };
                     foreach (var curve in (IEnumerable)Get(graph, "series")) {
                         var name = (string)Get(curve, "name");
                         if (!columns.ContainsKey(name)) {
@@ -340,6 +343,7 @@ static class LogSessionIsolationTests
                             continue;
                         }
                         Equal(commonPanel, Get(curve, "panel"));
+                        Equal(bands.IndexOf(name) * spacing, Get(curve, "plotOffset"));
                         var values = (IList)Get(curve, "y");
                         Equal(first[columns[name]], values[0]);
                         Equal(second[columns[name]], values[1]);

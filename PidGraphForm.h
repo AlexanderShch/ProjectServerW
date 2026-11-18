@@ -1,4 +1,5 @@
 #pragma once
+#include "PidPlotScale.h"
 #using <System.dll>
 #using <System.Data.dll>
 #using <System.Drawing.dll>
@@ -13,7 +14,7 @@ using namespace System::Collections::Generic;
 
 ref class PidPlotSeries {
 public:
- int panel;String^ name;Color color;bool step;bool rightAxis;float lineWidth;bool dashed;
+ int panel;String^ name;Color color;bool step;bool rightAxis;float lineWidth;bool dashed;double plotOffset=0;
  List<double>^ x;List<double>^ y;
  PidPlotSeries(int p,String^ n,Color c,bool s) {
   panel=p;name=n;color=c;step=s;rightAxis=false;lineWidth=1.5f;dashed=false;x=gcnew List<double>();y=gcnew List<double>();
@@ -34,6 +35,8 @@ public ref class PidGraphForm : public Form {
  DateTimePicker^ from;DateTimePicker^ until;
  PidPlotCanvas^ canvas;Label^ message;
  double x0,x1,gapSeconds;int sampleCount;
+ double pidSpacing;
+ literal int PidExtraHeight=160;
 
  static double Number(DataRow^ r,String^ col) {
   if(!r->Table->Columns->Contains(col)||r->IsNull(col))return Double::NaN;
@@ -90,20 +93,19 @@ public ref class PidGraphForm : public Form {
    AddSeries(2,L"Справа ТЭН1: 2/3",Color::SaddleBrown,true),
    AddSeries(2,L"Справа ТЭН2: 3/4",Color::Firebrick,true)
   };
-  // При совпадении уровней более толстая нижняя кривая видна по краям верхней.
-  for(int k=0;k<heaters->Length;++k)heaters[k]->lineWidth=4.8f-k;
-  auto water=AddSeries(3,L"Впрыск: 0/1 (правая шкала)",Color::DodgerBlue,true);
+  for each(PidPlotSeries^ heater in heaters)heater->lineWidth=1.8f;
+  auto water=AddSeries(4,L"Впрыск: 0/1 (правая шкала)",Color::DodgerBlue,true);
   water->rightAxis=true;
-  auto rh=AddSeries(3,L"RH возврата, %",Color::RoyalBlue,false);
-  auto duty=AddSeries(3,L"Запрос воды, %",Color::SeaGreen,false);
-  auto scale=AddSeries(4,L"heatScale",Color::MediumPurple,false);
-  auto common=AddSeries(5,L"uCommon",Color::Black,false);
+  auto rh=AddSeries(4,L"RH возврата, %",Color::RoyalBlue,false);
+  auto duty=AddSeries(4,L"Запрос воды, %",Color::SeaGreen,false);
+  auto scale=AddSeries(5,L"heatScale",Color::MediumPurple,false);
+  auto common=AddSeries(3,L"uCommon",Color::Black,false);
   auto requestLeft=AddSeries(6,L"Слева",Color::SeaGreen,false);
   auto requestRight=AddSeries(6,L"Справа",Color::Firebrick,false);
-  auto proportional=AddSeries(5,L"P",Color::DarkCyan,false);
-  auto integral=AddSeries(5,L"I",Color::RoyalBlue,false);
-  auto derivative=AddSeries(5,L"D",Color::MediumPurple,false);
-  auto ff=AddSeries(5,L"FF",Color::SeaGreen,false);
+  auto proportional=AddSeries(3,L"P",Color::Brown,false);
+  auto integral=AddSeries(3,L"I",Color::Green,false);
+  auto derivative=AddSeries(3,L"D",Color::Red,false);
+  auto ff=AddSeries(3,L"FF",Color::Blue,false);
   int diagnosticCount=0;
   for(int j=0;j<rowTimes->Count;++j) {
    DateTime at=rowTimes[j];if(at<from->Value||at>until->Value)continue;
@@ -141,20 +143,19 @@ public ref class PidGraphForm : public Form {
    integral->Add(at,I);derivative->Add(at,Number(row,"PID_D"));
    ff->Add(at,Number(row,"PID_FF"));duty->Add(at,100*Number(row,"PID_waterDuty"));
   }
+  // Смещения рассчитываются для выбранного периода и применяются при отрисовке.
+  double pidMinimum=0,pidMaximum=2;
+  for each(PidPlotSeries^ curve in series)if(curve->panel==3)
+   for each(double value in curve->y)if(Finite(value)) {
+    pidMinimum=Math::Min(pidMinimum,value);
+    pidMaximum=Math::Max(pidMaximum,value);
+   }
+  pidSpacing=PidPlotSpacing(pidMinimum,pidMaximum);
+  int band=0;
+  for each(PidPlotSeries^ curve in series)if(curve->panel==3)curve->plotOffset=band++*pidSpacing;
   message->Text=String::Format(L"Снимок текущего цикла: {0} строк; {1} строк с I/D/FF.\r\n"
    L"I/D/FF и запрос воды взяты из тех же строк основного лога. В старом формате эти поля отсутствуют и не восстанавливаются.",sampleCount,diagnosticCount);
   canvas->Invalidate();
- }
-
- // Округляем шаг автоматически масштабируемых графиков к ряду 1 / 2 / 2,5 / 5.
- static double RoundedGridStep(double minimumStep) {
-  const double magnitude=Math::Pow(10.0,Math::Floor(Math::Log10(minimumStep)));
-  const double normalized=minimumStep/magnitude;
-  if(normalized<=1.0)return magnitude;
-  if(normalized<=2.0)return 2.0*magnitude;
-  if(normalized<=2.5)return 2.5*magnitude;
-  if(normalized<=5.0)return 5.0*magnitude;
-  return 10.0*magnitude;
  }
 
  void DrawGraph(Object^,PaintEventArgs^ paintArgs) {
@@ -162,23 +163,31 @@ public ref class PidGraphForm : public Form {
   if(series==nullptr||sampleCount<2||x1<=x0) {g->DrawString(L"Выберите период с данными и нажмите «Построить».",this->Font,Brushes::Black,30.f,30.f);return;}
   g->SmoothingMode=System::Drawing::Drawing2D::SmoothingMode::AntiAlias;
   float left=78.f,width=static_cast<float>(Math::Max(300,canvas->ClientSize.Width-155));
-  auto titles=gcnew cli::array<String^>{L"Температура воздуха дефростера, °C",L"Температура продукта, °C",L"Подтверждённые ТЭНы",L"Влажность возврата, запрос воды и впрыск",L"Разрешённая доля нагрева",L"Общий запрос нагрева и составляющие ПИД, экв. ТЭНа",L"Запрос нагрева по сторонам, экв. ТЭНа"};
-  float section=(canvas->ClientSize.Height-65.f)/titles->Length;
+  auto titles=gcnew cli::array<String^>{L"Температура воздуха дефростера, °C",L"Температура продукта, °C",L"Подтверждённые ТЭНы",L"Общий запрос нагрева и составляющие ПИД, экв. ТЭНа",L"Влажность возврата, запрос воды и впрыск",L"Разрешённая доля нагрева",L"Запрос нагрева по сторонам, экв. ТЭНа"};
+  float section=(canvas->ClientSize.Height-65.f-PidExtraHeight)/titles->Length;
   auto font=gcnew System::Drawing::Font(L"Segoe UI",9.f);
   auto bold=gcnew System::Drawing::Font(L"Segoe UI",10.f,System::Drawing::FontStyle::Bold);
   try {
    g->DrawString(String::Format(L"{0:dd.MM.yyyy HH:mm:ss} — {1:dd.MM.yyyy HH:mm:ss}",from->Value,until->Value),bold,Brushes::Black,left,2.f);
    for(int panel=0;panel<titles->Length;++panel) {
-    float top=panel*section+77,H=section-78;
+    // Увеличиваем только панель ПИД, сохраняя прежнюю высоту остальных графиков.
+    const bool pidPanel=panel==3;
+    const float panelTop=panel*section+(panel>3?PidExtraHeight:0);
+    float top=panelTop+77,H=section-78+(pidPanel?PidExtraHeight:0);
     // Температуры воздуха и продукта имеют отдельные автоматические шкалы.
     bool temperaturePanel=panel<=1;
-    double lo=temperaturePanel?Double::PositiveInfinity:0,hi=temperaturePanel?Double::NegativeInfinity:(panel==2?4.0:(panel==3?100:(panel==4?1.0:2.0)));
+    double lo=temperaturePanel?Double::PositiveInfinity:0,hi=temperaturePanel?Double::NegativeInfinity:(panel==2?4.0:(panel==4?100:(panel==5?1.0:2.0)));
     if(temperaturePanel)for each(PidPlotSeries^ s in series)if(s->panel==panel)
      for each(double value in s->y)if(Finite(value)){lo=Math::Min(lo,value);hi=Math::Max(hi,value);}
-    // Общая шкала включает штатный диапазон uCommon 0…2 и все значения P/I/D/FF.
-    if(panel==5) {
-     for each(PidPlotSeries^ s in series)if(s->panel==panel)
-      for each(double value in s->y)if(Finite(value)){lo=Math::Min(lo,value);hi=Math::Max(hi,value);}
+    // Сетка охватывает основания полос и значения с учётом смещений.
+    if(panel==3) {
+     hi=4*pidSpacing;
+     for each(PidPlotSeries^ curve in series)if(curve->panel==panel)
+      for each(double value in curve->y)if(Finite(value)) {
+       const double shifted=value+curve->plotOffset;
+       lo=Math::Min(lo,shifted);
+       hi=Math::Max(hi,shifted);
+      }
     }
     if(!Finite(lo)||!Finite(hi)) {lo=0;hi=1;}
     // Шкалы выходов, влажности, heatScale и запроса нагрева имеют штатные деления.
@@ -186,8 +195,8 @@ public ref class PidGraphForm : public Form {
     if(temperaturePanel) {
      const double preferredStep=(hi-lo)/5.0;
      gridStep=preferredStep<=.1?.1:preferredStep<=.5?.5:Math::Ceiling(preferredStep);
-    } else if(panel==5) {
-     gridStep=RoundedGridStep(gridStep);
+    } else if(panel==3) {
+     gridStep=pidSpacing;
     }
     // Индексы отсчитываются от нуля, поэтому отрицательные температуры и
     // поправки ПИД попадают на ту же сетку. Округление устраняет погрешность
@@ -199,30 +208,40 @@ public ref class PidGraphForm : public Form {
     // Дополнительные поля оставляют крайние кривые внутри отсечения.
     const double edgeMargin=(scaleHi-scaleLo)*.04;
     lo=scaleLo-edgeMargin;hi=scaleHi+edgeMargin;
-    g->DrawString(titles[panel],bold,Brushes::Black,left,panel*section+32);
+    g->DrawString(titles[panel],bold,Brushes::Black,left,panelTop+32);
     float legendX=left;
     for each(PidPlotSeries^ s in series)if(s->panel==panel) {
      auto brush=gcnew SolidBrush(s->color);
      try {bool hasValue=false;for each(double value in s->y)if(Finite(value)){hasValue=true;break;}
-      String^ name=s->name;
+      String^ name=panel==3?String::Format(L"{0} (+{1:0})",s->name,s->plotOffset):s->name;
       if(!hasValue)name+=L" (нет данных)";
-      g->DrawString(name,font,brush,legendX,panel*section+53);
+      g->DrawString(name,font,brush,legendX,panelTop+53);
       legendX+=g->MeasureString(name,font).Width+18;
      }finally{delete brush;}
     }
     auto grid=gcnew Pen(Color::FromArgb(225,230,237));
+    auto majorGrid=gcnew Pen(Color::FromArgb(145,156,173),1.2f);
+    auto minorGrid=gcnew Pen(Color::FromArgb(228,233,241),.65f);
     try {
+     // Между основными делениями рисуем четверти шага без цифровых подписей.
+     if(pidPanel)for(double tick=firstTick;tick<lastTick;++tick) {
+      for(int sub=1;sub<PidGridSubdivisions;++sub) {
+       const double value=(tick+static_cast<double>(sub)/PidGridSubdivisions)*gridStep;
+       const float y=top+H-static_cast<float>((value-lo)/(hi-lo))*H;
+       g->DrawLine(minorGrid,left,y,left+width,y);
+      }
+     }
      for(double tick=firstTick;tick<=lastTick;++tick) {
       const double value=tick*gridStep;
       float y=top+H-static_cast<float>((value-lo)/(hi-lo))*H;
-      String^ label=temperaturePanel?value.ToString("0.#"):panel==2?value.ToString("F0"):panel==4
+      String^ label=temperaturePanel?value.ToString("0.#"):(panel==2||panel==3)?value.ToString("F0"):panel==5
        ? (value==0?L"0":value.ToString("0.0#",System::Globalization::CultureInfo::InvariantCulture))
        : value.ToString("F2");
-      g->DrawLine(grid,left,y,left+width,y);g->DrawString(label,font,Brushes::DimGray,3.f,y-8);
+      g->DrawLine(pidPanel?majorGrid:grid,left,y,left+width,y);g->DrawString(label,font,Brushes::DimGray,3.f,y-8);
      }
      // Правая ось показывает команду форсунки целыми 0/1. Её границы
      // совпадают с 0/100% левой оси и сохраняют защитные поля от обрезания.
-     if(panel==3) {
+     if(panel==4) {
       auto axisPen=gcnew Pen(Color::DodgerBlue);
       auto axisBrush=gcnew SolidBrush(Color::DodgerBlue);
       try {
@@ -240,7 +259,7 @@ public ref class PidGraphForm : public Form {
       String^ label=DateTime::FromOADate(x0+(x1-x0)*tick/6).ToString("HH:mm:ss");
       g->DrawString(label,font,Brushes::DimGray,x-25,top+H+3);
      }
-    }finally{delete grid;}
+    }finally{delete minorGrid;delete majorGrid;delete grid;}
     auto plotState=g->Save();
     try {
     g->SetClip(System::Drawing::RectangleF(left,top,width,H));
@@ -254,7 +273,7 @@ public ref class PidGraphForm : public Form {
        float x=left+(float)((time-x0)/(x1-x0))*width;
        // Впрыск хранится как 0/1; только координата переводится в диапазон
        // левой оси 0..100%, исходные значения лога не изменяются.
-       double plotValue=s->rightAxis?100.0*value:value;
+       double plotValue=s->rightAxis?100.0*value:value+s->plotOffset;
        float y=top+H-(float)((plotValue-lo)/(hi-lo))*H;
        double allowed=gapSeconds;
        if(previous&&(time-pt)*86400<=allowed) {
@@ -293,7 +312,7 @@ public:
   message=gcnew Label();message->Dock=DockStyle::Bottom;message->Height=55;
   // Прокрутка сохраняет высоту каждого из семи графиков при небольшом окне.
   auto graphViewport=gcnew Panel();graphViewport->Dock=DockStyle::Fill;graphViewport->AutoScroll=true;
-  canvas=gcnew PidPlotCanvas();canvas->Dock=DockStyle::Top;canvas->Height=1465;canvas->Paint+=gcnew PaintEventHandler(this,&PidGraphForm::DrawGraph);
+  canvas=gcnew PidPlotCanvas();canvas->Dock=DockStyle::Top;canvas->Height=1465+PidExtraHeight;canvas->Paint+=gcnew PaintEventHandler(this,&PidGraphForm::DrawGraph);
   graphViewport->Controls->Add(canvas);
   Controls->Add(graphViewport);Controls->Add(toolbar);Controls->Add(message);
   if(rowTimes->Count>=2) {

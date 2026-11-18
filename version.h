@@ -3,7 +3,7 @@
 // Версия и строка для отображения из единого набора компонентов.
 #define VERSION_MAJOR 3
 #define VERSION_MINOR 3
-#define VERSION_PATCH 0
+#define VERSION_PATCH 1
 #define VERSION_STRINGIFY_IMPL(x) #x
 #define VERSION_STRINGIFY(x) VERSION_STRINGIFY_IMPL(x)
 #define VERSION_WIDE_IMPL(x) L##x
@@ -14,6 +14,12 @@ static const wchar_t* const VERSION_STR =
     VERSION_WIDE(VERSION_STRINGIFY(VERSION_PATCH));
 
 /*
+Версия 3.3.1
+- Общий запрос нагрева и составляющие ПИД показаны сразу под графиком ТЭНов.
+- В Excel и в окне «График» деления шкалы ПИД совпадают со смещениями
+  кривых. Добавлены вспомогательная сетка и увеличенная высота графика.
+- Согласованы цвета P, I, D, FF и uCommon, выровнена толщина линий ТЭНов.
+
 Версия 3.3.0
 - Графики ПИД показывают обе стороны одновременно. Выделены уставка и
   температура подачи, использованная регулятором. ТЭНы показаны отдельно.
