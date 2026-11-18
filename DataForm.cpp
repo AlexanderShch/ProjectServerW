@@ -695,6 +695,7 @@ bool ProjectServerW::DataForm::StartExcelExportThread(bool isEmergency, int firs
         // Снимок параметров для листа «Параметры»
         job->paramsPhase = BuildPhaseParamsDataTableForExcel();
         job->paramsGlobal = BuildGlobalParamsDataTableForExcel();
+        if (!exportEndData) job->paramsPid = BuildPlateauParamsSnapshot();
         job->equipmentAlarms = BuildEquipmentAlarmDataTableForExcel();
         job->saveDirectory = excelSavePath;
         job->sessionStart = exportStart;
@@ -1635,6 +1636,9 @@ bool ProjectServerW::DataForm::ExecuteStartupCommandSequence() {
     }
 
     if (stm32Mode) {
+        // Группа 7 только читается. Её отсутствие не отменяет запуск и не
+        // запускает повтор всей последовательности 5/6/7.
+        ReadPlateauSettings(nullptr, nullptr);
         // Меняем только флаг режима, используя только что считанные EEPROM-уставки.
         // После записи сверяем результат, чтобы не считать запуск завершённым при отказе.
         const int modeOffset = (int)offsetof(DefrostLogGlobalPayload_t, useNewWrkAlrAlgorithm);
@@ -1673,7 +1677,7 @@ bool ProjectServerW::DataForm::ExecuteStartupCommandSequence() {
     }
     if (!groupsApplied) return false; // таймер повторит запись; SEND_STATE уже работает
     GlobalLogger::LogMessage(stm32Mode
-        ? "Информация: STM32: запуск выполнен (GET_VERSION -> GET_DEFROST_GROUP[5,6] -> SET_INTERVAL; серверные уставки не записаны)"
+        ? "Информация: STM32: запуск выполнен (GET_VERSION -> GET_DEFROST_GROUP[5,6] -> чтение группы 7 -> SET_INTERVAL; серверные уставки не записаны)"
         : "Информация: Siemens: запуск выполнен (GET_VERSION -> SET_INTERVAL -> SET_DEFROST_GROUP[6,5] -> GET_DEFROST_GROUP[5,6])");
     return true;
 }

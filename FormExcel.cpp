@@ -412,6 +412,35 @@ static void BuildExcelCharts(Excel::Worksheet^ source, System::Data::DataTable^ 
 	}
 }
 
+// Сохраняем снимок WorkData числовыми ячейками, чтобы его можно было
+// загрузить обратно независимо от региональных настроек Excel.
+static void WriteExcelPidParameters(Excel::Worksheet^ source, System::Data::DataTable^ snapshot)
+{
+	Excel::Workbook^ book=safe_cast<Excel::Workbook^>(source->Parent);
+	Excel::Worksheet^ sheet=nullptr;
+	Excel::Range^ range=nullptr;
+	try {
+		sheet=safe_cast<Excel::Worksheet^>(book->Worksheets->Add(Type::Missing,source,1,Excel::XlSheetType::xlWorksheet));
+		sheet->Name=L"Параметры ПИД";
+		int rowCount=snapshot->Rows->Count;
+		auto values=gcnew cli::array<Object^,2>(rowCount+1,3);
+		for(int col=0;col<3;++col)values[0,col]=snapshot->Columns[col]->ColumnName;
+		for(int row=0;row<rowCount;++row)
+			for(int col=0;col<3;++col)values[row+1,col]=snapshot->Rows[row][col];
+		range=sheet->Range[sheet->Cells[1,1],sheet->Cells[rowCount+1,3]];
+		range->Value2=values;
+		sheet->Range[L"A1",L"C1"]->Font->Bold=true;
+		if(rowCount==0)
+			sheet->Cells[2,1]=L"Параметры ПИД не получены от контроллера.";
+		sheet->Columns->AutoFit();
+	}
+	finally {
+		if(range!=nullptr)Marshal::ReleaseComObject(range);
+		if(sheet!=nullptr)Marshal::ReleaseComObject(sheet);
+		Marshal::ReleaseComObject(book);
+	}
+}
+
 FormExcel::FormExcel() {
 	excelGlobalMutex = gcnew Mutex(false, "Global\\ProjectServerW_Excel_Mutex");
 	excelExportQueue = gcnew System::Collections::Concurrent::ConcurrentQueue<ExcelExportJob^>();
@@ -626,6 +655,12 @@ void FormExcel::ProcessExcelExportJob(ExcelExportJob^ job) {
 				try { BuildExcelCharts(ws,job->tableSnapshot,pid); }
 				catch (Exception^ ex) {
 					GlobalLogger::LogMessage(String::Format(L"Не удалось построить лист {0}: {1}",pid ? L"ПИД" : L"Chart",ex->Message));
+				}
+			}
+			if (job->paramsPid != nullptr) {
+				try { WriteExcelPidParameters(ws,job->paramsPid); }
+				catch (Exception^ ex) {
+					GlobalLogger::LogMessage(L"Не удалось сохранить лист «Параметры ПИД»: "+ex->Message);
 				}
 			}
 			// Лист «Параметры по фазам»: таблица 1 (dataGridView1).

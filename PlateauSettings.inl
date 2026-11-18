@@ -1,5 +1,6 @@
 /* Included by CommandsDefroster.cpp; operations use the existing command/response pipeline. */
 #include "PlateauParams.h"
+#include "FormExcel.h"
 #include <cmath>
 #include <cstring>
 #include "PidGraphForm.h"
@@ -54,25 +55,168 @@ void ProjectServerW::DataForm::ShowPlateauInfo(System::Object^, System::EventArg
   System::Windows::Forms::MessageBoxIcon::Information);
 }
 
+namespace {
+namespace Excel = Microsoft::Office::Interop::Excel;
+using System::Runtime::InteropServices::Marshal;
+
+// Источники используют одну проверку, чтобы импорт и кнопка «Записать»
+// принимали один и тот же набор значений и ограничений группы 7.
+static bool TryParsePlateauValue(unsigned index,Object^ cell,float% value) {
+ auto inv=System::Globalization::CultureInfo::InvariantCulture;
+ String^ text=Convert::ToString(cell,inv)->Trim()->Replace(L',',L'.');
+ return Single::TryParse(text,System::Globalization::NumberStyles::Float,inv,value)&&
+  !Single::IsNaN(value)&&!Single::IsInfinity(value)&&
+  value>=kPlateauFields[index].minimum&&value<=kPlateauFields[index].maximum;
+}
+
+static bool ValidPlateauTiming(const PlateauParams& p) {
+ return p.pulseMin_s<=p.pulseMax_s&&floorf(p.rateWindow_s)==p.rateWindow_s&&
+  floorf(p.pulseMax_s)==p.pulseMax_s&&floorf(p.pulseMin_s)==p.pulseMin_s&&
+  floorf(p.pauseMin_s)==p.pauseMin_s;
+}
+
+static PlateauParams PlateauFromValues(cli::array<float>^ values) {
+ PlateauParams result={};
+ pin_ptr<float> pinned=&values[0];
+ memcpy(&result,pinned,sizeof(result));
+ return result;
+}
+}
+
+void ProjectServerW::DataForm::PopulatePlateauSettings(cli::array<float>^ values) {
+ auto inv=System::Globalization::CultureInfo::InvariantCulture;
+ plateauSettingsGrid->Rows->Clear();
+ for(unsigned i=1;i<PLATEAU_PARAM_COUNT;++i) {
+  float value=values[i];
+  float lo=kPlateauFields[i].minimum,hi=kPlateauFields[i].maximum;
+  plateauSettingsGrid->Rows->Add(gcnew String(kPlateauFields[i].name),gcnew String(kPlateauDescriptions[i]),
+   value.ToString("R",inv),lo.ToString(inv)+L" … "+hi.ToString(inv));
+ }
+ buttonPlateauApply->Enabled=true;
+}
+
 void ProjectServerW::DataForm::ReadPlateauSettings(System::Object^, System::EventArgs^) {
  if(plateauSettingsTab==nullptr||plateauSettingsTab->IsDisposed)return;
  uint8_t raw[PLATEAU_PARAM_BYTES]={};uint8_t length=0;
- const bool ok=GetDefrostGroup(7u,0u,raw,sizeof(raw),&length)&&length==sizeof(raw);
- if(!ok) {
+ if(!GetDefrostGroup(7u,0u,raw,sizeof(raw),&length)||length!=sizeof(raw)) {
   plateauSettingsGrid->Rows->Clear();
+  buttonPlateauApply->Enabled=false;
   plateauSettingsStatus->Text=L"Группа 7 недоступна: проверьте связь и версию прошивки.";
- } else {
-  plateauSettingsGrid->Rows->Clear();
-  auto inv=System::Globalization::CultureInfo::InvariantCulture;
-  for(unsigned i=1;i<PLATEAU_PARAM_COUNT;++i) {
-   float value;memcpy(&value,raw+4*i,4);
-   float lo=kPlateauFields[i].minimum,hi=kPlateauFields[i].maximum;
-   plateauSettingsGrid->Rows->Add(gcnew String(kPlateauFields[i].name),gcnew String(kPlateauDescriptions[i]),
-    value.ToString("R",inv),lo.ToString(inv)+L" … "+hi.ToString(inv));
-  }
-  plateauSettingsStatus->Text=L"Прочитаны актуальные ПИД-параметры из контроллера.";
+  GlobalLogger::LogMessage(L"Параметры ПИД: группа 7 недоступна (бюджет запроса до 1 с).");
+  return;
  }
- buttonPlateauApply->Enabled=ok;
+ auto values=gcnew cli::array<float>(PLATEAU_PARAM_COUNT);
+ pin_ptr<float> pinned=&values[0];
+ memcpy(pinned,raw,sizeof(raw));
+ PopulatePlateauSettings(values);
+ plateauSettingsStatus->Text=L"Прочитаны актуальные ПИД-параметры из контроллера.";
+ GlobalLogger::LogMessage(L"Параметры ПИД: группа 7 считана.");
+}
+
+System::Data::DataTable^ ProjectServerW::DataForm::BuildPlateauParamsSnapshot() {
+ auto snapshot=gcnew System::Data::DataTable();
+ snapshot->Columns->Add(L"Параметр",String::typeid);
+ snapshot->Columns->Add(L"Описание",String::typeid);
+ snapshot->Columns->Add(L"Значение",double::typeid);
+ // Снимаем подтверждённую конфигурацию в момент постановки WorkData
+ // в очередь. Редактируемая таблица ПИД здесь может содержать черновик.
+ if(isFormClosingNow||ClientSocket==INVALID_SOCKET||
+  (radioButtonSiemens!=nullptr&&radioButtonSiemens->Checked))return snapshot;
+ uint8_t raw[PLATEAU_PARAM_BYTES]={};uint8_t length=0;
+ try {
+  if(GetDefrostGroup(7u,0u,raw,sizeof(raw),&length)&&length==sizeof(raw)) {
+   for(unsigned i=1;i<PLATEAU_PARAM_COUNT;++i) {
+    float value;memcpy(&value,raw+4*i,4);
+    snapshot->Rows->Add(gcnew String(kPlateauFields[i].name),gcnew String(kPlateauDescriptions[i]),
+     static_cast<double>(value));
+   }
+   return snapshot;
+  }
+ } catch(Exception^ ex) {
+  snapshot->Rows->Clear();
+  GlobalLogger::LogMessage(L"Ошибка чтения параметров ПИД для WorkData: "+ex->Message);
+ }
+ GlobalLogger::LogMessage(L"Предупреждение: параметры ПИД для WorkData не получены от контроллера.");
+ return snapshot;
+}
+
+void ProjectServerW::DataForm::LoadPlateauSettings(Object^,EventArgs^) {
+ auto dialog=gcnew OpenFileDialog();
+ try {
+  dialog->Title=L"Выберите файл WorkData для загрузки параметров ПИД";
+  dialog->Filter=L"Файлы WorkData (WorkData*.xlsx)|WorkData*.xlsx|Файлы Excel (*.xlsx)|*.xlsx";
+  dialog->DefaultExt=L"xlsx";
+  dialog->RestoreDirectory=true;
+  if(!String::IsNullOrEmpty(excelSavePath))dialog->InitialDirectory=excelSavePath;
+  if(dialog->ShowDialog(this)!=System::Windows::Forms::DialogResult::OK)return;
+  try { LoadPlateauSettingsFromFile(dialog->FileName); }
+  catch(Exception^ ex) {
+   MessageBox::Show(this,ex->Message,L"Загрузка параметров ПИД",
+    MessageBoxButtons::OK,MessageBoxIcon::Warning);
+  }
+ } finally { delete dialog; }
+}
+
+void ProjectServerW::DataForm::LoadPlateauSettingsFromFile(String^ filePath) {
+ if(!String::Equals(System::IO::Path::GetExtension(filePath),L".xlsx",StringComparison::OrdinalIgnoreCase))
+  throw gcnew System::IO::InvalidDataException(L"Выберите файл WorkData в формате XLSX.");
+ auto mutex=FormExcel::GetExcelGlobalMutex();
+ if(!mutex->WaitOne(15000))throw gcnew TimeoutException(L"Дождитесь окончания экспорта Excel и повторите загрузку.");
+ Excel::Application^ app=nullptr;
+ Excel::Workbook^ book=nullptr;
+ Excel::Worksheet^ sheet=nullptr;
+ Excel::Range^ range=nullptr;
+ auto values=gcnew cli::array<float>(PLATEAU_PARAM_COUNT);
+ values[0]=1.0f;
+ try {
+  app=gcnew Excel::ApplicationClass();
+  app->Visible=false;
+  app->DisplayAlerts=false;
+  // Свойство Excel AutomationSecurity=3 запрещает выполнение макросов
+  // при программном открытии. Позднее связывание не добавляет ссылку на Office.dll.
+  Type::GetTypeFromProgID(L"Excel.Application")->InvokeMember(L"AutomationSecurity",
+   System::Reflection::BindingFlags::SetProperty,nullptr,app,gcnew cli::array<Object^>{3});
+  Object^ m=Type::Missing;
+  book=app->Workbooks->Open(filePath,safe_cast<Object^>(0),true,m,m,m,true,m,m,false,false,m,false,true,m);
+  try { sheet=safe_cast<Excel::Worksheet^>(book->Worksheets->Item[L"Параметры ПИД"]); }
+  catch(System::Runtime::InteropServices::COMException^) {
+   throw gcnew System::IO::InvalidDataException(L"В файле нет листа «Параметры ПИД».");
+  }
+  range=sheet->Range[L"A1",L"C20"];
+  auto cells=safe_cast<Array^>(range->Value2);
+  if(!Object::Equals(cells->GetValue(1,1),L"Параметр")||!Object::Equals(cells->GetValue(1,3),L"Значение"))
+   throw gcnew System::IO::InvalidDataException(L"В файле нет сохранённых значений ПИД.");
+  auto seen=gcnew cli::array<bool>(PLATEAU_PARAM_COUNT);
+  for(int row=2;row<=20;++row) {
+   String^ name=Convert::ToString(cells->GetValue(row,1))->Trim();
+   unsigned index=1;
+   while(index<PLATEAU_PARAM_COUNT&&!String::Equals(name,gcnew String(kPlateauFields[index].name),StringComparison::Ordinal))++index;
+   if(index==PLATEAU_PARAM_COUNT||seen[index])
+    throw gcnew System::IO::InvalidDataException(String::Format(L"Строка {0}: отсутствует, неизвестен или повторяется параметр ПИД.",row));
+   float value=0;
+   if(!TryParsePlateauValue(index,cells->GetValue(row,3),value))
+    throw gcnew System::IO::InvalidDataException(L"Недопустимое значение ПИД: "+name);
+   seen[index]=true;
+   values[index]=value;
+  }
+  if(!ValidPlateauTiming(PlateauFromValues(values)))
+   throw gcnew System::IO::InvalidDataException(L"Проверьте целые тайминги и минимум/максимум импульса.");
+ } finally {
+  if(range!=nullptr)Marshal::ReleaseComObject(range);
+  if(sheet!=nullptr)Marshal::ReleaseComObject(sheet);
+  if(book!=nullptr) {
+   try { book->Close(false,Type::Missing,Type::Missing); } catch(Exception^) {}
+   Marshal::ReleaseComObject(book);
+  }
+  if(app!=nullptr) {
+   try { app->Quit(); } catch(Exception^) {}
+   Marshal::ReleaseComObject(app);
+  }
+  mutex->ReleaseMutex();
+ }
+ // Меняем таблицу только после проверки всего файла.
+ PopulatePlateauSettings(values);
+ plateauSettingsStatus->Text=L"Загружено из файла. Для применения нажмите «Записать».";
 }
 
 void ProjectServerW::DataForm::ApplyPlateauSettings(System::Object^, System::EventArgs^) {
@@ -83,17 +227,14 @@ void ProjectServerW::DataForm::ApplyPlateauSettings(System::Object^, System::Eve
  auto inv=System::Globalization::CultureInfo::InvariantCulture;
  for(unsigned i=1;i<PLATEAU_PARAM_COUNT;++i) {
   auto cell=plateauSettingsGrid->Rows[i-1u]->Cells[2]->Value;
-  float value=0;String^ text=cell==nullptr?"":cell->ToString()->Trim()->Replace(L',',L'.');
-  if(!Single::TryParse(text,System::Globalization::NumberStyles::Float,inv,value)||
-   Single::IsNaN(value)||Single::IsInfinity(value)||value<kPlateauFields[i].minimum||value>kPlateauFields[i].maximum) {
+  float value=0;
+  if(!TryParsePlateauValue(i,cell,value)) {
    plateauSettingsStatus->Text=L"Неверное значение: "+gcnew String(kPlateauFields[i].name);return;
   }
   memcpy(raw+4*i,&value,4);
  }
  PlateauParams p;memcpy(&p,raw,sizeof(p));
- if(p.pulseMin_s>p.pulseMax_s||
-  floorf(p.rateWindow_s)!=p.rateWindow_s||floorf(p.pulseMax_s)!=p.pulseMax_s||
-  floorf(p.pulseMin_s)!=p.pulseMin_s||floorf(p.pauseMin_s)!=p.pauseMin_s) {
+ if(!ValidPlateauTiming(p)) {
   plateauSettingsStatus->Text=L"Проверьте целые тайминги и минимум/максимум импульса.";return;
  }
  if(!SetDefrostGroup(7u,raw,sizeof(raw))) {

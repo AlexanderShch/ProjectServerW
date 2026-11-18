@@ -406,11 +406,73 @@ bool ProjectServerW::DataForm::GetDefrostParam(uint8_t groupId, uint8_t paramId,
     return ParseDefrostParamResponse(response, nullptr, nullptr, outValue);
 }
 
+// Группа 7 необязательна на старых прошивках. Один бюджет покрывает весь
+// обмен, включая TCP-отправку. Если линия занята, текущую попытку пропускаем.
+bool ProjectServerW::DataForm::RequestPlateauGroup(const Command& cmd, CommandResponse& response) {
+    using System::Threading::Monitor;
+    constexpr ULONGLONG budgetMs = 950; // запас до 1 с на округление таймеров Windows
+    const ULONGLONG deadline = GetTickCount64() + budgetMs;
+    const SOCKET socket = clientSocket;
+    if (socket == INVALID_SOCKET || !Monitor::TryEnter(commandPipelineGate)) return false;
+    try {
+        uint8_t buffer[MAX_COMMAND_SIZE];
+        const int length = static_cast<int>(BuildCommandBuffer(cmd, buffer, sizeof(buffer)));
+        if (length == 0) return false;
+        Object^ receiveGate = PacketQueueProcessor::GetReceivingGate(socket);
+        Object^ sendGate = PacketQueueProcessor::GetSendGate(socket);
+        if (!Monitor::TryEnter(receiveGate)) return false;
+        try {
+            if (!Monitor::TryEnter(sendGate)) return false;
+            try {
+                if (clientSocket != socket) return false;
+                DWORD originalTimeout = 0;
+                int optionSize = sizeof(originalTimeout);
+                if (getsockopt(socket, SOL_SOCKET, SO_SNDTIMEO,
+                    reinterpret_cast<char*>(&originalTimeout), &optionSize) == SOCKET_ERROR) return false;
+
+                int sentTotal = 0;
+                while (sentTotal < length) {
+                    const ULONGLONG now = GetTickCount64();
+                    if (now >= deadline) break;
+                    const DWORD timeout = static_cast<DWORD>(deadline - now);
+                    if (setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO,
+                        reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == SOCKET_ERROR) break;
+                    const int sent = send(socket, reinterpret_cast<const char*>(buffer) + sentTotal, length - sentTotal, 0);
+                    if (sent <= 0) break;
+                    sentTotal += sent;
+                }
+                const bool restored = setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO,
+                    reinterpret_cast<const char*>(&originalTimeout), sizeof(originalTimeout)) != SOCKET_ERROR;
+                // Незавершённый кадр нельзя продолжить кадром следующей команды.
+                if (!restored || (sentTotal > 0 && sentTotal < length)) shutdown(socket, SD_BOTH);
+                if (!restored || sentTotal != length) return false;
+            } finally { Monitor::Exit(sendGate); }
+        } finally { Monitor::Exit(receiveGate); }
+
+        while (clientSocket == socket) {
+            const ULONGLONG now = GetTickCount64();
+            if (now >= deadline) break;
+            CommandResponse candidate{};
+            if (!ReceiveResponse(candidate, static_cast<int>(deadline - now))) continue;
+            if (GetTickCount64() >= deadline) break;
+            if (candidate.commandType != cmd.commandType || candidate.commandCode != cmd.commandCode) continue;
+            if (candidate.status != CmdStatus::OK) return false;
+            // Поздний ответ группы 5/6 имеет тот же код команды, но другую группу.
+            if (candidate.dataLength < 2 || candidate.data[0] != 7u || candidate.data[1] != cmd.data[1]) continue;
+            response = candidate;
+            return true;
+        }
+    } finally { Monitor::Exit(commandPipelineGate); }
+    return false;
+}
+
 bool ProjectServerW::DataForm::GetDefrostGroup(uint8_t groupId, uint8_t page, uint8_t* outData, uint8_t outCapacity, uint8_t* outLength) {
     if (clientSocket == INVALID_SOCKET || outData == nullptr || outLength == nullptr) return false;
     Command cmd = CreateRequestCommandDefrostGetGroup(groupId, page);
     CommandResponse response;
-    if (!SendCommandAndWaitResponse(cmd, response, "GET_DEFROST_GROUP") || response.status != CmdStatus::OK) return false;
+    const bool received = groupId == 7u ? RequestPlateauGroup(cmd, response)
+        : SendCommandAndWaitResponse(cmd, response, "GET_DEFROST_GROUP");
+    if (!received || response.status != CmdStatus::OK) return false;
     if (response.dataLength < 2) return false;
     uint8_t payloadLen = (uint8_t)(response.dataLength - 2);
     const uint8_t expectedPayloadLen =

@@ -306,8 +306,67 @@ static class LogSessionIsolationTests
                         Equal((byte)2, write[0]); Equal((byte)5, write[1]); Equal((byte)81, write[2]); Equal((byte)7, write[3]);
                         for (int i = 0; i < values.Length; ++i) Equal(values[i], BitConverter.ToSingle(write, 4 + i * 4));
                         var verify = ReadCommand(controller.GetStream()); Equal((byte)3, verify[0]); Equal((byte)7, verify[1]);
+                        // Экспорт сохраняет значения контроллера, даже если в таблице есть черновик.
+                        grid.Rows[0].Cells[2].Value = "1.5";
+                        Call(f, "EnqueueResponse", Group7(values));
+                        var pidSnapshot = (DataTable)Call(f, "BuildPlateauParamsSnapshot");
+                        var snapshotRequest = ReadCommand(controller.GetStream());
+                        Equal((byte)3, snapshotRequest[0]); Equal((byte)7, snapshotRequest[1]);
+                        Equal(19, pidSnapshot.Rows.Count);
+                        Equal("tempKp", pidSnapshot.Rows[0][0]);
+                        Equal(.25, pidSnapshot.Rows[0][2]);
+                        Equal("1.5", grid.Rows[0].Cells[2].Value);
                         if (!((Label)Get(f, "plateauSettingsStatus")).Text.StartsWith("Записано в EEPROM")) throw new Exception("Verification failed");
                         Set(f, "clientSocket", UInt64.MaxValue);
+                    }
+                }
+            });
+            Test("Startup proceeds after group 7 timeout on the same connection", delegate {
+                using (var form = NewForm()) {
+                    var listener = new TcpListener(IPAddress.Loopback, 0);
+                    listener.Start();
+                    using (var client = new TcpClient()) {
+                        client.Connect((IPEndPoint)listener.LocalEndpoint);
+                        using (var controller = listener.AcceptTcpClient()) {
+                            listener.Stop();
+                            controller.ReceiveTimeout = 2500;
+                            Set(form, "clientSocket", unchecked((ulong)client.Client.Handle.ToInt64()));
+                            Set(form, "modeSwitchHasSavedSetting", true);
+                            Exception peerError = null;
+                            var peer = new Thread(delegate() {
+                                try {
+                                    var stream = controller.GetStream();
+                                    var command = ReadCommand(stream);
+                                    Equal((byte)3, command[0]); Equal((byte)2, command[1]);
+                                    Call(form, "EnqueueResponse", Response(3, 2, System.Text.Encoding.ASCII.GetBytes("3.3.1")));
+                                    foreach (byte group in new byte[] { 5, 6 }) {
+                                        command = ReadCommand(stream);
+                                        Equal((byte)3, command[0]); Equal((byte)7, command[1]); Equal(group, command[3]);
+                                        var payload = new byte[group == 5 ? 74 : 62]; payload[0] = group;
+                                        if (group == 6) payload[48] = 1;
+                                        Call(form, "EnqueueResponse", Response(3, 7, payload));
+                                    }
+                                    command = ReadCommand(stream);
+                                    Equal((byte)3, command[0]); Equal((byte)7, command[1]); Equal((byte)7, command[3]);
+                                    var wait = System.Diagnostics.Stopwatch.StartNew();
+                                    command = ReadCommand(stream);
+                                    if (wait.ElapsedMilliseconds > 1000)
+                                        throw new Exception("Group 7 delayed SET_INTERVAL by " + wait.ElapsedMilliseconds + " ms");
+                                    Equal((byte)2, command[0]); Equal((byte)2, command[1]);
+                                    Call(form, "EnqueueResponse", Response(2, 2, new byte[0]));
+                                } catch (Exception ex) { peerError = ex; }
+                            });
+                            peer.IsBackground = true;
+                            peer.Start();
+                            try {
+                                var started = (bool)Call(form, "ExecuteStartupCommandSequence");
+                                if (!peer.Join(3000)) throw new Exception("Test controller did not finish");
+                                if (peerError != null) throw peerError;
+                                Equal(true, started);
+                                Equal(true, Get(form, "startupSequenceCompleted"));
+                                Equal(0, ((DataGridView)Get(form, "plateauSettingsGrid")).Rows.Count);
+                            } finally { Set(form, "clientSocket", UInt64.MaxValue); }
+                        }
                     }
                 }
             });

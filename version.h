@@ -3,7 +3,7 @@
 // Версия и строка для отображения из единого набора компонентов.
 #define VERSION_MAJOR 3
 #define VERSION_MINOR 3
-#define VERSION_PATCH 1
+#define VERSION_PATCH 2
 #define VERSION_STRINGIFY_IMPL(x) #x
 #define VERSION_STRINGIFY(x) VERSION_STRINGIFY_IMPL(x)
 #define VERSION_WIDE_IMPL(x) L##x
@@ -14,6 +14,14 @@ static const wchar_t* const VERSION_STR =
     VERSION_WIDE(VERSION_STRINGIFY(VERSION_PATCH));
 
 /*
+Версия 3.3.2
+- WorkData содержит отдельный лист «Параметры ПИД» со значениями группы 7,
+  считанными с контроллера перед экспортом.
+- На вкладке «ПИД» можно загрузить параметры из WorkData для проверки
+  и последующей записи в контроллер кнопкой «Записать».
+- При запуске STM32 группа 7 запрашивается после групп 5 и 6.
+  Бюджет отправки и ожидания ответа — 950 мс. При отсутствии ответа запуск продолжается.
+
 Версия 3.3.1
 - Общий запрос нагрева и составляющие ПИД показаны сразу под графиком ТЭНов.
 - В Excel и в окне «График» деления шкалы ПИД совпадают со смещениями
