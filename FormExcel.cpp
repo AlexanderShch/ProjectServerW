@@ -95,7 +95,7 @@ static double ChartValue(System::Data::DataRow^ row, String^ column)
 }
 
 static void AddExcelLine(Excel::SeriesCollection^ seriesCollection, Excel::Range^ xRange,
-	Excel::Range^ yRange, String^ name, Color color, bool secondary, double weight)
+	Excel::Range^ yRange, String^ name, Color color, bool secondary, double weight, int plotOrder = 0)
 {
 	Excel::Series^ series = seriesCollection->NewSeries();
 	try {
@@ -105,6 +105,7 @@ static void AddExcelLine(Excel::SeriesCollection^ seriesCollection, Excel::Range
 		series->AxisGroup = secondary ? Excel::XlAxisGroup::xlSecondary : Excel::XlAxisGroup::xlPrimary;
 		series->Format->Line->ForeColor->RGB = ColorTranslator::ToOle(color);
 		series->Format->Line->Weight = static_cast<float>(weight);
+		if (plotOrder > 0) series->PlotOrder = plotOrder;
 	}
 	finally { Marshal::ReleaseComObject(series); }
 }
@@ -124,14 +125,14 @@ static void AddExcelSourceLine(Excel::SeriesCollection^ lines, Excel::Range^ xRa
 // статусы, доли и фазы в основной таблице сохраняют свои единицы измерения.
 static void AddExcelMappedLine(Excel::SeriesCollection^ lines, Excel::Range^ xRange,
 	Excel::Worksheet^ sheet, int helperColumn, cli::array<Object^, 2>^ values,
-	String^ name, Color color, bool secondary, double weight)
+	String^ name, Color color, bool secondary, double weight, int plotOrder = 0)
 {
 	int rows = values->GetLength(0);
 	sheet->Cells[1, helperColumn] = name;
 	Excel::Range^ range = sheet->Range[sheet->Cells[2, helperColumn], sheet->Cells[rows + 1, helperColumn]];
 	try {
 		range->Value2 = values;
-		AddExcelLine(lines, xRange, range, name, color, secondary, weight);
+		AddExcelLine(lines, xRange, range, name, color, secondary, weight, plotOrder);
 	}
 	finally { Marshal::ReleaseComObject(range); }
 }
@@ -199,7 +200,7 @@ static double AddExcelPidLines(Excel::Chart^ chart, Excel::SeriesCollection^ lin
 		}
 	// Одинаковый интервал между кривыми даёт отдельные полосы, включая
 	// отрицательные P/I/D. В легенде видно, какое смещение вычесть.
-	const double spacing = PidPlotSpacing(minimum, maximum);
+	const double spacing = Math::Max(6.0, PidPlotSpacing(minimum, maximum));
 	double plotMinimum=0, plotMaximum=4*spacing;
 	for (int k = 0; k < columns->Length; ++k) {
 		if (!table->Columns->Contains(columns[k])) continue;
@@ -222,19 +223,52 @@ static double AddExcelPidLines(Excel::Chart^ chart, Excel::SeriesCollection^ lin
 		try {
 			axis->MinimumScale = spacing * Math::Floor(plotMinimum/spacing);
 			axis->MaximumScale = spacing * Math::Ceiling(plotMaximum/spacing);
-			axis->MajorUnit = spacing;
-			// Вспомогательные линии делят основную полосу на четыре равных интервала.
-			axis->MinorUnit = spacing / PidGridSubdivisions;
+			axis->MajorUnit = 1.0;
+			axis->TickLabels->NumberFormat = "0";
+			axis->MinorTickMark = Excel::XlTickMark::xlTickMarkOutside;
+			// Промежуточная сетка в эквивалентах ТЭНа.
+			axis->MinorUnit = 0.5;
 			axis->HasMajorGridlines = true;
 			axis->HasMinorGridlines = true;
-			axis->MajorGridlines->Format->Line->ForeColor->RGB = ColorTranslator::ToOle(Color::FromArgb(145,156,173));
-			axis->MajorGridlines->Format->Line->Weight = 1.2f;
+			axis->MajorGridlines->Format->Line->ForeColor->RGB = ColorTranslator::ToOle(Color::FromArgb(228,233,241));
+			axis->MajorGridlines->Format->Line->Weight = .65f;
 			axis->MinorGridlines->Format->Line->ForeColor->RGB = ColorTranslator::ToOle(Color::FromArgb(228,233,241));
 			axis->MinorGridlines->Format->Line->Weight = .65f;
 		}
 		finally { Marshal::ReleaseComObject(axis); }
 	}
 	return spacing;
+}
+
+static void AddExcelPidGrid(Excel::Chart^ chart, Excel::SeriesCollection^ lines,
+	Excel::Range^ xRange, Excel::Worksheet^ sheet, int rows, int% helperColumn, double spacing)
+{
+	Excel::Axis^ axis = ExcelValueAxis(chart, false);
+	double lower, upper;
+	try {
+		lower = axis->MinimumScale;
+		upper = axis->MaximumScale;
+	}
+	finally { Marshal::ReleaseComObject(axis); }
+
+	int gridCount = 0;
+	for (double level = lower; level <= upper; level += 1.0) {
+		const bool offset = Math::Abs(level / spacing - Math::Round(level / spacing)) < 1e-9;
+		if (!offset && Math::Abs(level / 2 - Math::Round(level / 2)) >= 1e-9) continue;
+		auto values = gcnew cli::array<Object^, 2>(rows, 1);
+		for (int row = 0; row < rows; ++row) values[row, 0] = level;
+		const Color color = offset ? Color::FromArgb(83,98,121) : Color::FromArgb(175,187,204);
+		// Excel draws later series over earlier ones within the primary axis group.
+		AddExcelMappedLine(lines, xRange, sheet, helperColumn++, values,
+			String::Format(L"Сетка {0:0}", level), color, false, offset ? 2.0 : 1.2, ++gridCount);
+	}
+
+	chart->HasLegend = true;
+	for (int index = gridCount; index >= 1; --index) {
+		auto entry = safe_cast<Excel::LegendEntry^>(chart->Legend->LegendEntries(index));
+		try { entry->Delete(); }
+		finally { Marshal::ReleaseComObject(entry); }
+	}
 }
 
 static void BuildExcelPidPanel(int panel, Excel::Chart^ chart, Excel::SeriesCollection^ lines,
@@ -246,8 +280,8 @@ static void BuildExcelPidPanel(int panel, Excel::Chart^ chart, Excel::SeriesColl
 	case 0: {
 		AddExcelSourceLine(lines,xRange,source,table,"T0",L"Сырая T слева",Color::DarkGray,false,1.2);
 		AddExcelSourceLine(lines,xRange,source,table,"T1",L"Сырая T справа",Color::DarkGray,false,1.2);
-		AddExcelSourceLine(lines,xRange,source,table,"T_filt_0",L"Фильтр 32 слева",Color::FromArgb(138,174,152),false,1.4);
-		AddExcelSourceLine(lines,xRange,source,table,"T_filt_1",L"Фильтр 32 справа",Color::FromArgb(193,151,139),false,1.4);
+		AddExcelSourceLine(lines,xRange,source,table,"T_filt_0",L"Фильтр 32 слева",Color::FromArgb(35,139,69),false,1.4);
+		AddExcelSourceLine(lines,xRange,source,table,"T_filt_1",L"Фильтр 32 справа",Color::FromArgb(214,39,40),false,1.4);
 		AddExcelSourceLine(lines,xRange,source,table,"T_sup_avg_C",L"Средняя T регулятора",Color::RoyalBlue,false,2.8);
 		auto target = gcnew cli::array<Object^, 2>(rowCount,1);
 		for (int i = 0; i < rowCount; ++i) {
@@ -258,12 +292,14 @@ static void BuildExcelPidPanel(int panel, Excel::Chart^ chart, Excel::SeriesColl
 			double setpoint = average+ChartValue(row,"eT_common");
 			if (!Double::IsNaN(setpoint)) target[i,0] = setpoint;
 		}
-		AddExcelMappedLine(lines,xRange,sheet,helperColumn++,target,L"Уставка",Color::Black,false,2.8);
+		AddExcelMappedLine(lines,xRange,sheet,helperColumn++,target,L"Уставка",Color::Black,false,1.4);
 		break;
 	}
 	case 1:
-		AddExcelSourceLine(lines,xRange,source,table,"T3",L"Сырая T продукта слева",Color::ForestGreen,false,1.8);
-		AddExcelSourceLine(lines,xRange,source,table,"T4",L"Сырая T продукта справа",Color::DarkViolet,false,1.8);
+		AddExcelSourceLine(lines,xRange,source,table,"T3",L"Сырая T продукта слева",Color::FromArgb(161,185,168),false,1.8);
+		AddExcelSourceLine(lines,xRange,source,table,"T4",L"Сырая T продукта справа",Color::FromArgb(199,160,160),false,1.8);
+		AddExcelSourceLine(lines,xRange,source,table,"T_filt_3",L"Фильтр 32 слева",Color::FromArgb(35,139,69),false,1.4);
+		AddExcelSourceLine(lines,xRange,source,table,"T_filt_4",L"Фильтр 32 справа",Color::FromArgb(214,39,40),false,1.4);
 		break;
 	case 2: {
 		auto columns = gcnew cli::array<String^>{"Ten1_Left","Ten2_Left","Ten1_Right","Ten2_Right"};
@@ -279,7 +315,7 @@ static void BuildExcelPidPanel(int panel, Excel::Chart^ chart, Excel::SeriesColl
 				if (ChartValue(row,"Act6")!=0 && (Double::IsNaN(ioType) || ioType==4) && !Double::IsNaN(feedback))
 					values[i,0] = k + (feedback>0 ? 1 : 0);
 			}
-			AddExcelMappedLine(lines,xRange,sheet,helperColumn++,values,names[k],colors[k],false,1.8);
+			AddExcelMappedLine(lines,xRange,sheet,helperColumn++,values,names[k],colors[k],false,1.4);
 		}
 		if (lines->Count > 0) {
 			Excel::Axis^ axis = ExcelValueAxis(chart,false);
@@ -298,6 +334,7 @@ static void BuildExcelPidPanel(int panel, Excel::Chart^ chart, Excel::SeriesColl
 			Excel::Axis^ axis = ExcelValueAxis(chart,false);
 			try { axis->MaximumScale = spacing * Math::Ceiling(axis->MaximumScale/spacing); }
 			finally { Marshal::ReleaseComObject(axis); }
+			AddExcelPidGrid(chart, lines, xRange, sheet, table->Rows->Count, helperColumn, spacing);
 		}
 		break;
 	}
@@ -333,6 +370,34 @@ static void BuildExcelPidPanel(int panel, Excel::Chart^ chart, Excel::SeriesColl
 	}
 }
 
+// Excel измеряет область построения в пунктах. Сначала фиксируем масштаб,
+// затем подбираем высоту диаграммы под сетку и место для подписей.
+static void FitExcelChartRows(Excel::ChartObject^ object, Excel::Chart^ chart)
+{
+	Excel::Axis^ axis = ExcelValueAxis(chart,false);
+	double desiredHeight = 0;
+	try {
+		const double minimum = axis->MinimumScale, maximum = axis->MaximumScale;
+		const double major = axis->MajorUnit;
+		const double rowStep = axis->HasMinorGridlines ? axis->MinorUnit : major;
+		if (maximum <= minimum || rowStep <= 0) return;
+		axis->MinimumScale = minimum;
+		axis->MaximumScale = maximum;
+		axis->MajorUnit = major;
+		if (axis->HasMinorGridlines) axis->MinorUnit = rowStep;
+		desiredHeight = (maximum-minimum)/rowStep*PlotRowHeight(72.0);
+	}
+	finally { Marshal::ReleaseComObject(axis); }
+
+	Excel::PlotArea^ plot = chart->PlotArea;
+	try {
+		const double chrome = Math::Max(120.0,object->Height-plot->InsideHeight+12.0);
+		object->Height = desiredHeight+chrome;
+		plot->InsideHeight = desiredHeight;
+	}
+	finally { Marshal::ReleaseComObject(plot); }
+}
+
 static void BuildExcelCharts(Excel::Worksheet^ source, System::Data::DataTable^ table, bool pid)
 {
 	auto missing = Type::Missing;
@@ -359,10 +424,8 @@ static void BuildExcelCharts(Excel::Worksheet^ source, System::Data::DataTable^ 
 		int helperColumn = 24;
 		double top = 20;
 		for (int panel = 0; panel < titles->Length; ++panel) {
-			// Общий график ПИД выше остальных. Следующий график начинается ниже его границы.
-			const double height = pid ? (panel==3 ? 480 : 320) : 500;
-			Excel::ChartObject^ object = objects->Add(20,top,900,height);
-			top += height+18;
+			const double initialHeight = pid ? (panel==3 ? 840 : 320) : 500;
+			Excel::ChartObject^ object = objects->Add(20,top,900,initialHeight);
 			Excel::Chart^ chart = object->Chart;
 			Excel::SeriesCollection^ lines = nullptr;
 			try {
@@ -395,10 +458,12 @@ static void BuildExcelCharts(Excel::Worksheet^ source, System::Data::DataTable^ 
 						chart->Axes(Excel::XlAxisType::xlCategory,Excel::XlAxisGroup::xlPrimary));
 					try { SetExcelAxisTitle(timeAxis,table->Columns->Contains("RealTime") ? L"Время" : L"Отсчёт"); }
 					finally { Marshal::ReleaseComObject(timeAxis); }
+					FitExcelChartRows(object,chart);
 				}
 			}
 			finally {
 				if (lines != nullptr) Marshal::ReleaseComObject(lines);
+				top += object->Height+18;
 				Marshal::ReleaseComObject(chart);
 				Marshal::ReleaseComObject(object);
 			}

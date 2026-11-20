@@ -1,7 +1,12 @@
 #pragma once
 
 namespace ProjectServerW {
-	constexpr int PidGridSubdivisions = 4;
+	// Расстояние между соседними линиями сетки при масштабе 100%.
+	inline double PlotRowHeight(double unitsPerInch)
+	{
+		return 4.0 * unitsPerInch / 25.4;
+	}
+
 	// Шаг сетки совпадает со смещением соседних кривых и оставляет
 	// между полосами зазор хотя бы в один эквивалент ТЭНа.
 	inline double PidPlotSpacing(double minimum, double maximum)

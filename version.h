@@ -3,7 +3,7 @@
 // Версия и строка для отображения из единого набора компонентов.
 #define VERSION_MAJOR 3
 #define VERSION_MINOR 3
-#define VERSION_PATCH 2
+#define VERSION_PATCH 3
 #define VERSION_STRINGIFY_IMPL(x) #x
 #define VERSION_STRINGIFY(x) VERSION_STRINGIFY_IMPL(x)
 #define VERSION_WIDE_IMPL(x) L##x
@@ -14,6 +14,12 @@ static const wchar_t* const VERSION_STR =
     VERSION_WIDE(VERSION_STRINGIFY(VERSION_PATCH));
 
 /*
+Версия 3.3.3
+- При переходе от WorkData к EndData таблица очищается пакетом.
+  Поступившие строки EndData сохраняются, окно обновляется после операции.
+- Высота строк сетки графиков в окне «График» и в Excel приведена к 4 мм.
+- Линии уставки воздуха и подтверждённых ТЭНов сделаны тоньше.
+
 Версия 3.3.2
 - WorkData содержит отдельный лист «Параметры ПИД» со значениями группы 7,
   считанными с контроллера перед экспортом.

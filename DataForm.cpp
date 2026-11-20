@@ -402,8 +402,42 @@ void ProjectServerW::DataForm::BeginEndDataCapture(DateTime now) {
     System::Threading::Monitor::Enter(dataTableSync);
     try {
         FlushPendingLogRow();
-        for (int i = 0; i < completedCycleRowCount && dataTable->Rows->Count > 0; ++i)
-            dataTable->Rows->RemoveAt(0);
+        const int firstTailRow = Math::Min(completedCycleRowCount, dataTable->Rows->Count);
+        if (firstTailRow > 0) {
+            // Сохраняем только строки EndData. Сам объект таблицы остаётся тем же,
+            // так как текущий обработчик телеметрии может ещё добавлять в него строки.
+            // Rows->Clear сохраняет ещё не добавленную строку этого обработчика.
+            System::Data::DataTable^ tail = nullptr;
+            if (firstTailRow < dataTable->Rows->Count) {
+                tail = dataTable->Clone();
+                for (int i = firstTailRow; i < dataTable->Rows->Count; ++i)
+                    tail->ImportRow(dataTable->Rows[i]);
+            }
+            if (tail == nullptr) {
+                dataTable->Rows->Clear();
+            } else {
+                // На время возврата EndData отключаем привязку, сохраняя колонки.
+                // Иначе окно обновится после каждой возвращённой строки.
+                auto grid = dataGridView;
+                const bool bound = grid != nullptr && !grid->IsDisposed && grid->DataSource == dataTable;
+                const bool autoGenerate = bound && grid->AutoGenerateColumns;
+                try {
+                    if (bound) {
+                        grid->AutoGenerateColumns = false;
+                        grid->DataSource = nullptr;
+                    }
+                    dataTable->Rows->Clear();
+                    for each (System::Data::DataRow^ row in tail->Rows)
+                        dataTable->ImportRow(row);
+                }
+                finally {
+                    if (bound && !grid->IsDisposed) {
+                        grid->DataSource = dataTable;
+                        grid->AutoGenerateColumns = autoGenerate;
+                    }
+                }
+            }
+        }
         endDataCapturePending = false;
         siemensSessionStartRowIndex = 0;
         dataCollectionStartTime = now;

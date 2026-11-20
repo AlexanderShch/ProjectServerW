@@ -193,7 +193,18 @@ static class LogSessionIsolationTests
             });
             Test("tail received during SaveAs survives successful WorkData completion", delegate {
                 var f = NewForm(); Row(f, "work", false); var work = EndWork(f);
-                Row(f, "tail1", false); Row(f, "tail2", false); Complete(f, work, true);
+                Row(f, "tail1", false); Row(f, "tail2", false);
+                var table = Table(f);
+                var grid = (DataGridView)Get(f, "dataGridView");
+                int individualDeletions = 0;
+                table.DefaultView.ListChanged += delegate(object sender, System.ComponentModel.ListChangedEventArgs e) {
+                    if (e.ListChangedType == System.ComponentModel.ListChangedType.ItemDeleted) ++individualDeletions;
+                    if (e.ListChangedType == System.ComponentModel.ListChangedType.ItemAdded) Equal(null, grid.DataSource);
+                };
+                Complete(f, work, true);
+                Equal(table, Table(f));
+                Equal(table, grid.DataSource);
+                Equal(0, individualDeletions);
                 Equal("tail1,tail2", Labels(Table(f))); Job(work, "WorkData", "work");
                 Equal(epoch.AddMinutes(10).AddHours(2), Get(f, "endDataDeadline"));
             });
