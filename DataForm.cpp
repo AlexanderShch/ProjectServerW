@@ -3439,20 +3439,9 @@ System::Void DataForm::DataForm_FormClosed(Object^ sender, FormClosedEventArgs^ 
 // Инициализация последовательного порта
 System::Void DataForm::DataForm_HandleDestroyed(Object^ sender, EventArgs^ e)
 {
-    try {
-        // Открываем по имени порта
-        this->FormClosing -= gcnew FormClosingEventHandler(this, &DataForm::DataForm_FormClosing);
-        this->FormClosed -= gcnew FormClosedEventHandler(this, &DataForm::DataForm_FormClosed);
-        this->HandleDestroyed -= gcnew EventHandler(this, &DataForm::DataForm_HandleDestroyed);
-
-        // Устанавливаем параметры порта для соединения COM-портом
-        GC::Collect();
-        GC::WaitForPendingFinalizers();
-        GC::Collect();
-    }
-    catch (...) {
-        // Сохраняем настройки в переменной
-    }
+    this->FormClosing -= gcnew FormClosingEventHandler(this, &DataForm::DataForm_FormClosing);
+    this->FormClosed -= gcnew FormClosedEventHandler(this, &DataForm::DataForm_FormClosed);
+    this->HandleDestroyed -= gcnew EventHandler(this, &DataForm::DataForm_HandleDestroyed);
 
     if (inactivityTimer != nullptr) {
         try {
@@ -3529,8 +3518,6 @@ void ProjectServerW::DataForm::SetProgramStateUi(bool isRunning)
         labelSTOP->BackColor = System::Drawing::Color::Lime;
         labelSTOP->Text = "1";
     }
-    if (this->IsHandleCreated && !this->IsDisposed)
-        this->Refresh();
 }
 
 void ProjectServerW::DataForm::EnsureProgramRunningStateFromLog()

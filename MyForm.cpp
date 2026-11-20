@@ -135,8 +135,6 @@ System::Void ProjectServerW::MyForm::exitToolStripMenuItem_Click(System::Object^
 {
 	// Stop server before exit to avoid leaving sockets/threads behind.
 	server.closeServer();
-	// Allow background threads to observe shutdown.
-	System::Threading::Thread::Sleep(500);
 	// Exit application.
 	Application::Exit();
 	return System::Void();

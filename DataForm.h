@@ -904,22 +904,22 @@ private: System::ComponentModel::IContainer^ components;
 				// 
 				// Label_Data
 				// 
-				this->Label_Data->AutoSize = true;
+				this->Label_Data->AutoEllipsis = true;
 				this->Label_Data->Location = System::Drawing::Point(8, 51);
 				this->Label_Data->Name = L"Label_Data";
-				this->Label_Data->Size = System::Drawing::Size(169, 20);
+				this->Label_Data->Size = System::Drawing::Size(1710, 20);
 				this->Label_Data->TabIndex = 7;
 				this->Label_Data->Text = L"Данные от клиента...";
 				// 
 				// dataGridView
 				// 
-				this->dataGridView->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::AllCells;
-				this->dataGridView->AutoSizeRowsMode = System::Windows::Forms::DataGridViewAutoSizeRowsMode::AllCells;
+				this->dataGridView->AutoSizeColumnsMode = System::Windows::Forms::DataGridViewAutoSizeColumnsMode::None;
+				this->dataGridView->AutoSizeRowsMode = System::Windows::Forms::DataGridViewAutoSizeRowsMode::None;
 				this->dataGridView->ColumnHeadersHeightSizeMode = System::Windows::Forms::DataGridViewColumnHeadersHeightSizeMode::AutoSize;
 				this->dataGridView->Location = System::Drawing::Point(12, 74);
 				this->dataGridView->Name = L"dataGridView";
 				this->dataGridView->RightToLeft = System::Windows::Forms::RightToLeft::No;
-				this->dataGridView->RowHeadersWidthSizeMode = System::Windows::Forms::DataGridViewRowHeadersWidthSizeMode::AutoSizeToDisplayedHeaders;
+				this->dataGridView->RowHeadersWidthSizeMode = System::Windows::Forms::DataGridViewRowHeadersWidthSizeMode::DisableResizing;
 				this->dataGridView->RowTemplate->Height = 20;
 				this->dataGridView->RowTemplate->Resizable = System::Windows::Forms::DataGridViewTriState::True;
 				this->dataGridView->Size = System::Drawing::Size(1710, 701);
