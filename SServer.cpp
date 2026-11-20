@@ -496,10 +496,11 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				const bool isLogFrame =
 					(framedType == 0x00 && framedCmd == 0x01 && framedStatus == 0x00);
 
+				const bool telemetrySizeOk = payloadDataLenByte == TELEMETRY_DATA_LEN || payloadDataLenByte == TELEMETRY_DATA_LEN+1;
 				if (receivedCrc != calculatedCrc) {
 					// Для телеметрии CRC-ошибка должна повлиять на DATA_OK/DATA_FALSE, поэтому телеметрию
 					// направляем в worker даже при неравенстве CRC.
-					if (isTelemetryFrame && payloadDataLenByte == TELEMETRY_DATA_LEN) {
+					if (isTelemetryFrame && telemetrySizeOk) {
 						cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(payloadWithCrcLen);
 						Marshal::Copy(IntPtr(const_cast<uint8_t*>(payload)), dataBuffer, 0, payloadWithCrcLen);
 						PacketQueueProcessor::EnqueueTelemetry(dataBuffer, payloadWithCrcLen, clientPort, guidManaged, clientSocket, clientIPAddress);
@@ -515,7 +516,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				}
 
 				if (isTelemetryFrame) {
-					if (payloadDataLenByte != TELEMETRY_DATA_LEN) {
+					if (!telemetrySizeOk) {
 						GlobalLogger::LogMessage(String::Format(
 							"Warning: Dropping framed telemetry with unexpected DataLen={0}", payloadDataLenByte));
 					}

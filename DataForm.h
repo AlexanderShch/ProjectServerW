@@ -212,6 +212,7 @@ namespace ProjectServerW {
             System::Windows::Forms::Timer^ buttonEventsTimer;
             DateTime buttonEventsRequestTime;
             bool buttonEventsPending, buttonEventsUnsupported;
+            bool unifiedEvents, eventsAvailable, moreEventsAfterAck;
             bool controllerRestartVersionPending = false; // GET_VERSION после отката Time
             SOCKET buttonEventsSocket;
             void ResetButtonEventPolling(); // повторная проверка поддержки после перезапуска МК

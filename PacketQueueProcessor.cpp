@@ -357,7 +357,7 @@ namespace ProjectServerW {
         // заголовок ответа и CRC; тип и код здесь нужны только для маршрутизации.
         // Очередь кнопок обслуживается асинхронно и не подменяет ответ обычной команды.
         if (response->Length >= 6 && response[0] == CmdType::REQUEST &&
-            (response[1] == CmdRequest::GET_BUTTON_EVENTS || response[1] == CmdRequest::ACK_BUTTON_EVENTS)) {
+            (IsEventCommand(response[1]))) {
             if (!IsDisposed && !Disposing && IsHandleCreated)
                 BeginInvoke(gcnew Action<cli::array<System::Byte>^>(this, &DataForm::HandleButtonEventsResponse), response);
             return;

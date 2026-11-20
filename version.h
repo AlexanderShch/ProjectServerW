@@ -3,7 +3,7 @@
 // Версия и строка для отображения из единого набора компонентов.
 #define VERSION_MAJOR 3
 #define VERSION_MINOR 3
-#define VERSION_PATCH 3
+#define VERSION_PATCH 4
 #define VERSION_STRINGIFY_IMPL(x) #x
 #define VERSION_STRINGIFY(x) VERSION_STRINGIFY_IMPL(x)
 #define VERSION_WIDE_IMPL(x) L##x
@@ -14,6 +14,9 @@ static const wchar_t* const VERSION_STR =
     VERSION_WIDE(VERSION_STRINGIFY(VERSION_PATCH));
 
 /*
+Версия 3.3.4
+- Сервер читает события кнопок и датчиков по флагу телеметрии и подтверждает их после записи в log.txt.
+
 Версия 3.3.3
 - При переходе от WorkData к EndData таблица очищается пакетом.
   Поступившие строки EndData сохраняются, окно обновляется после операции.

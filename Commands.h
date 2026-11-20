@@ -46,8 +46,15 @@ struct CmdRequest {
     static const uint8_t GET_ALARM_FLAGS = 0x09;  // Запросить регистры аварий: устройства и датчики
     static const uint8_t GET_BUTTON_EVENTS = 0x0B; // Очередь физических нажатий, без удаления
     static const uint8_t ACK_BUTTON_EVENTS = 0x0C; // Подтверждение после записи log.txt
+    static const uint8_t GET_EVENT = 0x0D;
+    static const uint8_t ACK_EVENT = 0x0E;
     static const uint8_t GET_SENSOR_DIAG = 0x0A;  // Запросить причины ошибок приёма от датчиков (счётчики обнуляются при чтении)
 };
+
+inline bool IsEventCommand(uint8_t code) {
+    return code == CmdRequest::GET_BUTTON_EVENTS || code == CmdRequest::ACK_BUTTON_EVENTS ||
+           code == CmdRequest::GET_EVENT || code == CmdRequest::ACK_EVENT;
+}
 
 // Ответ GET_SENSOR_DIAG; размеры и порядок должны совпадать с MB_SensorDiag_Fill в прошивке.
 // [0..1] период, с; для каждого из 7 устройств: счётчики по причинам [SENSOR_DIAG_CAT_COUNT], ok, макс. задержка ok, мс;
@@ -227,7 +234,10 @@ inline Command CreateRequestCommandGetSensorDiag() {
 
 /** Создать команду «Отправить состояние» (телеметрия + при авторежиме лог). */
 inline Command CreateRequestCommandSendState() {
-    return CreateRequestCommand(CmdRequest::SEND_STATE);
+    Command cmd = CreateRequestCommand(CmdRequest::SEND_STATE);
+    cmd.dataLength = 1;
+    cmd.data[0] = 1; // Запрашиваем дополнительный байт флагов телеметрии.
+    return cmd;
 }
 
 /** Создать команду записи группы параметров дефроста. data[0]=groupId, data[1..]=payload (как в ответе GET_DEFROST_GROUP). */

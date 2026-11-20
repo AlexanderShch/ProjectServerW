@@ -1120,7 +1120,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     }
     const uint8_t* raw = reinterpret_cast<const uint8_t*>(buffer);
     const uint8_t dataLenByte = raw[3];
-    if (dataLenByte != sizeof(data)) {
+    if ((dataLenByte != sizeof(data) && dataLenByte != sizeof(data)+1) || size < 6u+dataLenByte) {
         // DataLen должен совпадать с размером MSGQUEUE_OBJ_t на сервере.
         return;
     }
@@ -1162,6 +1162,8 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         }
     }
 
+    unifiedEvents = dataLenByte == sizeof(data)+1;
+    eventsAvailable = unifiedEvents && (raw[4+sizeof(data)] & 1u);
     data_String = bufferToHex(buffer, size);   // Преобразуем буфер в строку в hex формате
     // Выводим содержимое пакета data_String в поле Label_Data
     DataForm::SetData_TextValue("Текущие данные: " + data_String);
