@@ -247,7 +247,7 @@ namespace ProjectServerW {
             SOCKET buttonEventsSocket;
             void ResetButtonEventPolling(); // повторная проверка поддержки после перезапуска МК
             void PollButtonEvents(System::Object^ sender, System::EventArgs^ e);
-            void HandleButtonEventsResponse(cli::array<System::Byte>^ packet);
+            void HandleButtonEventsResponse(cli::array<System::Byte>^ packet, cli::array<System::Byte>^ wirePacket);
             DateTime lastSensorDiagTime;     // время последнего запроса GET_SENSOR_DIAG
 			bool sensorDiagInProgress;       // диагностика ожидает лог, поставлена в UI или отправляется
 			bool sensorDiagLogTimedOut;      // разрешает отправку после ограниченного ожидания лога

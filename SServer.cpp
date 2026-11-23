@@ -1,4 +1,5 @@
 #include "SServer.h" // Включает DataForm.h внутри себя
+#include "ReceivedPacketLog.h"
 #include "PacketQueueProcessor.h"
 #include "Commands.h" // MAX_COMMAND_SIZE is used for framed payload length heuristics.
 #include <fstream>
@@ -346,6 +347,8 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	const int CONTROL_LOG_DATA_LEN = 113; // 109 байт прежнего лога + средняя T подачи
 	// Максимальный размер блока после AA55: 4 + DataLen + 2.
 	const int MAX_FRAMED_PAYLOAD_LEN = 128;
+	String^ packetPeer = String::Format("{0}:{1}", clientIPAddress, clientPort);
+	bool incompleteReported = false;
 
 	// Бесконечный цикл считывания данных
 	// Важно: recv() вызываем БЕЗ удержания recvGate, иначе UI/таймер SEND_STATE не смогут отправить команду —
@@ -353,7 +356,11 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	while (!g_serverStopping.load()) {
 		int spaceAvailable = sizeof(accumulatedBuffer) - accumulatedBytes;
 		if (spaceAvailable <= 0) {
-			GlobalLogger::LogMessage("Error: Accumulated buffer overflow! Resetting buffer.");
+			const bool framed = accumulatedBytes >= 2 &&
+				static_cast<uint8_t>(accumulatedBuffer[0]) == 0xAA && static_cast<uint8_t>(accumulatedBuffer[1]) == 0x55;
+			LogDiscardedPacket("receive buffer overflow", packetPeer,
+				reinterpret_cast<const uint8_t*>(accumulatedBuffer) + (framed ? 2 : 0),
+				accumulatedBytes - (framed ? 2 : 0), framed);
 			accumulatedBytes = 0;
 			continue;
 		}
@@ -363,6 +370,14 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		if (bytesReceived == SOCKET_ERROR) {
 			int error = WSAGetLastError();
 			if (error == WSAETIMEDOUT) {
+				if (accumulatedBytes > 0 && !incompleteReported) {
+					const bool framed = accumulatedBytes >= 2 &&
+						static_cast<uint8_t>(accumulatedBuffer[0]) == 0xAA && static_cast<uint8_t>(accumulatedBuffer[1]) == 0x55;
+					LogReceivedPacket("incomplete or unrecognized data buffered at receive timeout", packetPeer,
+						reinterpret_cast<const uint8_t*>(accumulatedBuffer) + (framed ? 2 : 0),
+						accumulatedBytes - (framed ? 2 : 0), framed);
+					incompleteReported = true;
+				}
 				try {
 					DataForm^ currentForm = DataForm::GetFormByGuid(guid);
 					if (currentForm == nullptr || currentForm->IsDisposed || currentForm->Disposing) {
@@ -394,6 +409,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		}
 
 		accumulatedBytes += bytesReceived;
+		incompleteReported = false;
 
 		// Захватываем recvGate только на время разбора буфера, чтобы не пересекаться с отправкой команд.
 		System::Object^ recvGate = PacketQueueProcessor::GetReceivingGate(clientSocket);
@@ -434,12 +450,17 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 
 					if (headerOffset < 0) {
 						// Если не нашли, значит парсер потерял границу кадра и нам нужно пропустить все байты до конца буфера.
-						processedBytes += (remainingInBuffer - 1);
+						const int skipped = remainingInBuffer - 1;
+						LogDiscardedPacket("unrecognized stream bytes (no AA55)", packetPeer,
+							reinterpret_cast<const uint8_t*>(buffer), skipped, false);
+						processedBytes += skipped;
 						continue;
 					}
 
 					if (headerOffset > 0) {
 						// Если нашли, значит мы нашли границу кадра и нам нужно пропустить все байты до неё.
+						LogDiscardedPacket("unrecognized stream bytes before AA55", packetPeer,
+							reinterpret_cast<const uint8_t*>(buffer), headerOffset, false);
 						processedBytes += headerOffset;
 						continue;
 					}
@@ -466,9 +487,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				const int totalFrameLen = 2 + payloadWithCrcLen;
 
 				if (payloadWithCrcLen <= 0 || payloadWithCrcLen > MAX_FRAMED_PAYLOAD_LEN) {
-					GlobalLogger::LogMessage(String::Format(
-						"Warning: Dropping framed packet with invalid length. Type=0x{0:X2}, Cmd=0x{1:X2}, DataLen={2}",
-						framedType, framedCmd, payloadDataLenByte));
+					LogDiscardedPacket("frame length exceeds limit", packetPeer, payload, 4, true);
 					processedBytes += 1;
 					continue;
 				}
@@ -498,17 +517,15 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 						continue;
 					}
 
-					GlobalLogger::LogMessage(String::Format(
-						"Warning: Dropping framed packet due CRC mismatch. Type=0x{0:X2}, Cmd=0x{1:X2}, DataLen={2}",
-						framedType, framedCmd, payloadDataLenByte));
+					LogDiscardedPacket(String::Format("CRC mismatch (received=0x{0:X4}, expected=0x{1:X4})",
+						receivedCrc, calculatedCrc), packetPeer, payload, payloadWithCrcLen, true);
 					processedBytes += 1;
 					continue;
 				}
 
 				if (isTelemetryFrame) {
 					if (!telemetrySizeOk) {
-						GlobalLogger::LogMessage(String::Format(
-							"Warning: Dropping framed telemetry with unexpected DataLen={0}", payloadDataLenByte));
+						LogDiscardedPacket("unexpected telemetry length", packetPeer, payload, payloadWithCrcLen, true);
 					}
 					else {
 						cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(payloadWithCrcLen);
@@ -518,8 +535,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				}
 				else if (isLogFrame) {
 					if (logicalDataLen != 89 && logicalDataLen != 105 && logicalDataLen != 109 && logicalDataLen != CONTROL_LOG_DATA_LEN) {
-						GlobalLogger::LogMessage(String::Format(
-							"Warning: Dropping framed control log with unexpected DataLen={0}", payloadDataLenByte));
+						LogDiscardedPacket("unexpected control log length", packetPeer, payload, payloadWithCrcLen, true);
 					}
 					else {
 						cli::array<System::Byte>^ logBuffer = gcnew cli::array<System::Byte>(payloadWithCrcLen);
@@ -533,6 +549,7 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 					if (df != nullptr && !df->IsDisposed && !df->Disposing) {
 						df->EnqueueResponse(responseBuffer, clientSocket, connection);
 					}
+					else LogDiscardedPacket("receiver form unavailable", packetPeer, payload, payloadWithCrcLen, true);
 				}
 
 				// Поглощаем весь кадр целиком: [AA 55][Type][Cmd][Status][DataLen][Data...][CRC16]
@@ -555,6 +572,13 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 		// Один мастер — задержка не нужна.
 		System::Threading::Thread::Sleep(0);
 	}	// конец while (основной цикл)
+	if (accumulatedBytes > 0) {
+		const bool framed = accumulatedBytes >= 2 &&
+			static_cast<uint8_t>(accumulatedBuffer[0]) == 0xAA && static_cast<uint8_t>(accumulatedBuffer[1]) == 0x55;
+		LogDiscardedPacket(framed ? "incomplete frame at connection close" : "unrecognized bytes at connection close",
+			packetPeer, reinterpret_cast<const uint8_t*>(accumulatedBuffer) + (framed ? 2 : 0),
+			accumulatedBytes - (framed ? 2 : 0), framed);
+	}
 
 	// Соединение оборвалось. Форму НЕ закрываем: устройство может вернуться в течение 30 минут,
 	// тогда новое подключение переиспользует текущую форму и продолжит заполнение таблицы.

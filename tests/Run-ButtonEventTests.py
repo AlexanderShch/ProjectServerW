@@ -227,6 +227,7 @@ using namespace System; using namespace System::IO; using namespace System::Thre
 using namespace System::Windows::Forms;
 const int INVALID_SOCKET=-1;
 ''' + logger + r'''
+#include "ReceivedPacketLog.h"
 namespace ProjectServerW {
 ref class DataForm {
 public:
@@ -245,7 +246,7 @@ public:
  bool SendCommand(const Command& c,String^) {if(c.commandCode!=CmdRequest::ACK_BUTTON_EVENTS && c.commandCode!=CmdRequest::ACK_EVENT){++polls;return true;}++acks;uint32_t value;memcpy(&value,c.data+16,4);acknowledged=value;return true;}
  void ResetButtonEventPolling();
  void PollButtonEvents(Object^,EventArgs^);
- void HandleButtonEventsResponse(array<Byte>^);
+ void HandleButtonEventsResponse(array<Byte>^, array<Byte>^ wirePacket=nullptr);
 };
 }
 ''' + receiver + r'''

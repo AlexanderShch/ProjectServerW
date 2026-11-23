@@ -3,7 +3,7 @@
 // Версия и строка для отображения из единого набора компонентов.
 #define VERSION_MAJOR 4
 #define VERSION_MINOR 0
-#define VERSION_PATCH 1
+#define VERSION_PATCH 2
 #define VERSION_STRINGIFY_IMPL(x) #x
 #define VERSION_STRINGIFY(x) VERSION_STRINGIFY_IMPL(x)
 #define VERSION_WIDE_IMPL(x) L##x
@@ -14,6 +14,12 @@ static const wchar_t* const VERSION_STR =
     VERSION_WIDE(VERSION_STRINGIFY(VERSION_PATCH));
 
 /*
+Версия 4.0.2
+- Сервер журналирует причины отбрасывания входящих пакетов и признаки распознанных кадров.
+  Для нераспознанных данных записываются число отброшенных байтов и начало фрагмента.
+- В выгрузке Excel восстановлен крупный размер обзорной диаграммы на листе Chart.
+  Высота области построения больше не привязана к шагу вертикальной сетки.
+
 Версия 4.0.1
 - В журнале физического СТОП отмечается прерывание продувки.
 - Убрана штатная запись об отправке GET_PROCESS_LOG из журнала и строки состояния команд.

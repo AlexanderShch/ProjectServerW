@@ -1,4 +1,5 @@
 #include "PacketQueueProcessor.h"
+#include "ReceivedPacketLog.h"
 
 #include "Commands.h"
 #include "SocketSend.h"
@@ -181,18 +182,23 @@ namespace ProjectServerW {
 				}
 
 				if (item->size <= 0 || item->packet->Length < item->size) {	// Если размер пакета некорректный, пропускаем.
+					LogDiscardedPacket("invalid queued packet size", item->clientIP, item->packet);
 					continue;
 				}
 
-				if (String::IsNullOrEmpty(item->formGuid)) continue;
+				if (String::IsNullOrEmpty(item->formGuid)) {
+					LogDiscardedPacket("queued packet has no receiver form", item->clientIP, item->packet);
+					continue;
+				}
                 msclr::interop::marshal_context sourceContext;
                 DataForm^ sourceForm = DataForm::GetFormByGuid(sourceContext.marshal_as<std::wstring>(item->formGuid));
                 const SOCKET sourceSocket = reinterpret_cast<SOCKET>(item->clientSocket.ToPointer());
                 if (sourceForm == nullptr || sourceForm->IsDisposed || item->connection == nullptr ||
                     sourceForm->GetCommandConnection(sourceSocket) != item->connection) {
-                    GlobalLogger::LogMessage("Warning: Dropping queued telemetry/log from inactive connection");
+                    LogDiscardedPacket("queued packet from inactive connection", item->clientIP, item->packet);
                     continue;
                 }
+                auto wirePacket = item->packet;
 
                 // Пакет лога (Type 0x01): доставка на форму в потоке UI; строка для лога берётся из очереди rowsPendingLog (1:1 с телеметрией).
 				if (item->itemType == 1) {
@@ -208,12 +214,10 @@ namespace ProjectServerW {
 						const std::wstring guidW = ctx.marshal_as<std::wstring>(item->formGuid);
 						DataForm^ form = DataForm::GetFormByGuid(guidW);	// Поиск формы по GUID.
 						if (form == nullptr) {	// Если форма не найдена, логируем предупреждение и пропускаем.
-							GlobalLogger::LogMessage("Предупреждение: пакет лога: GetFormByGuid вернул null, запись отброшена");
+							LogDiscardedPacket("control log receiver form missing", item->clientIP, wirePacket);
 						}
 						else if (form->IsDisposed || form->Disposing || !form->IsHandleCreated) {	// Если форма уничтожена, пропускаем.
-							GlobalLogger::LogMessage(String::Format(
-								"Предупреждение: пакет лога: форма недействительна (IsDisposed={0}, Disposing={1}, IsHandleCreated={2}), запись отброшена",
-								form->IsDisposed, form->Disposing, form->IsHandleCreated));
+							LogDiscardedPacket("control log receiver form unavailable", item->clientIP, wirePacket);
 						}
 						else {
 							// Вызов метода AppendControlLogToDataRow на форме в потоке UI.
@@ -246,12 +250,12 @@ namespace ProjectServerW {
 					const std::string frameBytes(reinterpret_cast<const char*>(raw), static_cast<size_t>(item->size));
 					if (!guard.lastBadFrame.empty() && guard.lastBadFrame == frameBytes) {	
 						// Если последний кадр не пуст и равен текущему (с битым CRC), отправляем DATA_OK и очищаем состояние дубликата.
-						GlobalLogger::LogMessage("Warning: repeated corrupt telemetry; waiting for exchange timeout");
+						LogDiscardedPacket("repeated telemetry CRC mismatch; waiting for exchange timeout", item->clientIP, wirePacket);
 						guard.lastBadFrame.clear();
 						continue;
 					}
 
-                    GlobalLogger::LogMessage("Warning: telemetry CRC mismatch; requesting retry within current exchange");
+                    LogDiscardedPacket("telemetry CRC mismatch; requesting retry", item->clientIP, wirePacket);
 					guard.lastBadFrame = frameBytes;	// Обновляем последний кадр с битым CRC.
 					TrySendTelemetryAck(clientSock, CmdTelemetry::DATA_FALSE, sourceForm, item->connection);	// Отправляем DATA_FALSE, будем ждать повторный пакет
 					continue;
@@ -274,11 +278,15 @@ namespace ProjectServerW {
 				const std::wstring guidW = ctx.marshal_as<std::wstring>(item->formGuid);	// Преобразование GUID из строки в wstring.
 				DataForm^ form = DataForm::GetFormByGuid(guidW);	// Поиск формы по GUID.
 				if (form == nullptr || form->IsDisposed || form->Disposing || !form->IsHandleCreated) {	// Если форма не найдена или уничтожена, пропускаем.
+					LogDiscardedPacket("telemetry receiver form unavailable", item->clientIP, wirePacket);
 					continue;
 				}
 
 				// Привязкой сокета управляет ClientHandler. Пакет из очереди может прийти со старого соединения.
-				if (item->connection == nullptr || form->GetCommandConnection(clientSock) != item->connection) continue;
+				if (item->connection == nullptr || form->GetCommandConnection(clientSock) != item->connection) {
+					LogDiscardedPacket("telemetry connection changed before delivery", item->clientIP, wirePacket);
+					continue;
+				}
 				form->BeginInvoke(
 					gcnew Action<cli::array<System::Byte>^, int, int, System::UInt64, System::Object^>(form, &DataForm::AddDataToTableThreadSafe),
 					item->packet, item->size, item->port, static_cast<System::UInt64>(clientSock), item->connection);
@@ -360,11 +368,12 @@ namespace ProjectServerW {
 	void DataForm::EnqueueResponse(cli::array<System::Byte>^ response, SOCKET sourceSocket, System::Object^ connection)
 	{
 		if (response == nullptr || GetCommandConnection(sourceSocket) != connection) {
-			GlobalLogger::LogMessage("Warning: Dropping response from inactive connection");
+			LogDiscardedPacket("response from inactive connection", ClientIP, response);
 			return;
 		}
 
 		if (!AcceptControllerPacket(response, connection)) return;
+        auto wirePacket = response;
         response = NormalizeControllerResponse(response);
         if (response[0] == CmdType::REQUEST && response[1] == CmdRequest::GET_PROCESS_LOG) {
             if (!IsDisposed && !Disposing && IsHandleCreated)
@@ -382,13 +391,15 @@ namespace ProjectServerW {
         if (response->Length >= 6 && response[0] == CmdType::REQUEST &&
             (IsEventCommand(response[1]))) {
             if (!IsDisposed && !Disposing && IsHandleCreated)
-                BeginInvoke(gcnew Action<cli::array<System::Byte>^, System::UInt64, System::Object^>(this, &DataForm::HandleBackgroundResponse), response, static_cast<System::UInt64>(sourceSocket), connection);
+                BeginInvoke(gcnew Action<cli::array<System::Byte>^, System::UInt64, System::Object^>(this, &DataForm::HandleBackgroundResponse), wirePacket, static_cast<System::UInt64>(sourceSocket), connection);
+            else LogDiscardedPacket("event response receiver form unavailable", ClientIP, wirePacket);
             return;
         }
         if (response->Length >= 6 && response[0] == CmdType::REQUEST &&
             response[1] == CmdRequest::GET_SENSOR_DIAG) {
             if (!IsDisposed && !Disposing && IsHandleCreated)
-                BeginInvoke(gcnew Action<cli::array<System::Byte>^, System::UInt64, System::Object^>(this, &DataForm::HandleBackgroundResponse), response, static_cast<System::UInt64>(sourceSocket), connection);
+                BeginInvoke(gcnew Action<cli::array<System::Byte>^, System::UInt64, System::Object^>(this, &DataForm::HandleBackgroundResponse), wirePacket, static_cast<System::UInt64>(sourceSocket), connection);
+            else LogDiscardedPacket("diagnostic response receiver form unavailable", ClientIP, wirePacket);
             // Не выдаём семафор responseAvailable: иначе ожидающая обычная команда
             // получит диагностический ответ вместо собственного и отбросит его.
             return;

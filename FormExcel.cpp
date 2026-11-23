@@ -424,8 +424,10 @@ static void BuildExcelCharts(Excel::Worksheet^ source, System::Data::DataTable^ 
 		int helperColumn = 24;
 		double top = 20;
 		for (int panel = 0; panel < titles->Length; ++panel) {
-			const double initialHeight = pid ? (panel==3 ? 840 : 320) : 500;
-			Excel::ChartObject^ object = objects->Add(20,top,900,initialHeight);
+			// Обзорная диаграмма Chart сохраняет размер независимо от шага шкалы.
+			const double width = pid ? 900 : 1275;
+			const double initialHeight = pid ? (panel==3 ? 840 : 320) : 575;
+			Excel::ChartObject^ object = objects->Add(20,top,width,initialHeight);
 			Excel::Chart^ chart = object->Chart;
 			Excel::SeriesCollection^ lines = nullptr;
 			try {
@@ -458,7 +460,7 @@ static void BuildExcelCharts(Excel::Worksheet^ source, System::Data::DataTable^ 
 						chart->Axes(Excel::XlAxisType::xlCategory,Excel::XlAxisGroup::xlPrimary));
 					try { SetExcelAxisTitle(timeAxis,table->Columns->Contains("RealTime") ? L"Время" : L"Отсчёт"); }
 					finally { Marshal::ReleaseComObject(timeAxis); }
-					FitExcelChartRows(object,chart);
+					if (pid) FitExcelChartRows(object,chart);
 				}
 			}
 			finally {

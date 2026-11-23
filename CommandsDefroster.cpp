@@ -1,6 +1,7 @@
 #include "DataForm.h"
 #include "Commands.h"
 #include "PacketQueueProcessor.h"
+#include "ReceivedPacketLog.h"
 #include "SocketSend.h"
 
 using namespace System;
@@ -1373,10 +1374,17 @@ static String^ DescribeSensorEvent(uint8_t kind, const uint8_t* info) {
 
 /* Проверяет весь пакет до записи. Только успешно записанный префикс подтверждается;
  * повторный ответ и потерянный ACK безопасны благодаря постоянным ключам в log.txt. */
-void ProjectServerW::DataForm::HandleButtonEventsResponse(cli::array<Byte>^ packet) {
-    if (isFormClosingNow || IsDisposed || Disposing || packet==nullptr || packet->Length==0) return;
+void ProjectServerW::DataForm::HandleButtonEventsResponse(cli::array<Byte>^ packet, cli::array<Byte>^ wirePacket) {
+    if (wirePacket == nullptr) wirePacket = packet;
+    if (isFormClosingNow || IsDisposed || Disposing || packet==nullptr || packet->Length==0) {
+        LogDiscardedPacket("event response unavailable for processing", ClientIP, wirePacket);
+        return;
+    }
     pin_ptr<Byte> pinned=&packet[0];CommandResponse response{};
-    if (!ParseResponseBuffer(reinterpret_cast<const uint8_t*>(pinned),packet->Length,response)) return;
+    if (!ParseResponseBuffer(reinterpret_cast<const uint8_t*>(pinned),packet->Length,response)) {
+        LogDiscardedPacket("cannot parse event response", ClientIP, wirePacket);
+        return;
+    }
     if (response.commandCode==CmdRequest::ACK_EVENT) {
         buttonEventsPending=false;
         if (response.status==CmdStatus::OK) {
@@ -1389,18 +1397,38 @@ void ProjectServerW::DataForm::HandleButtonEventsResponse(cli::array<Byte>^ pack
         buttonEventsPending=false;
         const auto* data=response.data;
         const unsigned len=response.dataLength;
-        if (response.status!=CmdStatus::OK || len<25 || data[24]>16) return;
-        if (!data[24]) { if (len==25) eventsAvailable=false; return; }
-        if (len<34) return;
+        if (response.status!=CmdStatus::OK) return;
+        if (len<25 || data[24]>16) {
+            LogDiscardedPacket("invalid event header or queue length", ClientIP, wirePacket);
+            return;
+        }
+        if (!data[24]) {
+            if (len==25) eventsAvailable=false;
+            else LogDiscardedPacket("unexpected data in empty event queue response", ClientIP, wirePacket);
+            return;
+        }
+        if (len<34) {
+            LogDiscardedPacket("incomplete event record", ClientIP, wirePacket);
+            return;
+        }
         const uint8_t kind=data[33];
         // Код 5 — кнопка СТОП с причиной. Дополнительных полей диагностики у неё нет.
         const bool purgeInterrupted = kind == 5u;
         const bool button = kind <= 2u || purgeInterrupted;
-        if (kind < 1u || kind > 5u || len != (button ? 34u : 61u)) return;
+        if (kind < 1u || kind > 5u || len != (button ? 34u : 61u)) {
+            LogDiscardedPacket(String::Format("invalid event type or length (kind={0}, payload={1})", kind, len), ClientIP, wirePacket);
+            return;
+        }
         const uint8_t* info=data+34;
-        if (!button && (info[0]>=7 || info[7]>9 || info[7]>info[5] || (kind==3 && info[3]>=14))) return;
+        if (!button && (info[0]>=7 || info[7]>9 || info[7]>info[5] || (kind==3 && info[3]>=14))) {
+            LogDiscardedPacket("invalid sensor event fields", ClientIP, wirePacket);
+            return;
+        }
         const uint32_t seq=EventWord(data+25);
-        if (!seq) return;
+        if (!seq) {
+            LogDiscardedPacket("zero event sequence number", ClientIP, wirePacket);
+            return;
+        }
         auto session=gcnew cli::array<Byte>(16);
         for (int i=0;i<16;++i) session[i]=data[i];
         String^ id=Guid(session).ToString("N");
@@ -1434,17 +1462,27 @@ void ProjectServerW::DataForm::HandleButtonEventsResponse(cli::array<Byte>^ pack
             GlobalLogger::LogMessage(L"Предупреждение: контроллер не поддерживает очередь физических кнопок (GET_BUTTON_EVENTS). Проверка при перезапуске или новом соединении");
         buttonEventsUnsupported=true;return;
     }
-    if (response.status!=CmdStatus::OK || response.dataLength<21) return;
+    if (response.status!=CmdStatus::OK) return;
+    if (response.dataLength<21) {
+        LogDiscardedPacket("incomplete button event header", ClientIP, wirePacket);
+        return;
+    }
     if (buttonEventsUnsupported)
         GlobalLogger::LogMessage(L"Информация: контроллер поддерживает очередь физических кнопок; регистрация событий возобновлена");
     buttonEventsUnsupported=false;
     const int count=response.data[20];
-    if (count>10 || response.dataLength!=21+9*count) return;
+    if (count>10 || response.dataLength!=21+9*count) {
+        LogDiscardedPacket("invalid button event count or payload length", ClientIP, wirePacket);
+        return;
+    }
     for(int i=0;i<count;++i) {
         const uint8_t* event=response.data+21+9*i;
         uint32_t sequence,previous=0;memcpy(&sequence,event,4);
         if (i>0)memcpy(&previous,event-9,4);
-        if ((event[8]!=1 && event[8]!=2) || sequence==0 || (i>0 && sequence<=previous)) return;
+        if ((event[8]!=1 && event[8]!=2) || sequence==0 || (i>0 && sequence<=previous)) {
+            LogDiscardedPacket("invalid button code or event sequence order", ClientIP, wirePacket);
+            return;
+        }
     }
     auto session=gcnew cli::array<Byte>(16);
     for(int i=0;i<16;++i)session[i]=response.data[i];
@@ -1514,11 +1552,15 @@ void ProjectServerW::DataForm::BeginControllerExchange(const Command& cmd, Objec
 }
 
 bool ProjectServerW::DataForm::AcceptControllerPacket(cli::array<Byte>^ packet, Object^ connection) {
-    if (packet == nullptr || packet->Length < 6) return false;
+    if (packet == nullptr || packet->Length < 6) {
+        LogDiscardedPacket("response shorter than header and CRC", ClientIP, packet);
+        return false;
+    }
+    auto wirePacket = packet;
     uint8_t plain[MAX_COMMAND_SIZE]; size_t plainSize = 0; uint64_t requestId = 0;
     pin_ptr<Byte> wire = &packet[0];
     if (!UnwrapResponseBuffer(wire, packet->Length, requestId, plain, plainSize)) {
-        GlobalLogger::LogMessage("Warning: Dropping response without valid request ID/CRC; transaction-capable firmware required");
+        LogDiscardedPacket("invalid request ID, frame length or CRC", ClientIP, wirePacket);
         return false;
     }
     packet = NormalizeControllerResponse(packet);
@@ -1532,26 +1574,37 @@ bool ProjectServerW::DataForm::AcceptControllerPacket(cli::array<Byte>^ packet, 
             (exchangeCode == CmdRequest::GET_DEFROST_GROUP || exchangeCode == CmdRequest::GET_DEFROST_PARAM))
             matches = packet[3] >= 2 && packet[4] == exchangeGroup && packet[5] == exchangePage;
         if (!matches) {
-            GlobalLogger::LogMessage(String::Format(
-                "Warning: Dropping unsolicited/late response Type=0x{0:X2}, Code=0x{1:X2}; expected Type={2}, Code={3}, phase={4}, requestId={5:X16}, expectedId={6:X16}",
-                packet[0], packet[1], exchangeType, exchangeCode, exchangePhase, requestId, exchangeRequestId));
+            LogDiscardedPacket(String::Format(
+                "unsolicited, late or mismatched response (expected Type={0}, Code={1}, phase={2}, requestId={3:X16}, group={4}, page={5})",
+                exchangeType, exchangeCode, exchangePhase, exchangeRequestId, exchangeGroup, exchangePage),
+                ClientIP, wirePacket);
             return false;
         }
         pin_ptr<Byte> bytes = &packet[0];
         CommandResponse parsed{};
-        if (!ParseResponseBuffer(reinterpret_cast<const uint8_t*>(bytes), packet->Length, parsed)) return false;
+        if (!ParseResponseBuffer(reinterpret_cast<const uint8_t*>(bytes), packet->Length, parsed)) {
+            LogDiscardedPacket("cannot parse normalized response", ClientIP, wirePacket);
+            return false;
+        }
         if (parsed.status != CmdStatus::OK)
             GlobalLogger::LogMessage(String::Format("Warning: Controller response error Type=0x{0:X2}, Code=0x{1:X2}, status=0x{2:X2}",
                 parsed.commandType, parsed.commandCode, parsed.status));
         if (exchangePhase == 2 && parsed.status == CmdStatus::OK) {
-            if (parsed.dataLength != 60 && parsed.dataLength != 61) return false;
+            if (parsed.dataLength != 60 && parsed.dataLength != 61) {
+                LogDiscardedPacket("unexpected telemetry payload length (expected 60 or 61)", ClientIP, wirePacket);
+                return false;
+            }
             telemetrySampleId = requestId;
             exchangePhase = 3; // Worker must send DATA_OK before any other command.
             return true;
         }
         if (exchangeType == CmdType::REQUEST && exchangeCode == CmdRequest::GET_PROCESS_LOG &&
-            parsed.status == CmdStatus::OK && parsed.dataLength != 113) return false;
-        if (exchangeType == CmdType::REQUEST && exchangeCode == CmdRequest::GET_PROCESS_LOG) processLogReply = packet;
+            parsed.status == CmdStatus::OK && parsed.dataLength != 113) {
+            LogDiscardedPacket(String::Format("unexpected GET_PROCESS_LOG payload length (actual={0}, expected=113)",
+                parsed.dataLength), ClientIP, wirePacket);
+            return false;
+        }
+        if (exchangeType == CmdType::REQUEST && exchangeCode == CmdRequest::GET_PROCESS_LOG) processLogReply = wirePacket;
         exchangeCode = -1;
         exchangePhase = 0;
         exchangeReady->Set();
@@ -1577,9 +1630,14 @@ void ProjectServerW::DataForm::OnExchangeTimer(Object^, EventArgs^) {
 }
 
 void ProjectServerW::DataForm::HandleBackgroundResponse(cli::array<Byte>^ packet, System::UInt64 socket, Object^ connection) {
-    if (connection == nullptr || GetCommandConnection(static_cast<SOCKET>(socket)) != connection) return;
+    if (connection == nullptr || GetCommandConnection(static_cast<SOCKET>(socket)) != connection) {
+        LogDiscardedPacket("background response from inactive connection", ClientIP, packet);
+        return;
+    }
+    auto wirePacket = packet;
+    if ((packet[0] & 0x80u) != 0) packet = NormalizeControllerResponse(packet);
     if (packet[1] == CmdRequest::GET_SENSOR_DIAG) HandleSensorDiagResponse(packet);
-    else HandleButtonEventsResponse(packet);
+    else HandleButtonEventsResponse(packet, wirePacket);
 }
 
 System::UInt64 ProjectServerW::DataForm::GetExchangeRequestId() {
@@ -1617,9 +1675,10 @@ void ProjectServerW::DataForm::DrainProcessLogResponse() {
     finally { System::Threading::Monitor::Exit(exchangeGate); }
     if (packet == nullptr || packet[2] != CmdStatus::OK) return;
     if (processLogRow == nullptr || processLogRow != pendingRow || processLogSession != logSessionId) {
-        GlobalLogger::LogMessage("Warning: Dropping process log: telemetry row/session no longer matches");
+        LogDiscardedPacket("process log telemetry row or session no longer matches", ClientIP, packet);
         return;
     }
+    packet = NormalizeControllerResponse(packet);
     packet[0] = 0; packet[1] = 1; // Existing table decoder consumes the logical process payload.
     pin_ptr<Byte> bytes = &packet[0];
     const uint16_t crc = CalculateCommandCRC(bytes, packet->Length - 2);

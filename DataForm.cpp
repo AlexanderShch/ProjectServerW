@@ -5,6 +5,7 @@
 #include "Commands.h"               // Command, DefrostParam и обмен с контроллером
 #include "SocketSend.h"
 #include "PacketQueueProcessor.h"   // per-socket Очередь команд (ACK от контроллера vs ответы в UI)
+#include "ReceivedPacketLog.h"
 #include <objbase.h>                // для CoCreateGuid — генерация уникального идентификатора окна
 #include <string>
 #include <cstring>
@@ -1835,7 +1836,10 @@ void ProjectServerW::DataForm::OnPostResetInitTimerTick(System::Object^ sender, 
 */
 void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size, int port, System::UInt64 sourceSocket, System::Object^ connection) {
     const SOCKET currentSocket = static_cast<SOCKET>(sourceSocket);
-    if (connection == nullptr || GetCommandConnection(currentSocket) != connection) return;
+    if (connection == nullptr || GetCommandConnection(currentSocket) != connection) {
+        LogDiscardedPacket("telemetry from inactive connection at UI delivery", ClientIP, buffer);
+        return;
+    }
     // Вызов приходит из потока приёмника, выполняется через Invoke
     // Важно! Данные, пришедшие в UI, обрабатываются в контексте формы, обновляем данные в UI!
     // Устанавливаем порт клиента в контексте DataForm
@@ -1847,9 +1851,11 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
 
     try {
         if (this == nullptr || this->IsDisposed || this->Disposing) {   // Если форма уничтожена или уничтожается или не создана
+            LogDiscardedPacket("telemetry receiver form closed", ClientIP, buffer);
             return;
         }
         if (dataGridView == nullptr || dataGridView->IsDisposed) {   // Если dataGridView не существует или уничтожена
+            LogDiscardedPacket("telemetry table unavailable", ClientIP, buffer);
             return;
         }
 
@@ -1906,7 +1912,10 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
 // Парсинг лога параметров (группа 3) и добавление лога в строку данных: дополняет накопленную строку
 // телеметрии параметрами лога и добавляет эту строку в таблицу (только при приходе лога, авто-режим).
 void ProjectServerW::DataForm::AppendControlLogFromConnection(cli::array<System::Byte>^ packet, int size, System::UInt64 sourceSocket, System::Object^ connection) {
-    if (connection == nullptr || GetCommandConnection(static_cast<SOCKET>(sourceSocket)) != connection) return;
+    if (connection == nullptr || GetCommandConnection(static_cast<SOCKET>(sourceSocket)) != connection) {
+        LogDiscardedPacket("control log from inactive connection at UI delivery", ClientIP, packet);
+        return;
+    }
     AppendControlLogToDataRow(packet, size);
 }
 

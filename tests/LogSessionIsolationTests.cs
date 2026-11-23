@@ -433,6 +433,17 @@ static class LogSessionIsolationTests
                             var processId = (ulong)Get(f, "exchangeRequestId");
                             if (firstId == processId) throw new Exception("Reused request ID");
                             Equal(false, Call(f, "AcceptControllerPacket", wire, connection));
+                            Equal(false, Call(f, "AcceptControllerPacket", Tagged(f, Response(3, 15, new byte[112])), connection));
+                            var logPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "log.txt");
+                            using (var logStream = new System.IO.FileStream(logPath, System.IO.FileMode.Open,
+                                System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite))
+                            using (var logReader = new System.IO.StreamReader(logStream)) {
+                                var log = logReader.ReadToEnd();
+                                if (!log.Contains("unexpected GET_PROCESS_LOG payload length (actual=112, expected=113)") ||
+                                    !log.Contains("Type=0x03, Code=0x0F, Status=0x00, DataLen=120, requestId=" + processId.ToString("X16")))
+                                    throw new Exception("Rejected process response is missing identifying fields in log.txt");
+                            }
+                            Equal(false, Call(f, "WaitControllerExchange", 0));
                             var values = new byte[113]; Array.Copy(BitConverter.GetBytes(42.0f), values, 4);
                             EnqueueResponse(f, Response(3, 15, values));
                             Call(f, "DrainProcessLogResponse");
