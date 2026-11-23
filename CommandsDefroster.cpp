@@ -96,9 +96,7 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
         }
         else if (bytesSent == commandLength) {
             // Команда успешно отправлена
-            const bool backgroundPoll =
-                (cmd.commandType == CmdType::REQUEST && (cmd.commandCode == CmdRequest::GET_SENSOR_DIAG || IsEventCommand(cmd.commandCode)));
-            if (!backgroundPoll) {
+            if (!background) {
                 Label_Commands->Text = "Команда " + commandName + " отправлена клиенту";
                 GlobalLogger::LogMessage("Information: Команда " + commandName + " отправлена клиенту");
             }
