@@ -46,6 +46,7 @@ struct CmdRequest {
     static const uint8_t GET_ALARM_FLAGS = 0x09;  // Запросить регистры аварий: устройства и датчики
     static const uint8_t GET_BUTTON_EVENTS = 0x0B; // Очередь физических нажатий, без удаления
     static const uint8_t ACK_BUTTON_EVENTS = 0x0C; // Подтверждение после записи log.txt
+    static const uint8_t GET_PROCESS_LOG = 0x0F; // Snapshot for a specified SEND_STATE request ID.
     static const uint8_t GET_EVENT = 0x0D;
     static const uint8_t ACK_EVENT = 0x0E;
     static const uint8_t GET_SENSOR_DIAG = 0x0A;  // Запросить причины ошибок приёма от датчиков (счётчики обнуляются при чтении)
@@ -119,6 +120,8 @@ uint16_t CalculateCommandCRC(const uint8_t* buffer, size_t length);
 size_t BuildCommandBuffer(const Command& cmd, uint8_t* buffer, size_t bufferSize);
 
 // Функция для получения строкового имени команды
+size_t BuildRequestBuffer(const Command& cmd, uint64_t requestId, uint8_t* buffer, size_t bufferSize);
+bool UnwrapResponseBuffer(const uint8_t* wire, size_t size, uint64_t& requestId, uint8_t* plain, size_t& plainSize);
 const char* GetCommandName(const Command& cmd);
 
 // Short command type name (e.g. REQUEST, PROG_CONTROL).
@@ -272,6 +275,12 @@ struct CommandResponse {
         memset(data, 0, sizeof(data));
     }
 };
+
+// Успешный ответ GET_DEFROST_GROUP начинается с тех же groupId и page, что и запрос.
+inline bool MatchesDefrostGroupResponse(const Command& cmd, const CommandResponse& response) {
+    return cmd.dataLength == 2u && response.dataLength >= 2u &&
+        response.data[0] == cmd.data[0] && response.data[1] == cmd.data[1];
+}
 
 // Разбор ответа GET_DEFROST_PARAM (объявление после определения CommandResponse)
 bool ParseDefrostParamResponse(const CommandResponse& response, uint8_t* outGroupId, uint8_t* outParamId, DefrostParamValue* outValue);

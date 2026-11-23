@@ -167,9 +167,54 @@ int main(array<String^>^ args){
         subprocess.run(["cl","/nologo","/clr","/EHa","/utf-8",str(cpp),"/Fe:"+str(folder/"logger.exe")],cwd=folder,check=True)
         subprocess.run([str(folder/"logger.exe"),"first"],check=True)
         subprocess.run([str(folder/"logger.exe"),"retry"],check=True)
+        # Actual firmware ACK handler: a telemetry request owns exactly one log snapshot.
+        firmware_receiver = (FIRMWARE/"STM32CubeIDE/ProjectCode/CommandReceiver.cpp").read_text(encoding="utf-8-sig")
+        start = firmware_receiver.index("CommandStatus_t CommandReceiver_HandleTelemetry(")
+        end = firmware_receiver.index("    return status;", start) + len("    return status;\n}")
+        ack_test = r'''
+#include <stdint.h>
+#include <cstring>
+#include <cassert>
+#include <cstdio>
+using CommandStatus_t=int;
+constexpr int CMD_STATUS_OK=0,CMD_STATUS_INVALID_CODE=1,CMD_TYPE_TELEMETRY=0,TELEMETRY_DATA_OK=1,TELEMETRY_DATA_FALSE=2;
+struct Command_t {uint8_t commandCode;};
+struct CommandResponse_t {uint8_t commandType,commandCode,status,dataLength,data[122];};
+struct ControlLogPayload_t {uint32_t marker;};
+static bool s_requestTagged=true,s_stateTagged=true;
+static uint64_t s_requestId=9,s_stateRequestId=9;
+static bool s_stateAwaitingAck=false,s_stateNeedsLog=false;
+static uint32_t s_stateRequestedAt=0,ticks=0;
+static ControlLogPayload_t s_stateLog={42};
+static unsigned logs=0,retries=0;
+static int ServerResponseReceived_SemHandle=1;
+uint32_t osKernelGetTickCount(){return ticks;}
+uint32_t osKernelGetTickFreq(){return 1000;}
+void osSemaphoreRelease(int){}
+void ResendLastTelemetry(){++retries;}
+void CommandReceiver_SendResponse(CommandResponse_t* r){uint32_t v;memcpy(&v,r->data,4);assert(v==42);++logs;}
+''' + firmware_receiver[start:end] + r'''
+int main(){
+ Command_t ack{1},nack{2};
+ CommandReceiver_HandleTelemetry(&ack);assert(logs==0);
+ s_stateAwaitingAck=true;s_stateNeedsLog=true;
+ s_requestId=8;CommandReceiver_HandleTelemetry(&ack);assert(s_stateAwaitingAck && logs==0);
+ s_requestId=9;CommandReceiver_HandleTelemetry(&nack);assert(retries==1 && s_stateAwaitingAck);
+ CommandReceiver_HandleTelemetry(&ack);assert(logs==0 && !s_stateAwaitingAck);
+ CommandReceiver_HandleTelemetry(&ack);assert(logs==0);
+ s_stateAwaitingAck=true;s_stateNeedsLog=false;
+ CommandReceiver_HandleTelemetry(&ack);assert(logs==0);
+ s_stateAwaitingAck=true;s_stateNeedsLog=true;ticks=1500;
+ CommandReceiver_HandleTelemetry(&ack);assert(logs==0 && !s_stateAwaitingAck);
+ puts("PASS: firmware telemetry ACK emits no log; stale ID, NACK, duplicate and timeout");
+}
+'''
+        cpp=folder/"ack.cpp";cpp.write_text(ack_test,encoding="utf-8")
+        subprocess.run(["cl","/nologo","/EHsc","/utf-8",str(cpp),"/Fe:"+str(folder/"ack.exe")],cwd=folder,check=True)
+        subprocess.run([str(folder/"ack.exe")],check=True)
         # Рабочий обработчик ответа сервера: CRC, тип кнопки, повторы и запрет ACK при ошибке файла.
         receiver = (ROOT/"CommandsDefroster.cpp").read_text(encoding="utf-8-sig")
-        receiver = receiver[receiver.index("void ProjectServerW::DataForm::ResetButtonEventPolling"): ]
+        receiver = receiver[receiver.index("void ProjectServerW::DataForm::ResetButtonEventPolling"): receiver.index("// Ожидание завершается recv-потоком")]
         prefix = r'''
 #using <System.dll>
 #using <System.Core.dll>
@@ -188,6 +233,9 @@ public:
  bool isFormClosingNow=false, IsDisposed=false, Disposing=false;
  bool unifiedEvents=false,eventsAvailable=false,moreEventsAfterAck=false;
  bool buttonEventsPending=false,buttonEventsUnsupported=false,controllerRestartVersionPending=false;
+ System::Windows::Forms::Timer^ sendStateTimer=nullptr;
+ DateTime telemetryRequestTime=DateTime::MinValue;
+ bool WaitControllerExchange(int) {return true;} // Transport is covered by LogSessionIsolationTests.
  int versionRequests=0;
  bool SendVersionRequest() {++versionRequests;return true;}
  int clientSocket=1,buttonEventsSocket=1,acks=0,polls=0; uint32_t acknowledged=0;

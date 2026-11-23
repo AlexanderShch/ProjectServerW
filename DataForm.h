@@ -45,11 +45,13 @@ namespace ProjectServerW {
 			// Критично: нужно для корректной остановки/ожидания потока формы, когда форма закрывается сама (например, по таймауту).
 			System::String^ formGuid;
 
-			SOCKET clientSocket;  // Сокет клиента
+			volatile SOCKET clientSocket;  // Сокет клиента
 			
 		// Очередь/семафор ответов на команды — строго на уровне формы (на уровне устройства).
 		// Причина: при нескольких устройствах общий static-буфер приводит к перемешиванию ответов между формами.
-		System::Collections::Concurrent::ConcurrentQueue<cli::array<System::Byte>^>^ responseQueue;
+		System::Object^ socketStateGate;
+		System::Object^ commandConnection;
+		System::Collections::Concurrent::ConcurrentQueue<System::Tuple<System::Object^, cli::array<System::Byte>^>^>^ responseQueue;
 		private: System::Windows::Forms::Label^ Label_Commands;
 		private: System::Windows::Forms::Label^ label_Commands_Info;
 		private: System::Windows::Forms::Button^ button_RESET;
@@ -156,6 +158,14 @@ namespace ProjectServerW {
 			// Вызов из потока ClientHandler после присвоения ClientSocket: BeginInvoke недопустим до создания handle.
 			void RequestDeferredStartupAfterSocketAttached();
 
+			void AttachClientSocket(SOCKET socket, System::Object^ connection);
+			System::Object^ GetCommandConnection(SOCKET socket);
+			void DetachClientSocket(SOCKET socket);
+            System::UInt64 GetExchangeRequestId();
+            cli::array<System::Byte>^ NormalizeControllerResponse(cli::array<System::Byte>^ packet);
+            bool AcceptControllerPacket(cli::array<System::Byte>^ packet, System::Object^ connection);
+            bool PrepareTelemetryAck(System::Object^ connection, bool accepted);
+
 			property SOCKET ClientSocket {
 				SOCKET get() { return clientSocket; }
 				void set(SOCKET value) {
@@ -213,6 +223,25 @@ namespace ProjectServerW {
             DateTime buttonEventsRequestTime;
             bool buttonEventsPending, buttonEventsUnsupported;
             bool unifiedEvents, eventsAvailable, moreEventsAfterAck;
+            System::Object^ exchangeGate;
+            System::Threading::ManualResetEvent^ exchangeReady;
+            System::Object^ exchangeConnection;
+            System::UInt64 exchangeDeadline;
+            int exchangeCode;
+            int exchangeType, exchangeGroup, exchangePage, exchangePhase;
+            System::UInt64 exchangeRequestId, nextRequestId, telemetrySampleId;
+            bool processDataAvailable;
+            System::Data::DataRow^ processLogRow;
+            System::Guid processLogSession;
+            cli::array<System::Byte>^ processLogReply;
+            void RequestProcessLog();
+            void DrainProcessLogResponse();
+            void BeginControllerExchange(const ::Command& cmd, System::Object^ connection, int timeoutMs);
+            void OnExchangeTimer(System::Object^ sender, System::EventArgs^ e);
+            System::Windows::Forms::Timer^ exchangeTimer;
+            DateTime telemetryRequestTime;
+            bool WaitControllerExchange(int budgetMs);
+            void HandleBackgroundResponse(cli::array<System::Byte>^ packet, System::UInt64 socket, System::Object^ connection);
             bool controllerRestartVersionPending = false; // GET_VERSION после отката Time
             SOCKET buttonEventsSocket;
             void ResetButtonEventPolling(); // повторная проверка поддержки после перезапуска МК
@@ -262,17 +291,14 @@ namespace ProjectServerW {
 	bool autoRestartPending;         // true: отправлен STOP по автоперезапуску, ждём экспорт и затем START
 		DateTime autoRestartStopIssuedTime; // Время отправки STOP для таймаута автоперезапуска
 	DateTime lastStopSuccessTime; // Время последнего успешного ответа на СТОП; лог не перезаписывает кнопки в течение 10 с
-	DateTime lastStartSuccessTime; // Время последнего успешного START; защита от ложного "останов" сразу после запуска
-	bool controllerAutoModeActive;   // true: в телеметрии бит _Wrk (DO) == 1 — контроллер в автоматическом режиме
+	bool controllerAutoModeActive; // Сессия STM32 активна до подтверждения завершения.
+    bool awaitingCycleCompletion;
+    bool telemetryInterrupted;
+    DateTime lastDeviceSampleAt;
 	bool siemensRecordingActive;     // Siemens: запись телеметрии запущена входом But_Start
 	int siemensButStartZeroCount;    // подряд полученные пакеты телеметрии с But_Start=0
 	int siemensSessionStartRowIndex; // первая строка текущей сессии в общей таблице
-	int wrkZeroConsecutiveCounts;    // Подряд идущие "нулевые" отсчёты _Wrk (по Time устройства)
-	bool wrkLastSampleValid;         // true: есть предыдущий отсчёт Time для расчёта дельты
-	uint16_t wrkLastSampleTime;      // Предыдущий Time устройства для расчёта дельты отсчётов
 	bool postStopCaptureActive;      // true: продолжаем запись после STOP (вентиляция/подъём ворот/хвост 10 с)
-	bool postStopGateOpenSeen;       // true: в after-stop режиме зафиксирован верхний концевик ворот
-	DateTime postStopCaptureGraceUntil; // до какого времени писать после Gate_Open (+10 с)
 	bool endDataCaptureActive;
     bool endDataCapturePending;
     bool exportingCompletedCycle;
@@ -345,7 +371,16 @@ namespace ProjectServerW {
 		public:
 			DataForm(void)
 			{
-				InitializeComponent();
+				socketStateGate = gcnew System::Object();
+                exchangeGate = gcnew System::Object();
+                exchangeReady = gcnew System::Threading::ManualResetEvent(true);
+                exchangeCode = -1;
+                nextRequestId = System::BitConverter::ToUInt64(System::Guid::NewGuid().ToByteArray(), 0);
+                InitializeComponent();
+                exchangeTimer = gcnew System::Windows::Forms::Timer(this->components);
+                exchangeTimer->Interval = 100;
+                exchangeTimer->Tick += gcnew EventHandler(this, &DataForm::OnExchangeTimer);
+                exchangeTimer->Start();
 				InitializeParameterColumnWidths();
 				InitializePlateauTab();
 				// Явно: иначе в ClientHandler prevSocket может быть мусором/0 и срабатывает ложный shutdown «drop old socket».
@@ -401,7 +436,7 @@ namespace ProjectServerW {
 				paramsLoadedFromDevice = false;
 				startupSequenceCompleted = false;
 				// Критично: recv()-поток не должен упираться в SemaphoreFullException при Release().
-				responseQueue = gcnew System::Collections::Concurrent::ConcurrentQueue<cli::array<System::Byte>^>();
+				responseQueue = gcnew System::Collections::Concurrent::ConcurrentQueue<System::Tuple<System::Object^, cli::array<System::Byte>^>^>();
 				responseAvailable = gcnew System::Threading::Semaphore(0, System::Int32::MaxValue);
 				hasTelemetry = false;
 				inactivityCloseRequested = false;
@@ -465,17 +500,11 @@ namespace ProjectServerW {
 	autoRestartPending = false;
 	autoRestartStopIssuedTime = DateTime::MinValue;
 		lastStopSuccessTime = DateTime::MinValue;
-		lastStartSuccessTime = DateTime::MinValue;
 		controllerAutoModeActive = false;
 		siemensRecordingActive = false;
 		siemensButStartZeroCount = 0;
 		siemensSessionStartRowIndex = 0;
-		wrkZeroConsecutiveCounts = 0;
-		wrkLastSampleValid = false;
-		wrkLastSampleTime = 0;
 		postStopCaptureActive = false;
-		postStopGateOpenSeen = false;
-		postStopCaptureGraceUntil = DateTime::MinValue;
 		stopExportPending = false;
 		shdWrkZeroStableCounts = 0;
 		lastControlLogTime = DateTime::MinValue;
@@ -1725,9 +1754,10 @@ private: System::ComponentModel::IContainer^ components;
 				ProjectServerW::DataForm::AddDataToTable(buffer, size, this->dataTable);
 			}
 			void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, System::Data::DataTable^ table);
-			void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size, int port);
+			void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size, int port, System::UInt64 sourceSocket, System::Object^ connection);
 			// Парсинг лога (Type 0x01): дополняет pendingRow параметрами; при _Wrk=1 добавляет строку в таблицу.
-			void AppendControlLogToDataRow(cli::array<System::Byte>^ packet, int size);
+			void AppendControlLogFromConnection(cli::array<System::Byte>^ packet, int size, System::UInt64 sourceSocket, System::Object^ connection);
+            void AppendControlLogToDataRow(cli::array<System::Byte>^ packet, int size);
 
 			static cli::array<cli::array<String^>^>^ GetBitFieldNames() {
 				static bool initialized = false;
@@ -1745,6 +1775,7 @@ private: System::ComponentModel::IContainer^ components;
 			void OnCompletedCycleSaved(System::Guid sessionId, bool succeeded);
             void OnExcelExportCompleted(System::Guid sessionId, bool enableButtonOnComplete, bool exportSucceeded, bool restartAfterExport);
 			bool SendCommand(const ::Command& cmd); // Универсальный метод отправки команды (имя определяется автоматически)
+			bool SendCommand(const ::Command& cmd, System::String^ commandName, SOCKET socket, System::Object^ connection);
 			bool SendCommand(const ::Command& cmd, System::String^ commandName); // Универсальный метод отправки команды с явным именем
 		void SendStartCommand(); // Метод для отправки команды START клиенту
 		void SendStopCommand(); // Метод для отправки команды STOP клиенту
@@ -1773,10 +1804,8 @@ private: System::ComponentModel::IContainer^ components;
 		void UpdateVersionLabelInternal(); // Вспомогательный метод для обновления label_Version из UI потока
 		
 		// Методы для обработки ответов от контроллера
-			void EnqueueResponse(cli::array<System::Byte>^ response); // Добавление ответа в очередь (вызывается из SServer)
-			bool ReceiveResponse(::CommandResponse& response, int timeoutMs); // Прием ответа от контроллера с таймаутом
-			bool ReceiveResponse(::CommandResponse& response, int timeoutMs, cli::array<System::Byte>^% rawResponse); // Receive response plus raw frame for diagnostics
-			bool ReceiveResponse(::CommandResponse& response); // Прием ответа от контроллера (таймаут по умолчанию 1000 мс)
+			void EnqueueResponse(cli::array<System::Byte>^ response, SOCKET sourceSocket, System::Object^ connection);
+			bool ReceiveResponse(::CommandResponse& response, SOCKET socket, System::Object^ connection, int timeoutMs, cli::array<System::Byte>^% rawResponse);
 			void ProcessResponse(const ::CommandResponse& response); // Обработка полученного ответа
 			void RestoreLabelCommandsColor(System::Object^ sender, System::EventArgs^ e); // Восстановление цвета Label_Commands
 			bool SendCommandAndWaitResponse(const ::Command& cmd, ::CommandResponse& response, System::String^ commandName); // Отправка команды и ожидание ответа с именем
@@ -1806,13 +1835,8 @@ private: System::ComponentModel::IContainer^ components;
 			void SelectModeRadioButton(bool stm32Mode);
 			bool ApplyServerGroupsAfterConnect();
 			void UpdateDirectoryTextBox(String^ path);
-			void UpdateModeFlagsFromTelemetry(
-				System::DateTime now,
-				uint16_t deviceTime,
-				bool wrkBit,
-				bool shdBit,
-				int& outDeltaCounts);
-			void ResolveModesAndFlushPendingRow(
+			void UpdateModeFlagsFromTelemetry(System::DateTime now, const MSGQUEUE_OBJ_t& data, bool wrkBit, bool shdBit);
+            void ResolveModesAndFlushPendingRow(
 				System::DateTime now,
 				const MSGQUEUE_OBJ_t& data,
 				bool& outWrkBit,

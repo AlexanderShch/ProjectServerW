@@ -95,7 +95,7 @@ namespace ProjectServerW {
 		}
 	}
 
-	bool PacketQueueProcessor::TrySendTelemetryAck(SOCKET socket, uint8_t code)
+	bool PacketQueueProcessor::TrySendTelemetryAck(SOCKET socket, uint8_t code, DataForm^ form, System::Object^ connection)
 	{
 		Command ackCmd = CreateTelemetryAckCommand(code);
 		uint8_t ackBuffer[MAX_COMMAND_SIZE];
@@ -112,6 +112,10 @@ namespace ProjectServerW {
 			Object^ sendGate = GetOrCreateSendGate(socketKey);
 			Monitor::Enter(sendGate);
 			try {
+                if (connection == nullptr || form->GetCommandConnection(socket) != connection ||
+                    !form->PrepareTelemetryAck(connection, code == CmdTelemetry::DATA_OK)) return false;
+                ackSize = BuildRequestBuffer(ackCmd, form->GetExchangeRequestId(), ackBuffer, sizeof(ackBuffer));
+                if (!ackSize) return false;
                 const bool sent = SocketTransport::SendAll(socket, reinterpret_cast<const char*>(ackBuffer), static_cast<int>(ackSize));
                 if (!sent) {
                     const int error = WSAGetLastError();
@@ -180,8 +184,21 @@ namespace ProjectServerW {
 					continue;
 				}
 
-				// Пакет лога (Type 0x01): доставка на форму в потоке UI; строка для лога берётся из очереди rowsPendingLog (1:1 с телеметрией).
+				if (String::IsNullOrEmpty(item->formGuid)) continue;
+                msclr::interop::marshal_context sourceContext;
+                DataForm^ sourceForm = DataForm::GetFormByGuid(sourceContext.marshal_as<std::wstring>(item->formGuid));
+                const SOCKET sourceSocket = reinterpret_cast<SOCKET>(item->clientSocket.ToPointer());
+                if (sourceForm == nullptr || sourceForm->IsDisposed || item->connection == nullptr ||
+                    sourceForm->GetCommandConnection(sourceSocket) != item->connection) {
+                    GlobalLogger::LogMessage("Warning: Dropping queued telemetry/log from inactive connection");
+                    continue;
+                }
+
+                // Пакет лога (Type 0x01): доставка на форму в потоке UI; строка для лога берётся из очереди rowsPendingLog (1:1 с телеметрией).
 				if (item->itemType == 1) {
+                    if (!sourceForm->AcceptControllerPacket(item->packet, item->connection)) continue;
+                    item->packet = sourceForm->NormalizeControllerResponse(item->packet);
+                    item->size = item->packet->Length;
 					if (String::IsNullOrEmpty(item->formGuid)) {	// Если GUID пуст, логируем предупреждение и пропускаем.
 						GlobalLogger::LogMessage("Предупреждение: пакет лога (itemType=1): formGuid пуст, запись отброшена");
 					}
@@ -201,9 +218,9 @@ namespace ProjectServerW {
 						else {
 							// Вызов метода AppendControlLogToDataRow на форме в потоке UI.
 							form->BeginInvoke(
-								gcnew Action<cli::array<System::Byte>^, int>(form, &DataForm::AppendControlLogToDataRow),
+								gcnew Action<cli::array<System::Byte>^, int, System::UInt64, System::Object^>(form, &DataForm::AppendControlLogFromConnection),
 								item->packet,
-								item->size);
+								item->size, static_cast<System::UInt64>(item->clientSocket.ToInt64()), item->connection);
 						}
 					}
 					continue;
@@ -218,10 +235,7 @@ namespace ProjectServerW {
 
 				const bool crcOk = ValidateTelemetryCrc(raw, item->size);	// Проверка CRC пакета.
 
-				// Критично: контроллер при DATA_FALSE повторяет пакет. Если сервер продолжит слать DATA_FALSE на неизменившийся пакет,
-				// можно получить бесконечную "карусель" повторов.
-				// Политика сервера: если пакет телеметрии с неверным CRC пришёл повторно и байты кадра не изменились,
-				// отправляем DATA_OK и просто отбрасываем пакет (без доставки в UI).
+                // Одна попытка повтора CRC-ошибки в пределах текущего SEND_STATE.
 				const UINT_PTR socketKey = static_cast<UINT_PTR>(clientSock);	// Преобразование SOCKET в UINT_PTR.
 				TelemetryDuplicateGuardState& guard = s_telemetryDuplicateGuardBySocket[socketKey];	// Получение состояния дубликата пакета для сокета.
 				/*TelemetryDuplicateGuardState хранит одно поле: lastBadFrame — последний кадр телеметрии, у которого не сошёлся CRC (сырые байты пакета).
@@ -232,18 +246,22 @@ namespace ProjectServerW {
 					const std::string frameBytes(reinterpret_cast<const char*>(raw), static_cast<size_t>(item->size));
 					if (!guard.lastBadFrame.empty() && guard.lastBadFrame == frameBytes) {	
 						// Если последний кадр не пуст и равен текущему (с битым CRC), отправляем DATA_OK и очищаем состояние дубликата.
-						TrySendTelemetryAck(clientSock, CmdTelemetry::DATA_OK);
+						GlobalLogger::LogMessage("Warning: repeated corrupt telemetry; waiting for exchange timeout");
 						guard.lastBadFrame.clear();
 						continue;
 					}
 
+                    GlobalLogger::LogMessage("Warning: telemetry CRC mismatch; requesting retry within current exchange");
 					guard.lastBadFrame = frameBytes;	// Обновляем последний кадр с битым CRC.
-					TrySendTelemetryAck(clientSock, CmdTelemetry::DATA_FALSE);	// Отправляем DATA_FALSE, будем ждать повторный пакет
+					TrySendTelemetryAck(clientSock, CmdTelemetry::DATA_FALSE, sourceForm, item->connection);	// Отправляем DATA_FALSE, будем ждать повторный пакет
 					continue;
 				}
 
+				if (!sourceForm->AcceptControllerPacket(item->packet, item->connection)) continue;
+                    item->packet = sourceForm->NormalizeControllerResponse(item->packet);
+                    item->size = item->packet->Length;
 				guard.lastBadFrame.clear();	// Очищаем состояние дубликата.
-				TrySendTelemetryAck(clientSock, CmdTelemetry::DATA_OK);	// Отправляем DATA_OK.
+				TrySendTelemetryAck(clientSock, CmdTelemetry::DATA_OK, sourceForm, item->connection);	// Отправляем DATA_OK.
 
 				/* ОБРАБАТЫВАЕМ ПАКЕТ ТЕЛЕМЕТРИИ ------------------------------------------------------------
 				ДОСТАВЛЯЕМ В UI
@@ -259,17 +277,11 @@ namespace ProjectServerW {
 					continue;
 				}
 
-				// Обновляем соединение формы с сокетом и IP клиента для отправки команд.
-				form->ClientSocket = clientSock;	// Сохраняем сокет формы.
-				form->ClientIP = item->clientIP;	// Сохраняем IP клиента.
-
-				// Изменение DataTable/UI должно выполняться в потоке формы.
+				// Привязкой сокета управляет ClientHandler. Пакет из очереди может прийти со старого соединения.
+				if (item->connection == nullptr || form->GetCommandConnection(clientSock) != item->connection) continue;
 				form->BeginInvoke(
-					// Вызов метода AddDataToTableThreadSafe на форме в потоке UI.
-					gcnew Action<cli::array<System::Byte>^, int, int>(form, &DataForm::AddDataToTableThreadSafe),
-					item->packet,	// Пакет телеметрии.
-					item->size,	// Размер пакета.
-					item->port);	// Порт.
+					gcnew Action<cli::array<System::Byte>^, int, int, System::UInt64, System::Object^>(form, &DataForm::AddDataToTableThreadSafe),
+					item->packet, item->size, item->port, static_cast<System::UInt64>(clientSock), item->connection);
 			}
 		}
 	}
@@ -280,7 +292,7 @@ namespace ProjectServerW {
 		int port,
 		System::String^ formGuid,
 		SOCKET clientSocket,
-		System::String^ clientIP)
+		System::String^ clientIP, System::Object^ connection)
 	{
 		if (packet == nullptr || size <= 0) {	// Если пакет пуст или размер некорректный, пропускаем.
 			return;
@@ -290,6 +302,7 @@ namespace ProjectServerW {
 		EnsureWorker();	// Запускаем воркер, если он не запущен.
 
 		TelemetryWorkItem^ item = gcnew TelemetryWorkItem();	// Создаём новый элемент очереди.
+		item->connection = connection;
 		item->itemType = 0;	// Тип элемента - телеметрия.
 		item->packet = packet;	// Пакет телеметрии.
 		item->size = size;	// Размер пакета.
@@ -308,13 +321,14 @@ namespace ProjectServerW {
 		int port,
 		System::String^ formGuid,
 		SOCKET clientSocket,
-		System::String^ clientIP)
+		System::String^ clientIP, System::Object^ connection)
 	{
 		if (packet == nullptr || size <= 0) {	// Если пакет пуст или размер некорректный, пропускаем.
 			return;
 		}
 		EnsureWorker();	// Запускаем воркер, если он не запущен.
 		TelemetryWorkItem^ item = gcnew TelemetryWorkItem();	// Создаём новый элемент очереди.
+		item->connection = connection;
 		item->itemType = 1;
 		item->packet = packet;	// Пакет лога.
 		item->size = size;	// Размер пакета.
@@ -343,12 +357,21 @@ namespace ProjectServerW {
 	// ============================
 
 	// Добавляем ответ команды в очередь.
-	void DataForm::EnqueueResponse(cli::array<System::Byte>^ response)
+	void DataForm::EnqueueResponse(cli::array<System::Byte>^ response, SOCKET sourceSocket, System::Object^ connection)
 	{
-		if (response == nullptr) {	// Если ответ пуст, пропускаем.
+		if (response == nullptr || GetCommandConnection(sourceSocket) != connection) {
+			GlobalLogger::LogMessage("Warning: Dropping response from inactive connection");
 			return;
 		}
 
+		if (!AcceptControllerPacket(response, connection)) return;
+        response = NormalizeControllerResponse(response);
+        if (response[0] == CmdType::REQUEST && response[1] == CmdRequest::GET_PROCESS_LOG) {
+            if (!IsDisposed && !Disposing && IsHandleCreated)
+                BeginInvoke(gcnew MethodInvoker(this, &DataForm::DrainProcessLogResponse));
+            return;
+        }
+        if (response[0] == CmdType::REQUEST && response[1] == CmdRequest::SEND_STATE) return;
 		// Критично: метод должен быть строго O(1), потому что вызывается из recv()-цикла.
         // Ответ GET_SENSOR_DIAG не относится к синхронной очереди обычных команд.
         // Передаём массив в UI через BeginInvoke без ожидания: сетевой поток продолжит
@@ -359,43 +382,33 @@ namespace ProjectServerW {
         if (response->Length >= 6 && response[0] == CmdType::REQUEST &&
             (IsEventCommand(response[1]))) {
             if (!IsDisposed && !Disposing && IsHandleCreated)
-                BeginInvoke(gcnew Action<cli::array<System::Byte>^>(this, &DataForm::HandleButtonEventsResponse), response);
+                BeginInvoke(gcnew Action<cli::array<System::Byte>^, System::UInt64, System::Object^>(this, &DataForm::HandleBackgroundResponse), response, static_cast<System::UInt64>(sourceSocket), connection);
             return;
         }
         if (response->Length >= 6 && response[0] == CmdType::REQUEST &&
             response[1] == CmdRequest::GET_SENSOR_DIAG) {
             if (!IsDisposed && !Disposing && IsHandleCreated)
-                BeginInvoke(gcnew Action<cli::array<System::Byte>^>(this, &DataForm::HandleSensorDiagResponse), response);
+                BeginInvoke(gcnew Action<cli::array<System::Byte>^, System::UInt64, System::Object^>(this, &DataForm::HandleBackgroundResponse), response, static_cast<System::UInt64>(sourceSocket), connection);
             // Не выдаём семафор responseAvailable: иначе ожидающая обычная команда
             // получит диагностический ответ вместо собственного и отбросит его.
             return;
         }
-		responseQueue->Enqueue(response);	// Добавляем ответ в очередь.
+		responseQueue->Enqueue(gcnew System::Tuple<System::Object^, cli::array<System::Byte>^>(connection, response));
 		responseAvailable->Release();	// Увеличиваем счётчик семафора, чтобы один из ожидающих WaitOne() прошёл.
 	}
 
-	// Получаем ответ команды из очереди.
-	bool DataForm::ReceiveResponse(CommandResponse& response, int timeoutMs)
+	bool DataForm::ReceiveResponse(CommandResponse& response, SOCKET socket, System::Object^ connection, int timeoutMs, cli::array<System::Byte>^% rawResponse)
 	{
-		cli::array<System::Byte>^ ignored = nullptr;	// Игнорируемый пакет.
-		return ReceiveResponse(response, timeoutMs, ignored);
-	}
-
-	// Получаем ответ команды из очереди.
-	bool DataForm::ReceiveResponse(CommandResponse& response, int timeoutMs, cli::array<System::Byte>^% rawResponse)
-	{
-		if (clientSocket == INVALID_SOCKET) {	// Если сокет недействительный, пропускаем.
+		if (GetCommandConnection(socket) != connection || !responseAvailable->WaitOne(timeoutMs)) {
 			return false;
 		}
 
-		if (!responseAvailable->WaitOne(timeoutMs)) {	// Если нет ответа по тайм-ауту, пропускаем.
+		System::Tuple<System::Object^, cli::array<System::Byte>^>^ queued;
+		if (!responseQueue->TryDequeue(queued) || queued->Item1 != connection ||
+			GetCommandConnection(socket) != connection) {
 			return false;
 		}
-
-		cli::array<System::Byte>^ responseBuffer = nullptr;
-		if (!responseQueue->TryDequeue(responseBuffer) || responseBuffer == nullptr) {	// Если нет ответа из очереди, пропускаем.
-			return false;
-		}
+		cli::array<System::Byte>^ responseBuffer = queued->Item2;
 
 		if (responseBuffer->Length <= 0 || responseBuffer->Length > static_cast<int>(MAX_COMMAND_SIZE)) {	// Если размер пакета некорректный, пропускаем.
 			// Why: this buffer is already removed from the queue; log it to explain why it was dropped.
@@ -421,11 +434,6 @@ namespace ProjectServerW {
 		return ok;	// Возвращаем результат разбора.
 	}
 
-	// Получаем ответ команды из очереди.
-	bool DataForm::ReceiveResponse(CommandResponse& response)
-	{
-		return ReceiveResponse(response, 1000);	// Получаем ответ команды из очереди с тайм-аутом 1000 мс.
-	}
 
 }
 

@@ -21,6 +21,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Socket send test compilation failed.' }
     & $sendTests
     if ($LASTEXITCODE -ne 0) { throw 'Socket send tests failed.' }
+    $codecTests = Join-Path $testOutput 'RequestIdCodecTests.exe'
+    Push-Location $testOutput
+    try {
+        & cl.exe /nologo /EHsc /utf-8 (Join-Path $PSScriptRoot 'RequestIdCodecTests.cpp') (Join-Path $repo 'Commands.cpp') "/Fe$codecTests"
+        if ($LASTEXITCODE -ne 0) { throw 'Request ID codec compilation failed.' }
+        & $codecTests
+        if ($LASTEXITCODE -ne 0) { throw 'Request ID codec tests failed.' }
+    } finally { Pop-Location }
     $objectDirectory = Join-Path $repo 'x64\Debug\ProjectServerW'
     $testObjects = @(Get-ChildItem -LiteralPath $objectDirectory -Filter '*.obj' | ForEach-Object FullName)
     $subject = Join-Path $testOutput 'LogSessionTestSubject.dll'

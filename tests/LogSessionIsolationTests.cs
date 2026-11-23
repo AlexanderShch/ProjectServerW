@@ -50,6 +50,7 @@ static class LogSessionIsolationTests
         ((RadioButton)Get(form, "radioButtonSiemens")).Checked = false;
         Set(form, "settingsLoading", false);
         Set(form, "dataCollectionStartTime", epoch);
+        Set(form, "commandConnection", new object());
         return form;
     }
     static DataTable Table(object form) { return (DataTable)Get(form, "dataTable"); }
@@ -91,18 +92,41 @@ static class LogSessionIsolationTests
     {
         body(); ++passed; Console.WriteLine("PASS " + name);
     }
-    static void Telemetry(object form, int time, bool working, bool shutdown, bool butStart)
+    static ulong SocketHandle(TcpClient client)
+    {
+        return unchecked((ulong)client.Client.Handle.ToInt64());
+    }
+
+    static void EnqueueResponse(object form, byte[] response)
+    {
+        var socket = (ulong)Get(form, "clientSocket");
+        Call(form, "EnqueueResponse", (response[0] & 0x80) != 0 ? response : Tagged(form, response), socket, Get(form, "commandConnection"));
+    }
+
+    static void DeferredResponse(object form, byte[] response) {
+        var copy = (byte[])response.Clone();
+        var peer = new Thread(delegate() {
+            var deadline = DateTime.Now.AddSeconds(3);
+            while (DateTime.Now < deadline) {
+                if ((int)Get(form, "exchangeCode") == copy[1] && (int)Get(form, "exchangeType") == copy[0]) {
+                    EnqueueResponse(form, copy); return;
+                }
+                Thread.Sleep(1);
+            }
+        }); peer.IsBackground = true; peer.Start();
+    }
+    static void Telemetry(object form, int time, bool working, bool shutdown, bool butStart, ushort limits = 0, bool ioActive = true)
     {
         var packet = new byte[66]; packet[3] = 60;
         Action<int, ushort> word = delegate(int offset, ushort value) {
             packet[4 + offset] = (byte)value; packet[5 + offset] = (byte)(value >> 8);
         };
         word(0, (ushort)time); packet[6] = 7;
-        packet[4 + 9] = 4; packet[4 + 16] = 1;
-        word(29, (ushort)(butStart ? 0x4000 : 0));
+        packet[4 + 9] = 4; packet[4 + 16] = (byte)(ioActive ? 1 : 0);
+        word(29, (ushort)(limits | (butStart ? 0x4000 : 0)));
         word(43, (ushort)(working ? 0x4000 : 0)); packet[4 + 45] = (byte)(shutdown ? 1 : 0);
         Set(form, "firstDataReceived", true);
-        Call(form, "AddDataToTableThreadSafe", packet, packet.Length, 8866);
+        Call(form, "AddDataToTableThreadSafe", packet, packet.Length, 8866, Get(form, "clientSocket"), Get(form, "commandConnection"));
     }
     static void ControlLog(object form, float marker)
     {
@@ -129,6 +153,12 @@ static class LogSessionIsolationTests
         packet[packet.Length - 2] = (byte)crc; packet[packet.Length - 1] = (byte)(crc >> 8);
         return packet;
     }
+    static byte[] Tagged(object form, byte[] plain, ulong? id = null) {
+        var payload = new byte[plain[3] + 8];
+        Array.Copy(BitConverter.GetBytes(id ?? (ulong)Get(form, "exchangeRequestId")), payload, 8);
+        Array.Copy(plain, 4, payload, 8, plain[3]);
+        return Response((byte)(plain[0] | 0x80), plain[1], payload);
+    }
     static byte[] Group7(float[] values)
     {
         var payload = new byte[82]; payload[0] = 7;
@@ -141,7 +171,11 @@ static class LogSessionIsolationTests
         for (int i = 0; i < 3; ++i) { int b = stream.ReadByte(); if (b < 0) throw new Exception("Truncated command"); header[i] = (byte)b; }
         var packet = new byte[header[2] + 5]; Array.Copy(header, packet, 3);
         for (int i = 3; i < packet.Length; ++i) { int b = stream.ReadByte(); if (b < 0) throw new Exception("Truncated payload"); packet[i] = (byte)b; }
-        return packet;
+        if ((packet[0] & 0x80) == 0 || packet[2] < 8) throw new Exception("Request ID missing");
+        var plain = new byte[packet.Length - 8];
+        plain[0] = (byte)(packet[0] & 0x7f); plain[1] = packet[1]; plain[2] = (byte)(packet[2] - 8);
+        Array.Copy(packet, 11, plain, 3, packet.Length - 11);
+        return plain;
     }
 
     [STAThread]
@@ -251,7 +285,7 @@ static class LogSessionIsolationTests
             Test("STM32 real telemetry/control-log transition with delayed WorkData callback", delegate {
                 var f = NewForm(); Telemetry(f, 100, true, false, false); ControlLog(f, 1.0f);
                 for (int i = 101; i <= 105; ++i) Telemetry(f, i, false, true, false);
-                for (int i = 106; i <= 115; ++i) Telemetry(f, i, false, false, false);
+                for (int i = 106; i <= 115; ++i) Telemetry(f, i, false, false, false, 0x2000);
                 Equal(1, Jobs().Count); var work = Jobs()[0];
                 Equal("100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115", Times((DataTable)Get(work, "tableSnapshot")));
                 Telemetry(f, 116, false, false, false); Telemetry(f, 117, false, false, false);
@@ -260,6 +294,47 @@ static class LogSessionIsolationTests
                 Equal("EndData", Get(Jobs()[1], "filePrefix")); Equal("118", Times(Table(f)));
                 Equal(1.0f, ((DataTable)Get(work, "tableSnapshot")).Rows[0]["T_filt_0"]);
                 Equal(2.0f, Table(f).Rows[0]["T_filt_0"]);
+            });
+            Test("Queued packets from a replaced connection cannot modify current rows", delegate {
+                var f = NewForm();
+                Telemetry(f, 100, true, false, false);
+                var pending = Get(f, "pendingRow");
+                var oldConnection = Get(f, "commandConnection");
+                Set(f, "commandConnection", new object()); // Same socket value, new connection.
+                Call(f, "AddDataToTableThreadSafe", new byte[0], 0, 8866, Get(f, "clientSocket"), oldConnection);
+                var log = new byte[95]; log[0] = 1; log[3] = 89;
+                Array.Copy(BitConverter.GetBytes(99.0f), 0, log, 4, 4);
+                Call(f, "AppendControlLogFromConnection", log, log.Length, Get(f, "clientSocket"), oldConnection);
+                Equal(pending, Get(f, "pendingRow"));
+                Equal((ushort)100, Get(f, "lastTelemetryDeviceSeconds"));
+                Equal(0, Table(f).Rows.Count);
+            });
+            Test("STM32 reconnect without observed shutdown waits for valid gate confirmation", delegate {
+                var f = NewForm();
+                Telemetry(f, 100, true, false, false);
+                var session = Get(f, "logSessionId");
+                Call(f, "ResetProgramStateAfterLinkLoss");
+                Telemetry(f, 150, false, false, false, 0x2000, false);
+                Telemetry(f, 151, false, false, false, 0x3000);
+                Telemetry(f, 152, false, false, false, 0x1000);
+                Equal(true, Get(f, "controllerAutoModeActive"));
+                Equal(false, Get(f, "stopExportPending"));
+                Telemetry(f, 153, false, false, false, 0x2000);
+                Equal(false, Get(f, "controllerAutoModeActive"));
+                Equal(true, Get(f, "stopExportPending"));
+                Equal(session, Get(f, "logSessionId"));
+                Equal(true, ((Label)Get(f, "labelDefrosterState")).Text.Contains("Цикл дефростации завершён"));
+            });
+            Test("STM32 gate timeout keeps cycle active even after reconnect", delegate {
+                var f = NewForm();
+                Telemetry(f, 1, true, false, false);
+                Call(f, "ResetProgramStateAfterLinkLoss");
+                for (int i = 2; i < 25; ++i) Telemetry(f, i, false, true, false);
+                Telemetry(f, 25, false, true, false, 0x2000);
+                Equal(true, Get(f, "controllerAutoModeActive"));
+                Equal(false, Get(f, "stopExportPending"));
+                Telemetry(f, 26, false, false, false, 0x2000);
+                Equal(true, Get(f, "stopExportPending"));
             });
             Test("Siemens But_Start transition keeps first new sample out of EndData", delegate {
                 var f = NewForm(); Set(f, "settingsLoading", true);
@@ -297,9 +372,9 @@ static class LogSessionIsolationTests
                     client.Connect((IPEndPoint)listener.LocalEndpoint);
                     using (var controller = listener.AcceptTcpClient()) {
                         listener.Stop(); controller.ReceiveTimeout = 2000;
-                        Set(f, "clientSocket", unchecked((ulong)client.Client.Handle.ToInt64()));
+                        Call(f, "AttachClientSocket", SocketHandle(client), new object());
                         float[] values = { 0, .18f, .003f, 60, 30, 10, .6f, .3f, 15, .2f, .02f, .0002f, 0, 10, 15, 90, 1, .14285714f, 1, 1 };
-                        Call(f, "EnqueueResponse", Group7(values));
+                        DeferredResponse(f, Group7(values));
                         Call(f, "ReadPlateauSettings", null, EventArgs.Empty);
                         var request = ReadCommand(controller.GetStream()); Equal((byte)3, request[0]); Equal((byte)7, request[1]);
                         var grid = (DataGridView)Get(f, "plateauSettingsGrid");
@@ -310,8 +385,8 @@ static class LogSessionIsolationTests
                                 throw new Exception("Algorithm selector is visible");
                         }
                         grid.Rows[0].Cells[2].Value = "0.25"; values[0] = 1; values[1] = .25f;
-                        Call(f, "EnqueueResponse", Response(2, 5, new byte[0]));
-                        Call(f, "EnqueueResponse", Group7(values));
+                        DeferredResponse(f, Response(2, 5, new byte[0]));
+                        DeferredResponse(f, Group7(values));
                         Call(f, "ApplyPlateauSettings", null, EventArgs.Empty);
                         var write = ReadCommand(controller.GetStream());
                         Equal((byte)2, write[0]); Equal((byte)5, write[1]); Equal((byte)81, write[2]); Equal((byte)7, write[3]);
@@ -319,7 +394,7 @@ static class LogSessionIsolationTests
                         var verify = ReadCommand(controller.GetStream()); Equal((byte)3, verify[0]); Equal((byte)7, verify[1]);
                         // Экспорт сохраняет значения контроллера, даже если в таблице есть черновик.
                         grid.Rows[0].Cells[2].Value = "1.5";
-                        Call(f, "EnqueueResponse", Group7(values));
+                        DeferredResponse(f, Group7(values));
                         var pidSnapshot = (DataTable)Call(f, "BuildPlateauParamsSnapshot");
                         var snapshotRequest = ReadCommand(controller.GetStream());
                         Equal((byte)3, snapshotRequest[0]); Equal((byte)7, snapshotRequest[1]);
@@ -332,7 +407,120 @@ static class LogSessionIsolationTests
                     }
                 }
             });
-            Test("Startup proceeds after group 7 timeout on the same connection", delegate {
+            Test("Request IDs reject same-command stale replies; process log is a separate correlated request", delegate {
+                using (var f = NewForm()) {
+                    var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
+                    using (var client = new TcpClient()) {
+                        client.Connect((IPEndPoint)listener.LocalEndpoint);
+                        using (var controller = listener.AcceptTcpClient()) {
+                            listener.Stop(); controller.ReceiveTimeout = 2000;
+                            var connection = new object();
+                            Call(f, "AttachClientSocket", SocketHandle(client), connection);
+                            Set(f, "startupSequenceCompleted", true); Set(f, "firstDataReceived", true);
+                            Call(f, "OnSendStateTimerTick", null, EventArgs.Empty);
+                            Equal((byte)8, ReadCommand(controller.GetStream())[1]);
+                            var firstId = (ulong)Get(f, "exchangeRequestId");
+                            var payload = new byte[61]; payload[0] = 100; payload[2] = 7;
+                            payload[9] = 4; payload[16] = 1; payload[44] = 0x40; payload[60] = 2;
+                            var plain = Response(3, 8, payload); var wire = Tagged(f, plain);
+                            Equal(false, Call(f, "AcceptControllerPacket", plain, connection)); // No legacy downgrade.
+                            Equal(true, Call(f, "AcceptControllerPacket", wire, connection));
+                            Equal(true, Call(f, "PrepareTelemetryAck", connection, true));
+                            Equal(true, Call(f, "WaitControllerExchange", 0)); // No unsolicited second response.
+                            Call(f, "AddDataToTableThreadSafe", plain, plain.Length, 8866, Get(f,"clientSocket"), connection);
+                            var request = ReadCommand(controller.GetStream()); Equal((byte)15, request[1]);
+                            Equal(firstId, BitConverter.ToUInt64(request, 3));
+                            var processId = (ulong)Get(f, "exchangeRequestId");
+                            if (firstId == processId) throw new Exception("Reused request ID");
+                            Equal(false, Call(f, "AcceptControllerPacket", wire, connection));
+                            var values = new byte[113]; Array.Copy(BitConverter.GetBytes(42.0f), values, 4);
+                            EnqueueResponse(f, Response(3, 15, values));
+                            Call(f, "DrainProcessLogResponse");
+                            Equal(1, Table(f).Rows.Count); Equal(42.0f, Table(f).Rows[0]["T_filt_0"]);
+                            Equal(false, Call(f,"AcceptControllerPacket",Tagged(f,Response(0,1,values)),connection));
+                            Call(f, "OnSendStateTimerTick", null, EventArgs.Empty); ReadCommand(controller.GetStream());
+                            Equal(false, Call(f, "AcceptControllerPacket", wire, connection)); // Same code, previous ID.
+                            Equal(false, Call(f, "WaitControllerExchange", 0));
+                            Equal(true, Call(f, "WaitControllerExchange", 1200));
+                            Equal(false, Call(f, "AcceptControllerPacket", Tagged(f,plain), connection)); // Expired current ID.
+                            Call(f, "OnSendStateTimerTick", null, EventArgs.Empty); ReadCommand(controller.GetStream());
+                            payload[0] = 101; plain = Response(3,8,payload);
+                            Equal(true, Call(f,"AcceptControllerPacket",Tagged(f,plain),connection));
+                            Equal(true, Call(f,"PrepareTelemetryAck",connection,true));
+                            Call(f,"AddDataToTableThreadSafe",plain,plain.Length,8866,Get(f,"clientSocket"),connection);
+                            Equal((byte)15,ReadCommand(controller.GetStream())[1]);
+                            Equal(false,Call(f,"AcceptControllerPacket",Tagged(f,Response(3,15,values),processId),connection));
+                            Equal(1,Table(f).Rows.Count);
+                            Array.Copy(BitConverter.GetBytes(43.0f),values,4);
+                            EnqueueResponse(f,Response(3,15,values)); Call(f,"DrainProcessLogResponse");
+                            Equal(2,Table(f).Rows.Count); Equal(43.0f,Table(f).Rows[1]["T_filt_0"]);
+                            Call(f,"OnSendStateTimerTick",null,EventArgs.Empty); ReadCommand(controller.GetStream());
+                            payload[0]=102;payload[44]=0;payload[60]=0;plain=Response(3,8,payload);
+                            Equal(true,Call(f,"AcceptControllerPacket",Tagged(f,plain),connection));
+                            Equal(true,Call(f,"PrepareTelemetryAck",connection,true));
+                            Call(f,"AddDataToTableThreadSafe",plain,plain.Length,8866,Get(f,"clientSocket"),connection);
+                            Equal(false,controller.GetStream().DataAvailable); // No process request in idle mode.
+
+                        }
+                    }
+                }
+            });
+            Test("Event reply releases parameter request without UI pumping or mixing replies", delegate {
+                using (var f = NewForm()) {
+                    var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
+                    using (var client = new TcpClient()) {
+                        client.Connect((IPEndPoint)listener.LocalEndpoint);
+                        using (var controller = listener.AcceptTcpClient()) {
+                            listener.Stop(); controller.ReceiveTimeout = 3000;
+                            Call(f, "AttachClientSocket", SocketHandle(client), new object());
+                            Set(f, "startupSequenceCompleted", true);
+                            Set(f, "hasTelemetry", true); Set(f, "unifiedEvents", true); Set(f, "eventsAvailable", true);
+                            Call(f, "PollButtonEvents", null, EventArgs.Empty);
+                            var stream = controller.GetStream(); var request = ReadCommand(stream);
+                            Equal((byte)13, request[1]);
+                            Exception peerError = null;
+                            var peer = new Thread(delegate() {
+                                try {
+                                    Thread.Sleep(120);
+                                    Equal(false, stream.DataAvailable); // No parameter request before event reply.
+                                    EnqueueResponse(f, Response(3, 13, new byte[25]));
+                                    request = ReadCommand(stream); Equal((byte)7, request[1]); Equal((byte)7, request[3]);
+                                    float[] values = { 1, .18f, .003f, 60, 30, 10, .6f, .3f, 15, .2f, .02f, .0002f, 0, 10, 15, 90, 1, .14285714f, 1, 1 };
+                                    DeferredResponse(f, Group7(values));
+                                } catch (Exception ex) { peerError = ex; }
+                            }); peer.Start();
+                            Call(f, "ReadPlateauSettings", null, EventArgs.Empty);
+                            if (!peer.Join(4000)) throw new Exception("Event/parameter deadlock");
+                            if (peerError != null) throw peerError;
+                            Equal(19, ((DataGridView)Get(f, "plateauSettingsGrid")).Rows.Count);
+                            Application.DoEvents();
+                            Equal(false, Get(f, "eventsAvailable")); Equal(0, Table(f).Rows.Count);
+                            Set(f, "eventsAvailable", true);
+                            Call(f, "PollButtonEvents", null, EventArgs.Empty);
+                            request = ReadCommand(stream); Equal((byte)13, request[1]);
+                            var corrupt = Tagged(f, Response(3, 13, new byte[25])); corrupt[5] ^= 1;
+                            EnqueueResponse(f, corrupt);
+                            Equal(false, Call(f, "WaitControllerExchange", 0));
+                            var timeout = System.Diagnostics.Stopwatch.StartNew();
+                            Equal(true, Call(f, "WaitControllerExchange", 1100));
+                            if (timeout.ElapsedMilliseconds > 1300) throw new Exception("Unbounded diagnostic wait");
+
+                        }
+                    }
+                }
+            });
+            Test("Event ACK yields to telemetry and stale connection callbacks are ignored", delegate {
+                var f = NewForm(); Set(f, "unifiedEvents", true); Set(f, "eventsAvailable", true);
+                Set(f, "moreEventsAfterAck", true); Set(f, "buttonEventsPending", true);
+                var ack = Response(3, 14, new byte[0]);
+                Call(f, "HandleBackgroundResponse", ack, Get(f, "clientSocket"), new object());
+                Equal(true, Get(f, "buttonEventsPending"));
+                Call(f, "HandleBackgroundResponse", ack, Get(f, "clientSocket"), Get(f, "commandConnection"));
+                Equal(false, Get(f, "buttonEventsPending")); Equal(false, Get(f, "eventsAvailable"));
+                Set(f, "startupSequenceCompleted", true); Set(f, "lastSensorDiagTime", DateTime.Now.AddMinutes(-5));
+                Call(f, "ScheduleSensorDiagPoll"); Equal(false, Get(f, "sensorDiagInProgress"));
+            });
+            Test("Startup tolerates a delayed version and a stray group 5 response, even when group 7 times out", delegate {
                 using (var form = NewForm()) {
                     var listener = new TcpListener(IPAddress.Loopback, 0);
                     listener.Start();
@@ -341,7 +529,7 @@ static class LogSessionIsolationTests
                         using (var controller = listener.AcceptTcpClient()) {
                             listener.Stop();
                             controller.ReceiveTimeout = 2500;
-                            Set(form, "clientSocket", unchecked((ulong)client.Client.Handle.ToInt64()));
+                            Call(form, "AttachClientSocket", SocketHandle(client), new object());
                             Set(form, "modeSwitchHasSavedSetting", true);
                             Exception peerError = null;
                             var peer = new Thread(delegate() {
@@ -349,13 +537,18 @@ static class LogSessionIsolationTests
                                     var stream = controller.GetStream();
                                     var command = ReadCommand(stream);
                                     Equal((byte)3, command[0]); Equal((byte)2, command[1]);
-                                    Call(form, "EnqueueResponse", Response(3, 2, System.Text.Encoding.ASCII.GetBytes("3.3.1")));
+                                    Thread.Sleep(150); // Longer than the old GET_VERSION timeout.
+                                    EnqueueResponse(form, Response(3, 2, System.Text.Encoding.ASCII.GetBytes("3.3.1")));
                                     foreach (byte group in new byte[] { 5, 6 }) {
                                         command = ReadCommand(stream);
                                         Equal((byte)3, command[0]); Equal((byte)7, command[1]); Equal(group, command[3]);
                                         var payload = new byte[group == 5 ? 74 : 62]; payload[0] = group;
-                                        if (group == 6) payload[48] = 1;
-                                        Call(form, "EnqueueResponse", Response(3, 7, payload));
+                                        if (group == 6) {
+                                            var lateGroup5 = new byte[74]; lateGroup5[0] = 5;
+                                            EnqueueResponse(form, Response(3, 7, lateGroup5));
+                                            payload[48] = 1;
+                                        }
+                                        EnqueueResponse(form, Response(3, 7, payload));
                                     }
                                     command = ReadCommand(stream);
                                     Equal((byte)3, command[0]); Equal((byte)7, command[1]); Equal((byte)7, command[3]);
@@ -364,7 +557,7 @@ static class LogSessionIsolationTests
                                     if (wait.ElapsedMilliseconds > 1000)
                                         throw new Exception("Group 7 delayed SET_INTERVAL by " + wait.ElapsedMilliseconds + " ms");
                                     Equal((byte)2, command[0]); Equal((byte)2, command[1]);
-                                    Call(form, "EnqueueResponse", Response(2, 2, new byte[0]));
+                                    EnqueueResponse(form, Response(2, 2, new byte[0]));
                                 } catch (Exception ex) { peerError = ex; }
                             });
                             peer.IsBackground = true;

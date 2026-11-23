@@ -23,13 +23,22 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd) {
 
 // Универсальный метод для отправки команды клиенту с явным именем
 bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandName) {
+    const SOCKET socket = clientSocket;
+    return SendCommand(cmd, commandName, socket, GetCommandConnection(socket));
+}
+
+bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandName, SOCKET socket, Object^ connection) {
     try {
+        const bool background = cmd.commandType == CmdType::REQUEST &&
+            (IsEventCommand(cmd.commandCode) || cmd.commandCode == CmdRequest::GET_SENSOR_DIAG || cmd.commandCode == CmdRequest::GET_PROCESS_LOG);
+        if (!WaitControllerExchange(background ? 0 : 2000)) return false;
+        if (!InvokeRequired) DrainProcessLogResponse();
         const bool suppressUiErrors =
             isFormClosingNow || this->Disposing || this->IsDisposed ||
             (cmd.commandType==CmdType::REQUEST &&
              IsEventCommand(cmd.commandCode));
         // Проверяем, что сокет клиента валиден
-        if (clientSocket == INVALID_SOCKET) {
+        if (connection == nullptr || GetCommandConnection(socket) != connection) {
             if (!suppressUiErrors) {
                 MessageBox::Show("Нет активного соединения с клиентом!");
             }
@@ -54,14 +63,18 @@ bool ProjectServerW::DataForm::SendCommand(const Command& cmd, String^ commandNa
         int bytesSent = SOCKET_ERROR;
         // Полудуплекс: не отправлять команду, пока recv()-поток обрабатывает принятые данные. 
         // Шина с одним мастером (сервером) — после приёма сразу можно отправлять.
-        System::Object^ recvGate = PacketQueueProcessor::GetReceivingGate(clientSocket);
+        System::Object^ recvGate = PacketQueueProcessor::GetReceivingGate(socket);
         System::Threading::Monitor::Enter(recvGate);
         try {
             // Сериализуем send() на сокет, чтобы байтовые потоки не перемешивались с ACK телеметрии.
-            System::Object^ sendGate = PacketQueueProcessor::GetSendGate(clientSocket);
+            System::Object^ sendGate = PacketQueueProcessor::GetSendGate(socket);
             System::Threading::Monitor::Enter(sendGate);
             try {
-                bytesSent = SocketTransport::SendAll(clientSocket, reinterpret_cast<const char*>(buffer),
+                if (GetCommandConnection(socket) != connection) return false;
+                BeginControllerExchange(cmd, connection, 1000);
+                commandLength = BuildRequestBuffer(cmd, exchangeRequestId, buffer, sizeof(buffer));
+                if (!commandLength) return false;
+                bytesSent = SocketTransport::SendAll(socket, reinterpret_cast<const char*>(buffer),
                     static_cast<int>(commandLength)) ? static_cast<int>(commandLength) : SOCKET_ERROR;
             }
             finally {
@@ -137,10 +150,7 @@ void ProjectServerW::DataForm::SendStartCommand() {
                 PrepareNewLogSession(DateTime::Now);
         }
         controllerAutoModeActive = true;
-        lastStartSuccessTime = DateTime::Now;
         lastControlLogTime = DateTime::Now;
-        wrkZeroConsecutiveCounts = 0;
-        wrkLastSampleValid = false;
         Label_Commands->Text = "[OK] Программа запущена";
         Label_Commands->ForeColor = System::Drawing::Color::Green;
         if (labelDefrosterState != nullptr && !labelDefrosterState->IsDisposed) {
@@ -192,16 +202,16 @@ void ProjectServerW::DataForm::SendStopCommand() {
 
     // Отправляем команду и ждем ответ
     if (SendCommandAndWaitResponse(cmd, response)) {
-        ApplyStopLikeSessionStateReset();
-        Label_Commands->Text = "[OK] Программа остановлена";   // обновляем текст кнопки
+        if (radioButtonSiemens != nullptr && radioButtonSiemens->Checked) ApplyStopLikeSessionStateReset();
+        Label_Commands->Text = "[OK] Команда STOP принята";   // обновляем текст кнопки
         Label_Commands->ForeColor = System::Drawing::Color::Green;   // обновляем цвет кнопки
-        if (labelDefrosterState != nullptr && !labelDefrosterState->IsDisposed) {   // если лейбл состояния дефростера существует и не уничтожен
+        if (controllerAutoModeActive && labelDefrosterState != nullptr && !labelDefrosterState->IsDisposed) {   // если лейбл состояния дефростера существует и не уничтожен
             labelDefrosterState->Text = String::Format(   // обновляем текст лейбла состояния дефростера
-                "Команда STOP успешно выполнена контроллером. Время: {0:dd.MM.yyyy HH:mm:ss}",
+                "Команда STOP принята контроллером. Время: {0:dd.MM.yyyy HH:mm:ss}",
                 DateTime::Now);
             labelDefrosterState->ForeColor = System::Drawing::Color::Blue;   // обновляем цвет лейбла состояния дефростера
         }
-        GlobalLogger::LogMessage("Information: Команда STOP успешно выполнена контроллером");   // логируем успешное выполнение команды
+        GlobalLogger::LogMessage("Information: Команда STOP принята контроллером");   // логируем успешное выполнение команды
 
         // Excel после СТОП не запускаем: экспорт выполняется по окончании фиксации сессии на телеметрии
         // (условие 10× _Wrk=0 и _Shd=0 в AddDataToTable), либо вручную кнопкой / при закрытии формы.
@@ -415,8 +425,11 @@ bool ProjectServerW::DataForm::RequestPlateauGroup(const Command& cmd, CommandRe
     const SOCKET socket = clientSocket;
     if (socket == INVALID_SOCKET || !Monitor::TryEnter(commandPipelineGate)) return false;
     try {
+        if (!WaitControllerExchange(static_cast<int>(budgetMs))) return false;
+        Object^ connection = GetCommandConnection(socket);
+        if (connection == nullptr) return false;
         uint8_t buffer[MAX_COMMAND_SIZE];
-        const int length = static_cast<int>(BuildCommandBuffer(cmd, buffer, sizeof(buffer)));
+        int length = static_cast<int>(BuildCommandBuffer(cmd, buffer, sizeof(buffer)));
         if (length == 0) return false;
         Object^ receiveGate = PacketQueueProcessor::GetReceivingGate(socket);
         Object^ sendGate = PacketQueueProcessor::GetSendGate(socket);
@@ -424,12 +437,15 @@ bool ProjectServerW::DataForm::RequestPlateauGroup(const Command& cmd, CommandRe
         try {
             if (!Monitor::TryEnter(sendGate)) return false;
             try {
-                if (clientSocket != socket) return false;
+                if (GetCommandConnection(socket) != connection) return false;
                 DWORD originalTimeout = 0;
                 int optionSize = sizeof(originalTimeout);
                 if (getsockopt(socket, SOL_SOCKET, SO_SNDTIMEO,
                     reinterpret_cast<char*>(&originalTimeout), &optionSize) == SOCKET_ERROR) return false;
 
+                BeginControllerExchange(cmd, connection, static_cast<int>(deadline - GetTickCount64()));
+                length = static_cast<int>(BuildRequestBuffer(cmd, exchangeRequestId, buffer, sizeof(buffer)));
+                if (!length) return false;
                 int sentTotal = 0;
                 while (sentTotal < length) {
                     const ULONGLONG now = GetTickCount64();
@@ -449,16 +465,17 @@ bool ProjectServerW::DataForm::RequestPlateauGroup(const Command& cmd, CommandRe
             } finally { Monitor::Exit(sendGate); }
         } finally { Monitor::Exit(receiveGate); }
 
-        while (clientSocket == socket) {
+        while (GetCommandConnection(socket) == connection) {
             const ULONGLONG now = GetTickCount64();
             if (now >= deadline) break;
             CommandResponse candidate{};
-            if (!ReceiveResponse(candidate, static_cast<int>(deadline - now))) continue;
+            cli::array<System::Byte>^ rawCandidate = nullptr;
+            if (!ReceiveResponse(candidate, socket, connection, static_cast<int>(deadline - now), rawCandidate)) continue;
             if (GetTickCount64() >= deadline) break;
             if (candidate.commandType != cmd.commandType || candidate.commandCode != cmd.commandCode) continue;
             if (candidate.status != CmdStatus::OK) return false;
             // Поздний ответ группы 5/6 имеет тот же код команды, но другую группу.
-            if (candidate.dataLength < 2 || candidate.data[0] != 7u || candidate.data[1] != cmd.data[1]) continue;
+            if (!MatchesDefrostGroupResponse(cmd, candidate)) continue;
             response = candidate;
             return true;
         }
@@ -500,7 +517,7 @@ bool ProjectServerW::DataForm::GetAlarmFlags(AlarmFlagsPayload* outFlags) {
 }
 
 void ProjectServerW::DataForm::ScheduleSensorDiagPoll() {
-    if (sensorDiagUnsupported || sensorDiagInProgress || !startupSequenceCompleted) return;
+    if (unifiedEvents || buttonEventsPending || !WaitControllerExchange(0) || sensorDiagUnsupported || sensorDiagInProgress || !startupSequenceCompleted) return;
     if (clientSocket == INVALID_SOCKET) return;
     DateTime now = DateTime::Now;
     if (lastSensorDiagTime == DateTime::MinValue) {
@@ -555,7 +572,7 @@ void ProjectServerW::DataForm::PollSensorDiag() {
     // не защищает RS-485: не занимаем линию диагностикой, пока строка ждёт этот лог.
     if (!sensorDiagInProgress) return; // отложенный вызов отменён при смене соединения
     if (isFormClosingNow || IsDisposed || Disposing || !startupSequenceCompleted ||
-        clientSocket == INVALID_SOCKET || sensorDiagUnsupported) {
+        clientSocket == INVALID_SOCKET || sensorDiagUnsupported || unifiedEvents) {
         CancelSensorDiagPoll();
         return;
     }
@@ -1143,16 +1160,14 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
     try {
         System::Threading::Monitor::Enter(commandPipelineGate);   // Входим в мьютекс синхронизации команд
         try {
-            // Отправляем команду
-            bool sendResult;   // Результат отправки команды
-            if (commandName != nullptr) {
-                sendResult = SendCommand(cmd, commandName);   // Отправляем команду с именем
-            }
-            else {
-                sendResult = SendCommand(cmd);   // Отправляем команду без имени
-            }
-
-            if (!sendResult) {
+            const SOCKET socket = clientSocket;
+            response.commandType = cmd.commandType;
+            response.commandCode = cmd.commandCode;
+            response.status = CmdStatus::EXECUTION_ERROR;
+            response.dataLength = 0;
+            Object^ connection = GetCommandConnection(socket);
+            if (commandName == nullptr) commandName = gcnew String(GetCommandName(cmd));
+            if (connection == nullptr || !SendCommand(cmd, commandName, socket, connection)) {
                 GlobalLogger::LogMessage("Ошибка: Не удалось отправить команду");   // Логируем ошибку
                 return false;
             }
@@ -1161,7 +1176,7 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
             // ответы после таймаута предыдущей сессии), отбрасываются с логом — в очередь не возвращаются.
             // Таймаут ожидания ответа на команду.
             // Для GET_DEFROST_GROUP нужен больший таймаут из-за объёма ответа.
-            const int defaultTimeoutMs = 100;
+            const int defaultTimeoutMs = 1000;
             const bool isGetDefrostGroup =
                 (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_DEFROST_GROUP);
             const bool isGetAlarmFlags =
@@ -1175,18 +1190,23 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
             // Фоновый ежеминутный запрос: разбирает и логирует вызывающий, общий ProcessResponse не нужен.
             const bool isSensorDiag =
                 (cmd.commandType == CmdType::REQUEST && (cmd.commandCode == CmdRequest::GET_SENSOR_DIAG || IsEventCommand(cmd.commandCode)));
-            // GET_ALARM_FLAGS по RS-485/полудуплексу и при загрузке контроллера часто не укладывается в 100 мс.
+            // На переподключении GET_VERSION и SET_INTERVAL проходят через тот же мост,
+            // что и запросы параметров. Даём им тот же бюджет ответа.
+            const bool isStartupCommand =
+                (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::GET_VERSION) ||
+                (cmd.commandType == CmdType::CONFIGURATION && cmd.commandCode == CmdConfig::SET_INTERVAL);
             const int totalTimeoutMs =
-                (isGetDefrostGroup || isGetAlarmFlags || isSetDefrostGroup || isLoadDefrostDefaults || isSensorDiag) ? 1000 :
-                (isProgControl ? 300 : defaultTimeoutMs);
-            DateTime deadline = DateTime::Now.AddMilliseconds(totalTimeoutMs);
+                (isStartupCommand || isGetDefrostGroup || isGetAlarmFlags || isSetDefrostGroup || isLoadDefrostDefaults || isSensorDiag) ? 1000 :
+                (isProgControl ? 1000 : defaultTimeoutMs);
+            const ULONGLONG deadline = GetTickCount64() + totalTimeoutMs;
             while (true) {
-                TimeSpan remaining = deadline.Subtract(DateTime::Now);   // Вычисляем оставшееся время
-                if (remaining.TotalMilliseconds <= 0) {
-                    response.commandType = cmd.commandType;   // Устанавливаем тип команды
-                    response.commandCode = cmd.commandCode;   // Устанавливаем код команды
-                    response.status = CmdStatus::TIMEOUT;   // Устанавливаем статус TIMEOUT
-                    response.dataLength = 0;   // Устанавливаем длину данных
+                if (GetCommandConnection(socket) != connection) {
+                    GlobalLogger::LogMessage("Предупреждение: Соединение сменилось во время ожидания ответа на " + commandName);
+                    return false;
+                }
+                const ULONGLONG now = GetTickCount64();
+                if (now >= deadline) {
+                    response.status = CmdStatus::TIMEOUT;
                     GlobalLogger::LogMessage(String::Format(   // Логируем ошибку
                         "Ошибка: Не получен ответ от контроллера (Type=0x{0:X2}, Code=0x{1:X2}, timeoutMs={2})",
                         cmd.commandType, cmd.commandCode, totalTimeoutMs));   // Логируем ошибку
@@ -1195,7 +1215,7 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
 
                 CommandResponse candidate{};   // Полученный ответ будет в этой переменной
                 cli::array<System::Byte>^ rawCandidate = nullptr; // Массив байтов для хранения ответа
-                if (!ReceiveResponse(candidate, static_cast<int>(remaining.TotalMilliseconds), rawCandidate)) { // Получаем ответ от контроллера
+                if (!ReceiveResponse(candidate, socket, connection, static_cast<int>(deadline - now), rawCandidate)) { // Получаем ответ от контроллера
                     continue;   // Продолжаем ждать ответ
                 }
 
@@ -1213,6 +1233,14 @@ bool ProjectServerW::DataForm::SendCommandAndWaitResponse(
                         "Предупреждение: Отброшен ответ, не подходящий текущей команде (ожидалось Type=0x{0:X2}, Code=0x{1:X2}; получено Type=0x{2:X2}, Code=0x{3:X2}; Raw={4})",
                         cmd.commandType, cmd.commandCode, candidate.commandType, candidate.commandCode, hex));
                     continue;   // Продолжаем ждать нужный ответ
+                }
+
+                if (isGetDefrostGroup && candidate.status == CmdStatus::OK &&
+                    !MatchesDefrostGroupResponse(cmd, candidate)) {
+                    GlobalLogger::LogMessage(String::Format(
+                        "Предупреждение: Отброшен ответ GET_DEFROST_GROUP без ожидаемой группы {0} и страницы {1}",
+                        (int)cmd.data[0], (int)cmd.data[1]));
+                    continue;
                 }
 
                 response = candidate;   // Устанавливаем полученный ответ
@@ -1275,7 +1303,11 @@ void ProjectServerW::DataForm::PollButtonEvents(Object^,EventArgs^) {
     if (buttonEventsSocket!=clientSocket) {
         buttonEventsSocket=clientSocket;buttonEventsUnsupported=false;buttonEventsPending=false;
     }
-    if (sensorDiagInProgress || pendingRowWrkBit) return;
+    if (sensorDiagInProgress || pendingRowWrkBit || !WaitControllerExchange(0)) return;
+    if (!controllerRestartVersionPending && sendStateTimer != nullptr && hasTelemetry && lastTelemetryTime != DateTime::MinValue &&
+        DateTime::Now.Subtract(lastTelemetryTime).TotalMilliseconds >= sendStateTimer->Interval) return;
+    if (telemetryRequestTime != DateTime::MinValue &&
+        DateTime::Now.Subtract(telemetryRequestTime).TotalMilliseconds < 1000) return;
     if (!controllerRestartVersionPending) {
         if (!hasTelemetry) return;
         if (unifiedEvents && !eventsAvailable) return;
@@ -1344,8 +1376,8 @@ void ProjectServerW::DataForm::HandleButtonEventsResponse(cli::array<Byte>^ pack
     if (response.commandCode==CmdRequest::ACK_EVENT) {
         buttonEventsPending=false;
         if (response.status==CmdStatus::OK) {
-            eventsAvailable=moreEventsAfterAck;
-            if (eventsAvailable) PollButtonEvents(nullptr,EventArgs::Empty);
+            // Следующее событие читаем только после новой телеметрии с флагом.
+            eventsAvailable=false;
         }
         return;
     }
@@ -1429,4 +1461,161 @@ void ProjectServerW::DataForm::HandleButtonEventsResponse(cli::array<Byte>^ pack
         memcpy(ack.data,response.data,16);memcpy(ack.data+16,&last,4);
         SendCommand(ack,"ACK_BUTTON_EVENTS");
     } finally {System::Threading::Monitor::Exit(commandPipelineGate);}
+}
+
+// Ожидание завершается recv-потоком: UI не нужен для освобождения канала.
+bool ProjectServerW::DataForm::WaitControllerExchange(int budgetMs) {
+    const ULONGLONG waitDeadline = GetTickCount64() + Math::Max(0, budgetMs);
+    while (true) {
+        int remaining;
+        System::Threading::Monitor::Enter(exchangeGate);
+        try {
+            if (exchangeCode < 0) return true;
+            const ULONGLONG now = GetTickCount64();
+            if (now >= exchangeDeadline) {
+                GlobalLogger::LogMessage(String::Format(
+                    "Warning: Exchange timeout Type=0x{0:X2}, Code=0x{1:X2}, phase={2}, requestId={3:X16}; waiting stopped",
+                    exchangeType, exchangeCode, exchangePhase, exchangeRequestId));
+                exchangeCode = -1;
+                exchangePhase = 0;
+                exchangeReady->Set();
+                return true;
+            }
+            if (now >= waitDeadline) return false;
+            remaining = static_cast<int>(Math::Min(exchangeDeadline, waitDeadline) - now);
+        } finally { System::Threading::Monitor::Exit(exchangeGate); }
+        exchangeReady->WaitOne(remaining);
+    }
+}
+
+void ProjectServerW::DataForm::BeginControllerExchange(const Command& cmd, Object^ connection, int timeoutMs) {
+    System::Threading::Monitor::Enter(exchangeGate);
+    try {
+        exchangeRequestId = ++nextRequestId;
+        if (exchangeRequestId == 0) exchangeRequestId = ++nextRequestId;
+        exchangeConnection = connection;
+        exchangeCode = cmd.commandCode;
+        exchangeType = cmd.commandType;
+        exchangeGroup = cmd.dataLength > 0 ? cmd.data[0] : -1;
+        exchangePage = cmd.dataLength > 1 ? cmd.data[1] : -1;
+        exchangePhase = (cmd.commandType == CmdType::REQUEST && cmd.commandCode == CmdRequest::SEND_STATE) ? 2 : 1;
+        exchangeDeadline = GetTickCount64() + Math::Max(1, timeoutMs);
+        exchangeReady->Reset();
+    } finally { System::Threading::Monitor::Exit(exchangeGate); }
+}
+
+bool ProjectServerW::DataForm::AcceptControllerPacket(cli::array<Byte>^ packet, Object^ connection) {
+    if (packet == nullptr || packet->Length < 6) return false;
+    uint8_t plain[MAX_COMMAND_SIZE]; size_t plainSize = 0; uint64_t requestId = 0;
+    pin_ptr<Byte> wire = &packet[0];
+    if (!UnwrapResponseBuffer(wire, packet->Length, requestId, plain, plainSize)) {
+        GlobalLogger::LogMessage("Warning: Dropping response without valid request ID/CRC; transaction-capable firmware required");
+        return false;
+    }
+    packet = NormalizeControllerResponse(packet);
+    WaitControllerExchange(0); // A late packet cannot extend the deadline.
+    System::Threading::Monitor::Enter(exchangeGate);
+    try {
+        bool matches = connection == exchangeConnection && exchangeCode >= 0 && requestId == exchangeRequestId;
+        matches = matches && exchangePhase != 3 && packet[0] == exchangeType && packet[1] == exchangeCode;
+        if (matches && exchangePhase == 1 && packet[2] == CmdStatus::OK &&
+            exchangeType == CmdType::REQUEST &&
+            (exchangeCode == CmdRequest::GET_DEFROST_GROUP || exchangeCode == CmdRequest::GET_DEFROST_PARAM))
+            matches = packet[3] >= 2 && packet[4] == exchangeGroup && packet[5] == exchangePage;
+        if (!matches) {
+            GlobalLogger::LogMessage(String::Format(
+                "Warning: Dropping unsolicited/late response Type=0x{0:X2}, Code=0x{1:X2}; expected Type={2}, Code={3}, phase={4}, requestId={5:X16}, expectedId={6:X16}",
+                packet[0], packet[1], exchangeType, exchangeCode, exchangePhase, requestId, exchangeRequestId));
+            return false;
+        }
+        pin_ptr<Byte> bytes = &packet[0];
+        CommandResponse parsed{};
+        if (!ParseResponseBuffer(reinterpret_cast<const uint8_t*>(bytes), packet->Length, parsed)) return false;
+        if (parsed.status != CmdStatus::OK)
+            GlobalLogger::LogMessage(String::Format("Warning: Controller response error Type=0x{0:X2}, Code=0x{1:X2}, status=0x{2:X2}",
+                parsed.commandType, parsed.commandCode, parsed.status));
+        if (exchangePhase == 2 && parsed.status == CmdStatus::OK) {
+            if (parsed.dataLength != 60 && parsed.dataLength != 61) return false;
+            telemetrySampleId = requestId;
+            exchangePhase = 3; // Worker must send DATA_OK before any other command.
+            return true;
+        }
+        if (exchangeType == CmdType::REQUEST && exchangeCode == CmdRequest::GET_PROCESS_LOG &&
+            parsed.status == CmdStatus::OK && parsed.dataLength != 113) return false;
+        if (exchangeType == CmdType::REQUEST && exchangeCode == CmdRequest::GET_PROCESS_LOG) processLogReply = packet;
+        exchangeCode = -1;
+        exchangePhase = 0;
+        exchangeReady->Set();
+        return true;
+    } finally { System::Threading::Monitor::Exit(exchangeGate); }
+}
+
+bool ProjectServerW::DataForm::PrepareTelemetryAck(Object^ connection, bool accepted) {
+    System::Threading::Monitor::Enter(exchangeGate);
+    try {
+        if (exchangeConnection != connection || exchangeCode != CmdRequest::SEND_STATE ||
+            (exchangePhase != 3 && !(exchangePhase == 2 && !accepted)) || GetTickCount64() >= exchangeDeadline) return false;
+        if (!accepted) { exchangePhase = 2; return true; }
+        exchangeCode = -1;
+        exchangePhase = 0;
+        exchangeReady->Set();
+        return true;
+    } finally { System::Threading::Monitor::Exit(exchangeGate); }
+}
+
+void ProjectServerW::DataForm::OnExchangeTimer(Object^, EventArgs^) {
+    WaitControllerExchange(0);
+}
+
+void ProjectServerW::DataForm::HandleBackgroundResponse(cli::array<Byte>^ packet, System::UInt64 socket, Object^ connection) {
+    if (connection == nullptr || GetCommandConnection(static_cast<SOCKET>(socket)) != connection) return;
+    if (packet[1] == CmdRequest::GET_SENSOR_DIAG) HandleSensorDiagResponse(packet);
+    else HandleButtonEventsResponse(packet);
+}
+
+System::UInt64 ProjectServerW::DataForm::GetExchangeRequestId() {
+    System::Threading::Monitor::Enter(exchangeGate);
+    try { return exchangeRequestId; }
+    finally { System::Threading::Monitor::Exit(exchangeGate); }
+}
+cli::array<Byte>^ ProjectServerW::DataForm::NormalizeControllerResponse(cli::array<Byte>^ packet) {
+    uint8_t plain[MAX_COMMAND_SIZE]; size_t length = 0; uint64_t id;
+    pin_ptr<Byte> wire = &packet[0];
+    if (!UnwrapResponseBuffer(wire, packet->Length, id, plain, length)) return nullptr;
+    auto result = gcnew cli::array<Byte>(static_cast<int>(length));
+    for (int i = 0; i < result->Length; ++i) result[i] = plain[i];
+    return result;
+}
+
+void ProjectServerW::DataForm::RequestProcessLog() {
+    if (!processDataAvailable || pendingRow == nullptr || !startupSequenceCompleted || !WaitControllerExchange(0)) return;
+    if (!System::Threading::Monitor::TryEnter(commandPipelineGate)) return;
+    try {
+        processLogRow = pendingRow;
+        processLogSession = logSessionId;
+        Command cmd = CreateRequestCommand(CmdRequest::GET_PROCESS_LOG);
+        cmd.dataLength = 8;
+        const uint64_t parentId = telemetrySampleId;
+        memcpy(cmd.data, &parentId, 8);
+        SendCommand(cmd, "GET_PROCESS_LOG");
+    } finally { System::Threading::Monitor::Exit(commandPipelineGate); }
+}
+
+void ProjectServerW::DataForm::DrainProcessLogResponse() {
+    cli::array<Byte>^ packet = nullptr;
+    System::Threading::Monitor::Enter(exchangeGate);
+    try { packet = processLogReply; processLogReply = nullptr; }
+    finally { System::Threading::Monitor::Exit(exchangeGate); }
+    if (packet == nullptr || packet[2] != CmdStatus::OK) return;
+    if (processLogRow == nullptr || processLogRow != pendingRow || processLogSession != logSessionId) {
+        GlobalLogger::LogMessage("Warning: Dropping process log: telemetry row/session no longer matches");
+        return;
+    }
+    packet[0] = 0; packet[1] = 1; // Existing table decoder consumes the logical process payload.
+    pin_ptr<Byte> bytes = &packet[0];
+    const uint16_t crc = CalculateCommandCRC(bytes, packet->Length - 2);
+    packet[packet->Length - 2] = static_cast<Byte>(crc);
+    packet[packet->Length - 1] = static_cast<Byte>(crc >> 8);
+    AppendControlLogToDataRow(packet, packet->Length);
+    processLogRow = nullptr;
 }

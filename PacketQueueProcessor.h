@@ -20,6 +20,7 @@ namespace ProjectServerW {
 			System::String^ formGuid;
 			System::String^ clientIP;
 			System::IntPtr clientSocket;
+            System::Object^ connection;
 		};
 
 		static initonly System::Collections::Concurrent::ConcurrentQueue<TelemetryWorkItem^>^ s_telemetryQueue =
@@ -44,7 +45,7 @@ namespace ProjectServerW {
 		static void WorkerLoop();
 		static System::Object^ GetOrCreateSendGate(System::IntPtr socketKey);
 		static System::Object^ GetOrCreateReceivingGate(System::IntPtr socketKey);
-		static bool TrySendTelemetryAck(SOCKET socket, uint8_t code);
+		static bool TrySendTelemetryAck(SOCKET socket, uint8_t code, DataForm^ form, System::Object^ connection);
 		static bool ValidateTelemetryCrc(const uint8_t* data, int size);
 
 	public:
@@ -59,14 +60,14 @@ namespace ProjectServerW {
 			int port,
 			System::String^ formGuid,
 			SOCKET clientSocket,
-			System::String^ clientIP);
+			System::String^ clientIP, System::Object^ connection);
 
 		static void EnqueueControlLog(cli::array<System::Byte>^ packet,
 			int size,
 			int port,
 			System::String^ formGuid,
 			SOCKET clientSocket,
-			System::String^ clientIP);
+			System::String^ clientIP, System::Object^ connection);
 	};
 }
 

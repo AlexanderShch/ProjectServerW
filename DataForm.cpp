@@ -1,3 +1,4 @@
+#include "CycleTelemetry.h"
 #include "DataForm.h"
 #include "Chart.h"
 #include "FormExcel.h"
@@ -143,93 +144,45 @@ void ProjectServerW::DataForm::ParseBuffer(const char* buffer, size_t size) {
 
 // Обновление внутренних флагов автомата по текущей телеметрии. 
 void ProjectServerW::DataForm::UpdateModeFlagsFromTelemetry(
-    DateTime now,                       // Текущее время
-    uint16_t deviceTime,                // Время из структуры пакета
-    bool wrkBit,                        // Флаг _Wrk
-    bool shdBit,                        // Флаг _Shd
-    int& outDeltaCounts)                // Дельта времени
+    DateTime now, const MSGQUEUE_OBJ_t& data, bool wrkBit, bool shdBit)
 {
-    const bool wasAuto = controllerAutoModeActive;   // Флаг автомата
-    bool suppressStopAfterRecentStart = false;      // Флаг отключения останова после недавнего запуска (5 секунд)
-
-    // Проверяем, есть ли время последнего успешного запуска
-    if (lastStartSuccessTime != DateTime::MinValue) {   // Если время последнего успешного запуска не равно минимальному значению
-        TimeSpan sinceStart = now.Subtract(lastStartSuccessTime);   // Вычисляем время с момента последнего успешного запуска
-        suppressStopAfterRecentStart = (sinceStart.TotalSeconds >= 0.0 && sinceStart.TotalSeconds < 5.0);   // Устанавливаем флаг suppressStopAfterRecentStart
-    }
-
-    // Если флаг _Wrk установлен, сбрасываем счётчик нулевых последовательных отсчётов
-    // И устанавливаем флаг автомата
-    if (wrkBit) {
-        if (!wasAuto) PrepareNewLogSession(now);
-        wrkZeroConsecutiveCounts = 0;
-        controllerAutoModeActive = true;   // Устанавливаем флаг автомата
-    }
-    // Если флаг _Wrk не установлен, но автомат был активен, увеличиваем счётчик нулевых последовательных отсчётов
-    else if (wasAuto) {
-        wrkZeroConsecutiveCounts += outDeltaCounts;
-    }
-    else {
-        wrkZeroConsecutiveCounts = 0;
-    }
-
-    // Проверяем, нужно ли остановить автомат
-    const bool stopConfirmedByWrk =
-        (wasAuto && !wrkBit && shdBit && !suppressStopAfterRecentStart && wrkZeroConsecutiveCounts >= 5);
-        // был в автомате, 
-        // но в автомате сейчас не работает, 
-        // И находится в режиме post-shutdown, 
-        // И нет отключения останова после недавнего запуска, 
-        // И счётчик нулевых _Wrk последовательных отсчётов >= 5
-        // Тогда нужно остановить автомат
-    
-    // Если нужно остановить автомат, т.е. сработало условие остановки, выводим сообщение в лог и готовимфлаги
-    if (stopConfirmedByWrk) {   
-        // Переход в остановку: пишем в лог дату/время остановки и достигнутую мин. Т рыбы.
-        DateTime stopTime = now;   // Время остановки
-
-        String^ stopMessage = nullptr;   // Сообщение остановки
-        // Температура в сообщении — только fishCold_C из лога параметров (контроллер).
-        if (lastFishCold_C_Valid) {
-            stopMessage = String::Format(
-                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}.\nДостигнутая мин. Т рыбы (fishCold_C): {1:F1} °C",
-                stopTime, lastFishCold_C);
+    const bool wasActive = controllerAutoModeActive;
+    const bool wasShuttingDown = postStopCaptureActive;
+    const CycleTelemetry phase = ClassifyCycleTelemetry(
+        data.SensorQuantity == SQ && data.SensorType[SQ - 1] == 4 && data.Active[SQ - 1] != 0,
+        static_cast<uint16_t>(data.T[SQ - 1]), wrkBit, shdBit);
+    if (phase == CycleTelemetry::Shutdown || phase == CycleTelemetry::Working) {
+        if (!wasActive || (wasShuttingDown && phase == CycleTelemetry::Working))
+            PrepareNewLogSession(now);
+        controllerAutoModeActive = true;
+        awaitingCycleCompletion = true;
+        postStopCaptureActive = shdBit;
+        if (shdBit && (!wasShuttingDown || telemetryInterrupted)) {
+            labelDefrosterState->Text = L"Идёт завершение цикла. Ожидание подтверждения контроллера.";
         }
-        else {
-            stopMessage = String::Format(
-                "Information: Останов автоматического алгоритма дефростации. Время: {0:dd.MM.yyyy HH:mm:ss}. Нет данных fishCold_C из лога параметров.",
-                stopTime);
+        else if (phase == CycleTelemetry::Working) {
+            labelDefrosterState->Text = L"Цикл дефростации выполняется.";
         }
-
-        // Выводим сообщение в лог
-        GlobalLogger::LogMessage(stopMessage);
-        if (labelDefrosterState != nullptr && !labelDefrosterState->IsDisposed) {   // Выводим сообщение в окне состояния дефростера
-            labelDefrosterState->Text = stopMessage->Replace("Information: ", "");
-            labelDefrosterState->ForeColor = System::Drawing::Color::Blue;
-        }
-        
-        // Экспорт в EXCEL запустим только после завершения post-shutdown И 10 стабильных отсчётов _Shd=0 && _Wrk=0.
-        stopExportPending = true;   // Устанавливаем флаг экспорта данных в Excel
-        shdWrkZeroStableCounts = 0;   // Сбрасываем счётчик стабильных отсчётов _Shd=0 && _Wrk=0
-        controllerAutoModeActive = false;   // Сбрасываем флаг автомата
-        wrkZeroConsecutiveCounts = 0;   // Сбрасываем счётчик нулевых последовательных отсчётов _Wrk
-        // Как при ответе на СТОП с панели: запоздалый лог не должен затирать кнопки в течение 10 с.
+    }
+    else if (wasActive && phase == CycleTelemetry::IdleGateOpen && awaitingCycleCompletion) {
+        controllerAutoModeActive = false;
+        awaitingCycleCompletion = false;
+        postStopCaptureActive = false;
+        stopExportPending = true;
+        shdWrkZeroStableCounts = 0;
         lastStopSuccessTime = now;
+        String^ message = String::Format(
+            L"Цикл дефростации завершён. Полное открытие ворот подтверждено. Подтверждение получено {0:dd.MM.yyyy HH:mm:ss}.", now);
+        if (lastFishCold_C_Valid)
+            message += String::Format(L" Мин. температура рыбы: {0:F1} °C.", lastFishCold_C);
+        labelDefrosterState->Text = message;
+        labelDefrosterState->ForeColor = System::Drawing::Color::Blue;
+        GlobalLogger::LogMessage("Information: " + message);
     }
-
-    // Условие останова автомата не выполнено, продолжаем запись в таблицу данных, пока активен post-shutdown (_Shd=1).
-    if (controllerAutoModeActive) {   // Если автомат активен
-        postStopCaptureActive = false;   // Сбрасываем флаг активного post-shutdown
-        postStopGateOpenSeen = false;   // Сбрасываем флаг открытия ворот
-        postStopCaptureGraceUntil = DateTime::MinValue;   // Сбрасываем время grace-периода
+    else if (wasActive && telemetryInterrupted && phase == CycleTelemetry::Unconfirmed) {
+        labelDefrosterState->Text = L"Связь восстановлена. Ожидание подтверждения завершения цикла.";
     }
-    else {                              // Если автомат не активен
-        postStopCaptureActive = shdBit;   // Копируем флаг _Shd в флаг активного post-shutdown
-        if (!postStopCaptureActive) {   // Если post-shutdown ещё не активен
-            postStopGateOpenSeen = false;   // Сбрасываем флаг открытия ворот
-            postStopCaptureGraceUntil = DateTime::MinValue;   // Сбрасываем время grace-периода
-        }
-    }
+    telemetryInterrupted = false;
 
     // Обновляем UI программы
     if (this->InvokeRequired) {   // Если вызов требуется в другом потоке
@@ -285,18 +238,12 @@ void ProjectServerW::DataForm::ResolveModesAndFlushPendingRow(
 {
     // Определение режимов по _Wrk/_Shd и установка внутренних флагов автомата.
     const uint16_t doBits = data.H[SQ - 1];   // Получаем флаги _Wrk/_Shd из структуры пакета
-    outWrkBit = (doBits & (1u << 14)) != 0;   // Флаг _Wrk
+    outWrkBit = unifiedEvents ? processDataAvailable : (doBits & (1u << 14)) != 0;   // Флаг _Wrk
     outShdBit = (data.ShutdownActive != 0);   // Флаг _Shd
     outDeltaCounts = 1;   // Дельта времени
     // Обновляем внутренние флаги автомата
-    UpdateModeFlagsFromTelemetry(   
-        now,                         // Текущее время
-        data.Time,                   // Время из структуры пакета
-        outWrkBit,                   // Флаг _Wrk
-        outShdBit,                   // Флаг _Shd
-        outDeltaCounts);              // Дельта времени
+    UpdateModeFlagsFromTelemetry(now, data, outWrkBit, outShdBit);
 
-    // Если строка предыдущей секунды ждала control-log, но пришла уже новая телеметрия (другое Time),
     // фиксируем старую строку как есть, чтобы не терять телеметрию на переходах _Wrk/_Shd.
     System::Threading::Monitor::Enter(dataTableSync);
     try {
@@ -482,6 +429,7 @@ void ProjectServerW::DataForm::PrepareNewLogSession(DateTime now) {
     if (!FinishEndDataCapture(now))
         throw gcnew System::InvalidOperationException(L"Не удалось поставить EndData в очередь экспорта");
     logSessionId = Guid::NewGuid();
+    awaitingCycleCompletion = false;
     stopExportPending = false;
     shdWrkZeroStableCounts = 0;
     postStopCaptureActive = false;
@@ -512,9 +460,7 @@ void ProjectServerW::DataForm::ApplyConfirmedStart() {
     if (radioButtonSiemens != nullptr && radioButtonSiemens->Checked) return;
     if (!controllerAutoModeActive) PrepareNewLogSession(DateTime::Now);
     controllerAutoModeActive = true;
-    lastStartSuccessTime = DateTime::Now;
     lastControlLogTime = DateTime::Now;
-    wrkZeroConsecutiveCounts = 0;
     SetProgramStateUi(true);
 }
 
@@ -525,6 +471,7 @@ System::Void ProjectServerW::DataForm::timerEndData_Tick(System::Object^ sender,
 
 void ProjectServerW::DataForm::ApplyStopLikeSessionStateReset()
 {
+    awaitingCycleCompletion = false;
     // Сначала снимаем ожидание экспорта с телеметрии, чтобы не запустить второй экспорт в UpdateShutdownExportFlags.
     const bool flushExcelFromPendingStop = stopExportPending;   // Флаг ожидания экспорта данных в Excel
     if (flushExcelFromPendingStop) {
@@ -540,12 +487,8 @@ void ProjectServerW::DataForm::ApplyStopLikeSessionStateReset()
     }
     controllerAutoModeActive = false;   // Сбрасываем флаг автомата
     lastControlLogTime = DateTime::MinValue;   // Сбрасываем время последнего логирования
-    wrkZeroConsecutiveCounts = 0;   // Сбрасываем счётчик нулевых последовательных отсчётов
-    wrkLastSampleValid = false;   // Сбрасываем признак последнего валидного отсчёта
     lastStopSuccessTime = DateTime::Now;   // Сбрасываем время последнего успешного останова
     postStopCaptureActive = false;   // Сбрасываем флаг активного post-shutdown
-    postStopGateOpenSeen = false;   // Сбрасываем флаг открытия ворот
-    postStopCaptureGraceUntil = DateTime::MinValue;   // Сбрасываем время grace-периода
 
     if (flushExcelFromPendingStop) {
         const DateTime now = DateTime::Now;   // Текущее время
@@ -561,6 +504,53 @@ void ProjectServerW::DataForm::ApplyStopLikeSessionStateReset()
     }
 }
 
+void ProjectServerW::DataForm::AttachClientSocket(SOCKET socket, System::Object^ connection)
+{
+    System::Threading::Monitor::Enter(socketStateGate);
+    try {
+        const SOCKET previous = ClientSocket;
+        if (previous != INVALID_SOCKET && previous != socket) {
+            shutdown(previous, SD_BOTH);
+            GlobalLogger::LogMessage("Information: Reconnect: drop old socket " + ClientIP);
+        }
+        System::Threading::Monitor::Enter(exchangeGate);
+        try {
+            exchangeCode = -1;
+            exchangeReady->Set();
+        } finally { System::Threading::Monitor::Exit(exchangeGate); }
+        commandConnection = connection;
+        ClientSocket = socket;
+    }
+    finally {
+        System::Threading::Monitor::Exit(socketStateGate);
+    }
+}
+
+void ProjectServerW::DataForm::DetachClientSocket(SOCKET socket)
+{
+    System::Threading::Monitor::Enter(socketStateGate);
+    try {
+        if (ClientSocket == socket) {
+            commandConnection = nullptr;
+            ClientSocket = INVALID_SOCKET;
+        }
+    }
+    finally {
+        System::Threading::Monitor::Exit(socketStateGate);
+    }
+}
+
+System::Object^ ProjectServerW::DataForm::GetCommandConnection(SOCKET socket)
+{
+    System::Threading::Monitor::Enter(socketStateGate);
+    try {
+        return ClientSocket == socket ? commandConnection : nullptr;
+    }
+    finally {
+        System::Threading::Monitor::Exit(socketStateGate);
+    }
+}
+
 void ProjectServerW::DataForm::ResetProgramStateAfterLinkLoss()
 {
     if (this == nullptr || this->IsDisposed || this->Disposing)
@@ -568,34 +558,16 @@ void ProjectServerW::DataForm::ResetProgramStateAfterLinkLoss()
 
     // Ожидание лога старого соединения не должно отправить диагностику в новый сокет.
     CancelSensorDiagPoll();
-    const bool hadAutoSession = controllerAutoModeActive;
-
-    controllerAutoModeActive = false;
-    stopExportPending = false;
+    if (telemetryInterrupted) return;
+    telemetryInterrupted = true;
+    if (controllerAutoModeActive) awaitingCycleCompletion = true;
     shdWrkZeroStableCounts = 0;
-    postStopCaptureActive = false;
-    postStopGateOpenSeen = false;
-    postStopCaptureGraceUntil = DateTime::MinValue;
-    wrkZeroConsecutiveCounts = 0;
-    lastControlLogTime = DateTime::MinValue;
-
-    System::Threading::Monitor::Enter(dataTableSync);
-    try {
-        pendingRow = nullptr;
-        pendingRowWrkBit = false;
-    }
-    finally {
-        System::Threading::Monitor::Exit(dataTableSync);
-    }
-
-    SetProgramStateUi(false);
-
-    if (hadAutoSession) {
-        GlobalLogger::LogMessage(
-            "Информация: сброс состояния ПУСК/СТОП — нет приёма телеметрии или потерян TCP (контроллер сброшен / не отвечает).");
+    FlushPendingLogRow();
+    if (controllerAutoModeActive) {
+        labelDefrosterState->Text = L"Нет телеметрии. Ожидание состояния цикла от контроллера.";
+        GlobalLogger::LogMessage(labelDefrosterState->Text);
     }
 }
-
 // Обработка выхода из программы.
 System::Void ProjectServerW::DataForm::выходToolStripMenuItem_Click(System::Object^ sender, System::EventArgs^ e)
 {
@@ -1134,20 +1106,23 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
         const uint16_t prevDeviceSec = lastTelemetryDeviceSeconds;
         if (prevDeviceSec >= 15u) {
             const int dTime = (int)data.Time - (int)prevDeviceSec;
-            if (dTime < -8) {
+            // Отличаем перезапуск от переполнения 16-битного счётчика за время разрыва.
+            const bool wrapPossible = lastDeviceSampleAt != DateTime::MinValue &&
+                static_cast<uint16_t>(dTime) <= now.Subtract(lastDeviceSampleAt).TotalSeconds + 8.0;
+            if (dTime < -8 && !wrapPossible) {
                 GlobalLogger::LogMessage(
                     "Информация: перезапуск контроллера (откат поля Time телеметрии). Сброс авторежима; запись в таблицу без новой команды ПУСК отключена.");
                 // Прошивка могла обновиться без закрытия TCP-сокета. Старый
                 // INVALID_CODE не должен навсегда отключать журнал кнопок.
                 ResetButtonEventPolling();
                 controllerRestartVersionPending = true;
+                awaitingCycleCompletion = false;
+                telemetryInterrupted = false;
+                labelDefrosterState->Text = L"Контроллер перезапущен.";
                 controllerAutoModeActive = false;
                 stopExportPending = false;
                 shdWrkZeroStableCounts = 0;
-                wrkZeroConsecutiveCounts = 0;
                 postStopCaptureActive = false;
-                postStopGateOpenSeen = false;
-                postStopCaptureGraceUntil = DateTime::MinValue;
                 lastControlLogTime = DateTime::MinValue;
                 System::Threading::Monitor::Enter(dataTableSync);
                 try {
@@ -1164,6 +1139,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
 
     unifiedEvents = dataLenByte == sizeof(data)+1;
     eventsAvailable = unifiedEvents && (raw[4+sizeof(data)] & 1u);
+    processDataAvailable = unifiedEvents && (raw[4+sizeof(data)] & 2u);
     data_String = bufferToHex(buffer, size);   // Преобразуем буфер в строку в hex формате
     // Выводим содержимое пакета data_String в поле Label_Data
     DataForm::SetData_TextValue("Текущие данные: " + data_String);
@@ -1175,6 +1151,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
     row["RealTime"] = now.ToString("HH:mm:ss");
     row["Time"] = data.Time;
     // Замечание: время, когда пришла телеметрия с устройства — в секундах с включения устройства.
+    lastDeviceSampleAt = now;
     lastTelemetryDeviceSeconds = data.Time;
     
     // ТЕМПЕРАТУРЫ
@@ -1855,7 +1832,9 @@ void ProjectServerW::DataForm::OnPostResetInitTimerTick(System::Object^ sender, 
 * Эта функция — потокобезопасный входной шлюз для добавления телеметрии в таблицу формы.
 * По сути: это “обёртка” между фоновым приёмом данных и UI-таблицей, чтобы данные добавлялись корректно и без гонок потоков.
 */
-void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size, int port) {
+void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>^ buffer, int size, int port, System::UInt64 sourceSocket, System::Object^ connection) {
+    const SOCKET currentSocket = static_cast<SOCKET>(sourceSocket);
+    if (connection == nullptr || GetCommandConnection(currentSocket) != connection) return;
     // Вызов приходит из потока приёмника, выполняется через Invoke
     // Важно! Данные, пришедшие в UI, обрабатываются в контексте формы, обновляем данные в UI!
     // Устанавливаем порт клиента в контексте DataForm
@@ -1874,7 +1853,6 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
         }
 
         DateTime telemetryTime = DateTime::Now;   // Время приёма данных
-        const SOCKET currentSocket = clientSocket;   // Текущий сокет клиента
         if (hasTelemetry && lastTelemetrySocket != INVALID_SOCKET && currentSocket != INVALID_SOCKET &&
             currentSocket != lastTelemetrySocket) {   
             // Если есть телеметрия и сокет невалидный или текущий сокет не равен последнему сокету телеметрии
@@ -1883,6 +1861,7 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
             reconnectFixationLogPending = true;   // Устанавливаем флаг ожидания переподключения
         }
 
+        telemetryRequestTime = DateTime::MinValue;
         hasTelemetry = true;   // Устанавливаем флаг наличия телеметрии
         lastTelemetryTime = telemetryTime;   // Сохраняем время последнего приёма телеметрии
         lastTelemetrySocket = currentSocket;   // Сохраняем сокет последнего приёма телеметрии
@@ -1913,6 +1892,7 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
         finally {
             dataGridView->ResumeLayout(false);   // Возобновляем обновление таблицы
         }
+        RequestProcessLog();
         ScheduleSensorDiagPoll();
     }
     catch (Exception^ ex) {
@@ -1924,6 +1904,11 @@ void ProjectServerW::DataForm::AddDataToTableThreadSafe(cli::array<System::Byte>
 // ЛОГ ПАРАМЕТРОВ (ГРУППА 3) И ДОБАВЛЕНИЕ ЛОГА В СТРОКУ ДАННЫХ -------------------------------------------------------------
 // Парсинг лога параметров (группа 3) и добавление лога в строку данных: дополняет накопленную строку
 // телеметрии параметрами лога и добавляет эту строку в таблицу (только при приходе лога, авто-режим).
+void ProjectServerW::DataForm::AppendControlLogFromConnection(cli::array<System::Byte>^ packet, int size, System::UInt64 sourceSocket, System::Object^ connection) {
+    if (connection == nullptr || GetCommandConnection(static_cast<SOCKET>(sourceSocket)) != connection) return;
+    AppendControlLogToDataRow(packet, size);
+}
+
 void ProjectServerW::DataForm::AppendControlLogToDataRow(cli::array<System::Byte>^ packet, int size) {
     const int expectedPayloadSize = (int)sizeof(ControlLogPayload_t);   // Ожидаемый размер полезной нагрузки
     // Входной массив содержит: [Type][Cmd][Status][DataLen][Data...][CRC16]
@@ -3539,9 +3524,7 @@ void ProjectServerW::DataForm::EnsureProgramRunningStateFromLog()
 void ProjectServerW::DataForm::OnControlLogAbsenceTimerTick(System::Object^ sender, System::EventArgs^ e)
 {
     try {
-        // Авто-останов по таймауту отключён.
-        // Единый критерий останова алгоритма: только подтверждённый _Wrk == 0
-        // не менее 5 отсчётов подряд (см. AddDataToTable / stopConfirmedByWrk).
+        // Отсутствие пакетов само по себе не завершает цикл.
         if (!controllerAutoModeActive || lastControlLogTime == DateTime::MinValue) {
             controlLogAbsenceStrikeCount = 0;
             return;
@@ -3571,9 +3554,9 @@ void ProjectServerW::DataForm::OnSendStateTimerTick(System::Object^ sender, Syst
         // Не начинаем новый цикл телеметрии между DATA_OK и ожидаемым логом:
         // иначе очередной pendingRow заменит строку, ради которой ждём диагностику.
         // Потеря лога задержит опрос максимум на одноразовый таймаут 1 с.
-        if (sensorDiagInProgress) return;
-        // Ограниченное ожидание ответа очереди защищает полудуплексный канал.
-        if (buttonEventsPending && DateTime::Now.Subtract(buttonEventsRequestTime).TotalSeconds < 2) return;
+        if (!InvokeRequired) DrainProcessLogResponse();
+        if (sensorDiagInProgress || !WaitControllerExchange(0)) return;
+        // Единый обмен выше включает ответы событий и обе части телеметрии.
         if (ClientSocket == INVALID_SOCKET)
             return;
         if (!startupSequenceCompleted)
@@ -3590,25 +3573,33 @@ void ProjectServerW::DataForm::OnSendStateTimerTick(System::Object^ sender, Syst
                 stallThresholdSec = 20.0;
             if (DateTime::Now.Subtract(lastTelemetryTime).TotalSeconds >= stallThresholdSec) {
                 ResetProgramStateAfterLinkLoss();
-                return;
             }
         }
         if (!System::Threading::Monitor::TryEnter(commandPipelineGate))
             return;
         try {
+        if (!WaitControllerExchange(0)) return; // Recheck after acquiring the command gate.
+        const SOCKET socket = ClientSocket;
+        Object^ connection = GetCommandConnection(socket);
+        if (connection == nullptr || !startupSequenceCompleted) return;
         Command cmd = CreateRequestCommandSendState();
         uint8_t buffer[MAX_COMMAND_SIZE];
         size_t commandLength = BuildCommandBuffer(cmd, buffer, sizeof(buffer));
         if (commandLength == 0)
             return;
-        System::Object^ recvGate = PacketQueueProcessor::GetReceivingGate(ClientSocket);
+        System::Object^ recvGate = PacketQueueProcessor::GetReceivingGate(socket);
         System::Threading::Monitor::Enter(recvGate);
         try {
-            System::Object^ sendGate = PacketQueueProcessor::GetSendGate(ClientSocket);
+            System::Object^ sendGate = PacketQueueProcessor::GetSendGate(socket);
             System::Threading::Monitor::Enter(sendGate);
             try {
-                const bool sent = SocketTransport::SendAll(ClientSocket, reinterpret_cast<const char*>(buffer),
+                if (GetCommandConnection(socket) != connection) return;
+                BeginControllerExchange(cmd, connection, 1000);
+                commandLength = BuildRequestBuffer(cmd, exchangeRequestId, buffer, sizeof(buffer));
+                if (!commandLength) return;
+                const bool sent = SocketTransport::SendAll(socket, reinterpret_cast<const char*>(buffer),
                     static_cast<int>(commandLength));
+                if (sent) telemetryRequestTime = DateTime::Now;
                 if (!sent)
                     GlobalLogger::LogMessage("Warning: SEND_STATE send failed");
             }

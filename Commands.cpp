@@ -96,6 +96,7 @@ const char* GetCommandName(const Command& cmd) {
     // Команды запроса
     else if (cmd.commandType == 0x03) { // CmdType::REQUEST
         switch (cmd.commandCode) {
+        case 0x0F: return "GET_PROCESS_LOG";
         case 0x02: return "GET_VERSION";
         case 0x03: return "GET_DATA";
         case 0x04: return "GET_CMD_INFO";
@@ -346,4 +347,30 @@ bool CommandRequiresResponse(const Command& cmd) {
     // Остальные команды по умолчанию также ожидают ответ подтверждения
     // в зависимости от протокола и настроек
     return true; // По умолчанию считаем, что все команды требуют ответа
+}
+
+size_t BuildRequestBuffer(const Command& cmd, uint64_t requestId, uint8_t* buffer, size_t bufferSize) {
+    if (requestId == 0 || cmd.dataLength + 8u > sizeof(cmd.data)) return 0;
+    Command wire = cmd;
+    wire.commandType |= 0x80;
+    wire.dataLength += 8;
+    memcpy(wire.data, &requestId, 8);
+    memcpy(wire.data + 8, cmd.data, cmd.dataLength);
+    return BuildCommandBuffer(wire, buffer, bufferSize);
+}
+
+bool UnwrapResponseBuffer(const uint8_t* wire, size_t size, uint64_t& requestId, uint8_t* plain, size_t& plainSize) {
+    if (wire == nullptr || plain == nullptr || size < 14 || size > MAX_COMMAND_SIZE ||
+        !(wire[0] & 0x80) || wire[3] < 8 || size != static_cast<size_t>(wire[3]) + 6) return false;
+    uint16_t crc; memcpy(&crc, wire + size - 2, 2);
+    if (CalculateCommandCRC(wire, size - 2) != crc) return false;
+    memcpy(&requestId, wire + 4, 8);
+    if (requestId == 0) return false;
+    plainSize = size - 8;
+    memcpy(plain, wire, 4);
+    plain[0] &= 0x7f; plain[3] -= 8;
+    memcpy(plain + 4, wire + 12, plain[3]);
+    crc = CalculateCommandCRC(plain, plainSize - 2);
+    memcpy(plain + plainSize - 2, &crc, 2);
+    return true;
 }

@@ -306,23 +306,12 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 	// ClientIP останется null (обычно он обновляется из telemetry worker), и при переподключении можно получить дубли пустых форм.
 	// Поэтому выставляем ClientIP/ClientSocket сразу, чтобы переподключения переиспользовали тот же DataForm даже без телеметрии.
 	DataForm^ df = nullptr;
+	System::Object^ connection = gcnew System::Object();
 	try {
 		df = DataForm::GetFormByGuid(guid);
 		if (df != nullptr && !df->IsDisposed && !df->Disposing) {
-			const SOCKET prevSocket = df->ClientSocket;
-			if (prevSocket != INVALID_SOCKET && prevSocket != clientSocket) {
-				// Причина: новое подключение с тем же IP должно мгновенно "выбивать" старый recv()-поток,
-				// иначе он может висеть до SO_RCVTIMEO и держать ресурсы/путать диагностику.
-				// Важно: closesocket(prevSocket) здесь не делаем, чтобы избежать двойного closesocket
-				// (старый recv()-поток сам закроет свой сокет на выходе).
-				shutdown(prevSocket, SD_BOTH);
-				GlobalLogger::LogMessage(String::Format(
-					"Information: Reconnect: drop old socket {0}",
-					clientIPAddress));
-			}
-
 			df->ClientIP = clientIPAddress;
-			df->ClientSocket = clientSocket;
+			df->AttachClientSocket(clientSocket, connection);
 
 			// Отложенный старт: BeginInvoke нельзя до создания handle — см. DataForm::RequestDeferredStartupAfterSocketAttached.
 			df->RequestDeferredStartupAfterSocketAttached();
@@ -466,10 +455,11 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				const uint8_t* frame = reinterpret_cast<const uint8_t*>(buffer);
 				const uint8_t* payload = frame + 2; // payload = [Type][Cmd][Status][DataLen][Data...][CRC]
 
-				const uint8_t framedType = payload[0];
+				const uint8_t framedType = payload[0] & 0x7f;
 				const uint8_t framedCmd = payload[1];
 				const uint8_t framedStatus = payload[2];
 				const uint8_t payloadDataLenByte = payload[3];
+                const int logicalDataLen = payloadDataLenByte - ((payload[0] & 0x80) ? 8 : 0);
 
 				const int payloadNoCrcLen = 4 + static_cast<int>(payloadDataLenByte); // [Type..DataLen][Data...]
 				const int payloadWithCrcLen = payloadNoCrcLen + 2;
@@ -496,14 +486,14 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 				const bool isLogFrame =
 					(framedType == 0x00 && framedCmd == 0x01 && framedStatus == 0x00);
 
-				const bool telemetrySizeOk = payloadDataLenByte == TELEMETRY_DATA_LEN || payloadDataLenByte == TELEMETRY_DATA_LEN+1;
+				const bool telemetrySizeOk = logicalDataLen == TELEMETRY_DATA_LEN || logicalDataLen == TELEMETRY_DATA_LEN+1;
 				if (receivedCrc != calculatedCrc) {
 					// Для телеметрии CRC-ошибка должна повлиять на DATA_OK/DATA_FALSE, поэтому телеметрию
 					// направляем в worker даже при неравенстве CRC.
 					if (isTelemetryFrame && telemetrySizeOk) {
 						cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(payloadWithCrcLen);
 						Marshal::Copy(IntPtr(const_cast<uint8_t*>(payload)), dataBuffer, 0, payloadWithCrcLen);
-						PacketQueueProcessor::EnqueueTelemetry(dataBuffer, payloadWithCrcLen, clientPort, guidManaged, clientSocket, clientIPAddress);
+						PacketQueueProcessor::EnqueueTelemetry(dataBuffer, payloadWithCrcLen, clientPort, guidManaged, clientSocket, clientIPAddress, connection);
 						processedBytes += totalFrameLen;
 						continue;
 					}
@@ -523,25 +513,25 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 					else {
 						cli::array<System::Byte>^ dataBuffer = gcnew cli::array<System::Byte>(payloadWithCrcLen);
 						Marshal::Copy(IntPtr(const_cast<uint8_t*>(payload)), dataBuffer, 0, payloadWithCrcLen);
-						PacketQueueProcessor::EnqueueTelemetry(dataBuffer, payloadWithCrcLen, clientPort, guidManaged, clientSocket, clientIPAddress);
+						PacketQueueProcessor::EnqueueTelemetry(dataBuffer, payloadWithCrcLen, clientPort, guidManaged, clientSocket, clientIPAddress, connection);
 					}
 				}
 				else if (isLogFrame) {
-					if (payloadDataLenByte != 89 && payloadDataLenByte != 105 && payloadDataLenByte != 109 && payloadDataLenByte != CONTROL_LOG_DATA_LEN) {
+					if (logicalDataLen != 89 && logicalDataLen != 105 && logicalDataLen != 109 && logicalDataLen != CONTROL_LOG_DATA_LEN) {
 						GlobalLogger::LogMessage(String::Format(
 							"Warning: Dropping framed control log with unexpected DataLen={0}", payloadDataLenByte));
 					}
 					else {
 						cli::array<System::Byte>^ logBuffer = gcnew cli::array<System::Byte>(payloadWithCrcLen);
 						Marshal::Copy(IntPtr(const_cast<uint8_t*>(payload)), logBuffer, 0, payloadWithCrcLen);
-						PacketQueueProcessor::EnqueueControlLog(logBuffer, payloadWithCrcLen, clientPort, guidManaged, clientSocket, clientIPAddress);
+						PacketQueueProcessor::EnqueueControlLog(logBuffer, payloadWithCrcLen, clientPort, guidManaged, clientSocket, clientIPAddress, connection);
 					}
 				}
 				else {
 					cli::array<System::Byte>^ responseBuffer = gcnew cli::array<System::Byte>(payloadWithCrcLen);
 					Marshal::Copy(IntPtr(const_cast<uint8_t*>(payload)), responseBuffer, 0, payloadWithCrcLen);
 					if (df != nullptr && !df->IsDisposed && !df->Disposing) {
-						df->EnqueueResponse(responseBuffer);
+						df->EnqueueResponse(responseBuffer, clientSocket, connection);
 					}
 				}
 
@@ -568,20 +558,16 @@ DWORD WINAPI SServer::ClientHandler(LPVOID lpParam) {
 
 	// Соединение оборвалось. Форму НЕ закрываем: устройство может вернуться в течение 30 минут,
 	// тогда новое подключение переиспользует текущую форму и продолжит заполнение таблицы.
-	closesocket(clientSocket);
-	UnregisterClientSocket(clientSocket);
-	// Помечаем сокет формы как недействительный (команды на отправку должны перестать проходить)
+	// Снимаем привязку до освобождения дескриптора, который Windows может использовать повторно.
 	try {
-		DataForm^ form2 = DataForm::GetFormByGuid(guid);
-		if (form2 != nullptr && !form2->IsDisposed && !form2->Disposing) {
-			// Важно: не трогаем форму, если за время работы этого потока пришло переподключение
-			// и форма уже указывает на новый сокет.
-			if (form2->ClientSocket == clientSocket) {
-				form2->ClientSocket = INVALID_SOCKET;
-			}
+		if (df != nullptr && !df->IsDisposed && !df->Disposing) {
+			df->DetachClientSocket(clientSocket);
 		}
 	}
 	catch (...) {}
+
+	UnregisterClientSocket(clientSocket);
+	closesocket(clientSocket);
 
 	return 0;
 }
