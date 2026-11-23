@@ -1292,6 +1292,7 @@ void ProjectServerW::DataForm::ResetButtonEventPolling() {
         GlobalLogger::LogMessage(L"Информация: перезапуск контроллера; повторно проверяем поддержку очереди физических кнопок");
     buttonEventsUnsupported=false;buttonEventsPending=false;
     moreEventsAfterAck=false;eventsAvailable=false;unifiedEvents=false;
+    extendedButtonEvents = false;
     buttonEventsRequestTime=DateTime::MinValue;
 }
 
@@ -1339,6 +1340,11 @@ void ProjectServerW::DataForm::PollButtonEvents(Object^,EventArgs^) {
         // TCP-сокета, новая очередь получит новый ключ и номера не столкнутся.
         auto proposedSession=Guid::NewGuid().ToByteArray();
         for(int i=0;i<16;++i)cmd.data[i]=proposedSession[i];
+        // Расширенный запрос разрешён только после объявления поддержки контроллером.
+        if (unifiedEvents && extendedButtonEvents) {
+            cmd.data[16] = 1u;
+            cmd.dataLength = 17u;
+        }
         buttonEventsPending=SendCommand(cmd, unifiedEvents ? "GET_EVENT" : "GET_BUTTON_EVENTS");
         buttonEventsRequestTime=DateTime::Now;
     } finally {System::Threading::Monitor::Exit(commandPipelineGate);}
@@ -1389,9 +1395,12 @@ void ProjectServerW::DataForm::HandleButtonEventsResponse(cli::array<Byte>^ pack
         if (!data[24]) { if (len==25) eventsAvailable=false; return; }
         if (len<34) return;
         const uint8_t kind=data[33];
-        if (kind<1 || kind>4 || len!=(kind<=2 ? 34u : 61u)) return;
+        // Код 5 — кнопка СТОП с причиной. Дополнительных полей диагностики у неё нет.
+        const bool purgeInterrupted = kind == 5u;
+        const bool button = kind <= 2u || purgeInterrupted;
+        if (kind < 1u || kind > 5u || len != (button ? 34u : 61u)) return;
         const uint8_t* info=data+34;
-        if (kind>=3 && (info[0]>=7 || info[7]>9 || info[7]>info[5] || (kind==3 && info[3]>=14))) return;
+        if (!button && (info[0]>=7 || info[7]>9 || info[7]>info[5] || (kind==3 && info[3]>=14))) return;
         const uint32_t seq=EventWord(data+25);
         if (!seq) return;
         auto session=gcnew cli::array<Byte>(16);
@@ -1403,6 +1412,8 @@ void ProjectServerW::DataForm::HandleButtonEventsResponse(cli::array<Byte>^ pack
                 String::Format(L"Контроллер {0}: переполнение очереди, потери {1} с запуска: {2}",ClientIP,i ? L"диагностики" : L"кнопок",lost))) return;
         }
         String^ description = kind<=2 ? (kind==1 ? L"обработал нажатие физической кнопки СТАРТ" : L"обработал нажатие физической кнопки СТОП") : DescribeSensorEvent(kind,info);
+        if (purgeInterrupted)
+            description = L"обработал нажатие физической кнопки СТОП (продувка прервана)";
         if (!GlobalLogger::TryLogButtonEvent(String::Format("[ButtonEvent:{0}:{1}]",id,seq),
             String::Format(L"Контроллер {0}: {1}; время контроллера {2} с, событие №{3}",ClientIP,description,EventWord(data+29),seq))) return;
         if (!System::Threading::Monitor::TryEnter(commandPipelineGate)) return;

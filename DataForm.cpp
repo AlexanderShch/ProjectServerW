@@ -1139,6 +1139,7 @@ void ProjectServerW::DataForm::AddDataToTable(const char* buffer, size_t size, S
 
     unifiedEvents = dataLenByte == sizeof(data)+1;
     eventsAvailable = unifiedEvents && (raw[4+sizeof(data)] & 1u);
+    extendedButtonEvents = unifiedEvents && (raw[4+sizeof(data)] & 4u);
     processDataAvailable = unifiedEvents && (raw[4+sizeof(data)] & 2u);
     data_String = bufferToHex(buffer, size);   // Преобразуем буфер в строку в hex формате
     // Выводим содержимое пакета data_String в поле Label_Data

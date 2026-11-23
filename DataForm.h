@@ -223,6 +223,7 @@ namespace ProjectServerW {
             DateTime buttonEventsRequestTime;
             bool buttonEventsPending, buttonEventsUnsupported;
             bool unifiedEvents, eventsAvailable, moreEventsAfterAck;
+            bool extendedButtonEvents = false; // Возможность расширенных кодов кнопок из SEND_STATE.
             System::Object^ exchangeGate;
             System::Threading::ManualResetEvent^ exchangeReady;
             System::Object^ exchangeConnection;

@@ -3,7 +3,7 @@
 // Версия и строка для отображения из единого набора компонентов.
 #define VERSION_MAJOR 4
 #define VERSION_MINOR 0
-#define VERSION_PATCH 0
+#define VERSION_PATCH 1
 #define VERSION_STRINGIFY_IMPL(x) #x
 #define VERSION_STRINGIFY(x) VERSION_STRINGIFY_IMPL(x)
 #define VERSION_WIDE_IMPL(x) L##x
@@ -14,6 +14,9 @@ static const wchar_t* const VERSION_STR =
     VERSION_WIDE(VERSION_STRINGIFY(VERSION_PATCH));
 
 /*
+Версия 4.0.1
+- В журнале физического СТОП отмечается прерывание продувки.
+
 Версия 4.0.0
 - Обмен использует 64-битные requestId; параметры процесса запрашиваются отдельной командой GET_PROCESS_LOG.
   Запрос параметров ссылается на ID телеметрии, после DATA_OK второй ответ не отправляется.
